@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>CRISPR Genetics Lab</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <!-- Fehler-Overlay (rot, oben) -->
+  <div id="errorOverlay" class="hidden" role="alert" aria-live="assertive"></div>
+
+  <!-- Toolbar -->
+  <header class="toolbar" id="toolbar">
+    <div class="toolbar-row">
+      <button id="btnPlayPause" title="Abspielen/Pausieren (Leertaste)">▶️ Play</button>
+      <button id="btnReset" title="Simulation zurücksetzen">🔄 Reset</button>
+
+      <label for="timescale">Timescale</label>
+      <select id="timescale" title="Zeitbeschleunigung">
+        <option value="1">1×</option>
+        <option value="5">5×</option>
+        <option value="10">10×</option>
+      </select>
+
+      <label for="mutationRate">Mutation</label>
+      <input id="mutationRate" type="range" min="0" max="100" value="10" step="1" />
+      <span id="mutationRateVal" class="mono">10%</span>
+
+      <label for="foodRate">Nahrung</label>
+      <input id="foodRate" type="range" min="0" max="200" value="60" step="5" />
+      <span id="foodRateVal" class="mono">60</span>
+
+      <label for="highlightSelect">Highlight</label>
+      <select id="highlightSelect">
+        <option value="all">Alle Stämme</option>
+      </select>
+
+      <button id="btnEditor" title="CRISPR-Editor öffnen">🧬 Editor</button>
+
+      <button id="btnExport" title="Welt exportieren">⬇️ Export</button>
+      <label class="importLabel">
+        ⬆️ Import
+        <input id="fileImport" type="file" accept="application/json" />
+      </label>
+
+      <button id="btnAdvisor" title="KI-Berater umschalten">🤖 Advisor</button>
+      <span id="advisorStatus" class="status-badge">Berater: Aus</span>
+    </div>
+  </header>
+
+  <!-- Spielfläche -->
+  <main id="main">
+    <canvas id="simCanvas" width="800" height="520"></canvas>
+  </main>
+
+  <!-- Narrative-Panel -->
+  <section id="narrativeSection" aria-label="Boulevard-Schlagzeilen">
+    <header class="paperHead">
+      <span class="paperTitle">DNA Daily</span>
+      <span class="paperSub">Breaking News aus dem Labor</span>
+    </header>
+    <div id="narrativePanel" class="scrollbox" tabindex="0" aria-live="polite"></div>
+  </section>
+
+  <!-- Ticker -->
+  <footer id="ticker" aria-live="polite">
+    <div id="tickerInner">
+      <div id="tickerContent"></div>
+    </div>
+  </footer>
+
+  <!-- Editor-Modal -->
+  <dialog id="editorModal" aria-labelledby="editorTitle">
+    <form method="dialog" id="editorForm">
+      <header class="modalHeader">
+        <h2 id="editorTitle">CRISPR-Editor</h2>
+        <button id="editorClose" value="cancel" title="Schließen">✖</button>
+      </header>
+
+      <div class="modalBody">
+        <section class="editorLeft">
+          <h3>Traits anpassen</h3>
+          <div class="traitRow" data-trait="TEM">
+            <label>TEM – Tempo</label>
+            <div class="stepper">
+              <button type="button" class="dec">-1</button>
+              <output class="val">0</output>
+              <button type="button" class="inc">+1</button>
+            </div>
+          </div>
+          <div class="traitRow" data-trait="GRO">
+            <label>GRÖ – Größe</label>
+            <div class="stepper">
+              <button type="button" class="dec">-1</button>
+              <output class="val">0</output>
+              <button type="button" class="inc">+1</button>
+            </div>
+          </div>
+          <div class="traitRow" data-trait="EFF">
+            <label>EFF – Effizienz</label>
+            <div class="stepper">
+              <button type="button" class="dec">-1</button>
+              <output class="val">0</output>
+              <button type="button" class="inc">+1</button>
+            </div>
+          </div>
+          <div class="traitRow" data-trait="SCH">
+            <label>SCH – Schutz</label>
+            <div class="stepper">
+              <button type="button" class="dec">-1</button>
+              <output class="val">0</output>
+              <button type="button" class="inc">+1</button>
+            </div>
+          </div>
+          <div class="editorActions">
+            <button id="editorApply" class="primary" type="submit" value="ok">Übernehmen</button>
+          </div>
+          <p class="hint mono">Neue Zellen aus dem Editor starten immer als <strong>neuer Stamm</strong>.</p>
+        </section>
+
+        <section class="editorRight">
+          <h3>Lebende Zellen • Survival-Score</h3>
+          <div id="editorCellList" class="cellList"></div>
+          <div class="advisorBox">
+            <div><strong>KI-Advisor:</strong> <span id="editorAdvisorStatus">Heuristik aktiv</span></div>
+            <small>Mit Modell: „Modell geladen“ (TensorFlow.js)</small>
+          </div>
+        </section>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Einstieg über engine.js -->
+  <script type="module" src="./engine.js"></script>
+</body>
+</html>
