@@ -1,11 +1,12 @@
 // editor.js – CRISPR-Editor: rechts lebende Zellen + Prognose; Klick übernimmt Traits links.
+// Robust gegen Export-Mismatches: wir nutzen einen Namespace-Import von entities.js.
 
-import { createCell, newStammId, cells } from './entities.js';
+import * as Entities from './entities.js'; // <- robust: Entities.createCell / Entities.newStammId / Entities.cells
 import { TRAITS, createGenome } from './genetics.js';
 import { Events, EVT } from './event.js';
 import {
   predictProbability, getStatusLabel, cycleAdvisorMode,
-  loadModelFromUrl, setEnabled, setUseModel, isEnabled, isModelLoaded
+  loadModelFromUrl, setEnabled, setUseModel
 } from './advisor.js';
 
 const current = { TEM:5, GRO:5, EFF:5, SCH:5 };
@@ -23,9 +24,10 @@ export function initEditor(){
   const modelUrl = document.getElementById('editorModelUrl');
   const btnLoad = document.getElementById('editorModelLoad');
 
-  // Default-Pfad für das Modell
-  if(modelUrl) modelUrl.value = 'models/model.json';
+  // Default-URL für das Modell
+  if(modelUrl && !modelUrl.value) modelUrl.value = 'models/model.json';
 
+  // Stepper-Buttons (absolute Werte 1..9)
   for(const row of document.querySelectorAll('.traitRow')){
     const trait = row.dataset.trait;
     const out = row.querySelector('.val');
@@ -48,20 +50,20 @@ export function initEditor(){
     }
   }
 
-  function refreshAdvisorUI(){
-    advisorLbl.textContent = getStatusLabel().replace('Berater: ','');
-  }
-
-  function formatScore(p){
-    if(p == null) return '–';
+  const formatScore = (p)=>{
+    if(p == null) return '–';               // Advisor AUS
     const pct = Math.round(p*100);
     return `${pct}<small>%</small>`;
+  };
+
+  function refreshAdvisorUI(){
+    advisorLbl.textContent = getStatusLabel().replace('Berater: ','');
   }
 
   function refreshList(){
     refreshAdvisorUI();
     list.innerHTML = '';
-    const alive = cells.filter(c=>!c.dead);
+    const alive = (Entities.cells || []).filter(c=>!c.dead);
     for(const c of alive){
       const p = predictProbability(c.genes); // null, 0..1
       const card = document.createElement('button');
@@ -85,40 +87,50 @@ export function initEditor(){
   Events.on(EVT.DEATH, refreshList);
   Events.on(EVT.STATUS, refreshAdvisorUI);
 
+  // Neue Zelle → immer neuer Stamm
   form.addEventListener('submit', (e)=>{
     e.preventDefault();
     const genome = createGenome({...current});
-    const stamm = newStammId();
-    const c = createCell({
+    const stamm = (typeof Entities.newStammId === 'function') ? Entities.newStammId() : null;
+    const create = Entities.createCell || Entities['createCell']; // robust
+    if (typeof create !== 'function'){
+      console.error('[Editor] createCell nicht verfügbar in entities.js');
+      Events.emit(EVT.TIP, { label:'Tipp', text:'Editor: createCell nicht verfügbar.' });
+      return;
+    }
+    const c = create({
       x: Math.random()*800, y: Math.random()*520,
       genes: genome,
-      stammId: stamm,
+      stammId: stamm != null ? stamm : undefined,
       energy: 22
     });
-    Events.emit(EVT.TIP, { label:'Editor', text:`Neue Zelle #${c.id} als neuer Stamm ${stamm} erzeugt.` });
+    Events.emit(EVT.TIP, { label:'Tipp', text:`Neue Zelle #${c.id} als neuer Stamm ${c.stammId} erzeugt.` });
     refreshList();
   });
 
+  // Advisor: Modus umschalten (Aus → Heuristik → Modell → Aus …)
   btnToggle.addEventListener('click', async ()=>{
-    const next = await cycleAdvisorMode(modelUrl.value.trim() || 'models/model.json');
+    await cycleAdvisorMode(modelUrl.value.trim() || 'models/model.json');
     refreshAdvisorUI(); refreshList();
   });
 
+  // Advisor: Modell explizit laden
   btnLoad.addEventListener('click', async ()=>{
     const url = modelUrl.value.trim() || 'models/model.json';
     try{
       await loadModelFromUrl(url);
       setEnabled(true); setUseModel(true);
       refreshAdvisorUI(); refreshList();
-      Events.emit(EVT.STATUS, { source:'editor', text:'KI‑Modell geladen' });
+      Events.emit(EVT.STATUS, { source:'editor', text:'KI-Modell geladen' });
     }catch(err){
-      Events.emit(EVT.TIP, { label:'Advisor', text:'Modell konnte nicht geladen werden.' });
+      Events.emit(EVT.TIP, { label:'Tipp', text:'Modell konnte nicht geladen werden.' });
       console.error('[CRISPR] Modell laden fehlgeschlagen', err);
     }
   });
 
+  // Schließen
   closeBtn.addEventListener('click', ()=>{
-    if (dlg && dlg.close) dlg.close('cancel'); else if (dlg) dlg.removeAttribute('open');
+    if (dlg && dlg.close) dlg.close('cancel'); else dlg?.removeAttribute('open');
   });
 }
 
