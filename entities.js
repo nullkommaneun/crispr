@@ -1,5 +1,6 @@
-// entities.js – Welt, Zellen, Nahrung, Verhalten (Spatial Grid + Scheduler + Food-Cluster)
-// + Anti-Stick: Soft-Wall Push, Corner-Kick, Stuck-Detektor
+// entities.js – Welt, Zellen, Nahrung, Verhalten
+// Spatial Grid + Scheduler + wandernde Food-Cluster
+// Anti-Stick v2: Outward-Clamp + Tangential-Slide + Stuck-Kick
 
 import { Events, EVT } from './event.js';
 import { getStammColor, resetLegend } from './legend.js';
@@ -76,7 +77,6 @@ function* neighborCells(x,y){
 // ---------- Weltzeit & Scheduler ----------
 let worldTime = 0;
 const scheduled = []; // {due:number, fn:Function}
-/** Führt fn nach delaySec Simulationssekunden aus (wirkt mit Timescale) */
 export function schedule(fn, delaySec=0){ scheduled.push({ due: worldTime + Math.max(0, delaySec), fn }); }
 function runScheduler(){
   for(let i=scheduled.length-1;i>=0;i--){
@@ -87,15 +87,9 @@ function runScheduler(){
   }
 }
 
-// ---------- Food-Cluster (wandernde Hotspots) ----------
+// ---------- Food-Cluster ----------
 const FOOD_CLUSTERS = [];
-const CLUSTER_CONF = {
-  count: 3,
-  driftSpeed: 20,       // px/s
-  jitter: 0.6,          // Richtungsrauschen
-  radius: 80,           // Spawn-Streuung (σ)
-};
-
+const CLUSTER_CONF = { count: 3, driftSpeed: 20, jitter: 0.6, radius: 80 };
 function randRange(a,b){ return a + Math.random()*(b-a); }
 function gauss(){ let u=0,v=0; while(u===0) u=Math.random(); while(v===0) v=Math.random(); return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v); }
 function clamp(v,min,max){ return Math.max(min, Math.min(max, v)); }
@@ -162,13 +156,12 @@ export function resetEntities(){
   foundersIds={adam:null,eva:null}; foundersEverMated=false;
   nextCellId=1; nextFoodId=1; nextStammId=1;
   worldTime=0; scheduled.length=0;
-  gridResize();
-  initFoodClusters();
+  gridResize(); initFoodClusters();
   Events.emit(EVT.RESET,{});
 }
 export function newStammId(){ return nextStammId++; }
 
-// ---------- Abgeleitete Werte (Gene) ----------
+// ---------- abgeleitete Werte aus Genen ----------
 function n(v){ return (v-5)/4; }
 function deriveFromGenes(g){
   const nTEM=n(g.TEM), nGRO=n(g.GRO), nEFF=n(g.EFF), nSCH=n(g.SCH);
@@ -192,11 +185,7 @@ function applyDerived(c){
   const d=deriveFromGenes(c.genes); c.derived=d; c.radius=d.radius;
   if(c.vx===undefined || c.vy===undefined){ const ang=Math.random()*Math.PI*2; c.vx=Math.cos(ang)*10; c.vy=Math.sin(ang)*10; }
   c.scanTimer=Math.random()*d.scanInterval; c.target=null;
-
-  // Stuck-Tracker
-  c._stuckT = 0;       // akkumulierte "stuck"-Zeit
-  c._lastX  = c.x;
-  c._lastY  = c.y;
+  c._stuckT = 0; c._lastX = c.x; c._lastY = c.y;
 }
 
 // ---------- Speciation ----------
@@ -279,40 +268,62 @@ export function relatedness(a,b){
 function ancUp(id,depth){
   const map=new Map(); const q=[{id,d:0}];
   while(q.length){
-    const {id:cur,d}=q.shift(); const p=pedigree.get(cur); if(!p) continue;
+    const {id:cur,d}=q.shift();
+    const p=pedigree.get(cur); if(!p) continue;
     if(p.motherId && d+1<=depth){ if(!map.has(p.motherId)) map.set(p.motherId,d+1); q.push({id:p.motherId,d:d+1}); }
     if(p.fatherId && d+1<=depth){ if(!map.has(p.fatherId)) map.set(p.fatherId,d+1); q.push({id:p.fatherId,d:d+1}); }
   }
   return map;
 }
 
-// ---------- Verhalten / Anti-Stick -----------------------------------------
+// ---------- Verhalten / Anti-Stick v2 ----------
+const WALL = { margin: 28 };         // “Near-Wall”-Zone
+const STUCK = { near: 40, speedMin: 8, window: 2.0, kickSpeed: 0.85 };
 
-// Soft-Wall Parameter
-const WALL = {
-  margin: 28,        // Abstand zum Rand, in dem Abstoßung wirkt (px)
-  push: 140,         // Stärke des Push (px/s)
-  minInward: 6       // Mindest-Inwärtsgeschw. nach Kollision (px/s)
-};
-// Stuck-Detektor
-const STUCK = {
-  nearMargin: 40,    // wir betrachten nur Zellen nahe der Wand als potenziell "stuck"
-  speedMin: 8,       // wenn effektive Geschwindigkeit darunter liegt …
-  window: 2.0,       // … über diese Zeit (s) …
-  kickSpeed: 0.85    // … dann Kick mit 85% der Max-Speed Richtung Zentrum
-};
+function wallNormal(c){
+  // Inwärts gerichtete Normale (nx,ny) in {-1,0,1}; near=true, wenn in Randzone
+  let nx=0, ny=0, near=false;
+  if(c.x < WALL.margin){ nx = 1; near=true; }
+  else if(c.x > WORLD.width - WALL.margin){ nx = -1; near=true; }
+  if(c.y < WALL.margin){ ny = 1; near=true; }
+  else if(c.y > WORLD.height - WALL.margin){ ny = -1; near=true; }
+  return { nx, ny, near };
+}
 
-function wallPush(c){
-  // Stärke je Achse 0..1 je nach Nähe zum Rand
-  const left  = clamp((WALL.margin - c.x)/WALL.margin, 0, 1);
-  const right = clamp((c.x - (WORLD.width - WALL.margin))/WALL.margin, 0, 1);
-  const top   = clamp((WALL.margin - c.y)/WALL.margin, 0, 1);
-  const bottom= clamp((c.y - (WORLD.height - WALL.margin))/WALL.margin, 0, 1);
+function applyWallAvoidance(c, dvx, dvy){
+  const { nx, ny, near } = wallNormal(c);
+  if(!near) return { dvx, dvy };
 
-  // nach innen gerichteter Push
-  const px = (left - right) * WALL.push;
-  const py = (top  - bottom) * WALL.push;
-  return { px, py, near: (left||right||top||bottom) > 0 };
+  // Inwärts-Normalenvektor
+  const nlen = Math.hypot(nx, ny) || 1;
+  const inx = nx / nlen, iny = ny / nlen;        // inward
+  const outx = -inx, outy = -iny;                // outward
+
+  // 1) Outward-Komponente hart entfernen (kein Steueranteil Richtung Wand)
+  const outDot = dvx*outx + dvy*outy;            // Anteil zum Rand
+  if(outDot > 0){
+    dvx -= outx * outDot;
+    dvy -= outy * outDot;
+  }
+
+  // 2) Tangential-Slide hinzufügen (seitlich an der Wand entlang)
+  //    Tangente = 90° gedrehte Normale; Richtung anhand aktueller Bewegung
+  let tx = -iny, ty = inx;                       // eine mögliche Tangente
+  const vdot = (c.vx*tx + c.vy*ty);
+  if(vdot < 0){ tx = -tx; ty = -ty; }            // mit Bewegungsrichtung mitlaufen
+
+  const slideBoost = 0.35 * c.derived.speedMax;  // moderates Gleiten
+  dvx += tx * slideBoost;
+  dvy += ty * slideBoost;
+
+  // 3) Mindest Inwärts-Anteil, damit sie nicht “einhaken”
+  const inDot = dvx*inx + dvy*iny;
+  if(inDot < 4){                                 // 4 px/s Inwärtsanteil
+    dvx += inx * (4 - inDot);
+    dvy += iny * (4 - inDot);
+  }
+
+  return { dvx, dvy };
 }
 
 function cornerKickIfNeeded(c){
@@ -324,16 +335,14 @@ function cornerKickIfNeeded(c){
     const sp  = c.derived.speedMax * 0.9;
     c.vx = Math.cos(ang) * sp;
     c.vy = Math.sin(ang) * sp;
-    // kleinen Offset, damit wir von der Ecke weg sind
     c.x += Math.cos(ang) * 2;
     c.y += Math.sin(ang) * 2;
-    // Reset Stuck-Zeit
     c._stuckT = 0;
   }
 }
 
 function updateCellBehavior(c, alive, dt){
-  // Ziel prüfen/aktualisieren
+  // Zielpflege
   if(c.target){
     if(c.target.type==='food'){
       const f=foods.find(ff=>ff.id===c.target.id);
@@ -350,14 +359,11 @@ function updateCellBehavior(c, alive, dt){
   if(c.scanTimer<=0 || hungry || !c.target){
     let found=false;
     if(hungry) found=chooseFoodTarget(c);
-    if(!found){
-      found=chooseFoodTarget(c);
-      if(!found && c.energy>0.70*c.derived.energyCap) found=chooseMateTarget(c, alive);
-    }
+    if(!found){ found=chooseFoodTarget(c); if(!found && c.energy>0.70*c.derived.energyCap) found=chooseMateTarget(c, alive); }
     c.scanTimer = c.derived.scanInterval;
   }
 
-  // Basis-Desired
+  // Wunschvektor (vor Wand-Anpassung)
   let dVX=0, dVY=0;
   if(c.target){
     const dx=c.target.x-c.x, dy=c.target.y-c.y; const d=Math.max(1,Math.hypot(dx,dy));
@@ -367,10 +373,8 @@ function updateCellBehavior(c, alive, dt){
     const sp=c.derived.speedMax*0.6; dVX=Math.cos(c.wanderAng)*sp; dVY=Math.sin(c.wanderAng)*sp;
   }
 
-  // Soft-Wall Push
-  const { px, py, near } = wallPush(c);
-  dVX += px;
-  dVY += py;
+  // Wandverhalten anwenden (Outward-Clamp + Slide)
+  ({ dvx: dVX, dvy: dVY } = applyWallAvoidance(c, dVX, dVY));
 
   // Glättung
   c.vx = 0.85*c.vx + 0.15*dVX;
@@ -379,34 +383,30 @@ function updateCellBehavior(c, alive, dt){
   // Bewegung
   c.x += c.vx * dt; c.y += c.vy * dt;
 
-  // Harte Grenzen + Mindest-Inwärtsgeschw.
-  if(c.x < c.radius){ c.x=c.radius; c.vx = Math.max(Math.abs(c.vx), WALL.minInward); }
-  if(c.x > WORLD.width - c.radius){ c.x = WORLD.width - c.radius; c.vx = -Math.max(Math.abs(c.vx), WALL.minInward); }
-  if(c.y < c.radius){ c.y=c.radius; c.vy = Math.max(Math.abs(c.vy), WALL.minInward); }
-  if(c.y > WORLD.height - c.radius){ c.y = WORLD.height - c.radius; c.vy = -Math.max(Math.abs(c.vy), WALL.minInward); }
-
-  // Corner-Kick (einmalig wenn wirklich in der Ecke)
+  // Harte Grenzen + Corner-Kick
+  if(c.x < c.radius){ c.x=c.radius; c.vx = Math.abs(c.vx); }
+  if(c.x > WORLD.width - c.radius){ c.x = WORLD.width - c.radius; c.vx = -Math.abs(c.vx); }
+  if(c.y < c.radius){ c.y=c.radius; c.vy = Math.abs(c.vy); }
+  if(c.y > WORLD.height - c.radius){ c.y = WORLD.height - c.radius; c.vy = -Math.abs(c.vy); }
   cornerKickIfNeeded(c);
 
-  // Stuck-Detektor (nur nahe Wand relevant)
-  const dx = c.x - c._lastX, dy = c.y - c._lastY;
-  const disp = Math.hypot(dx, dy) / Math.max(1e-6, dt); // effektive px/s
-  if(near && disp < STUCK.speedMin){
+  // Stuck-Detektor (nahe Wand, wenig Bewegung → Kick Richtung Mitte)
+  const dxm = c.x - c._lastX, dym = c.y - c._lastY;
+  const effSpeed = Math.hypot(dxm, dym) / Math.max(1e-6, dt);
+  const nearWall = (c.x < STUCK.near) || (c.x > WORLD.width - STUCK.near) || (c.y < STUCK.near) || (c.y > WORLD.height - STUCK.near);
+  if(nearWall && effSpeed < STUCK.speedMin){
     c._stuckT += dt;
     if(c._stuckT > STUCK.window){
-      // Kick Richtung Mitte
       const cx = WORLD.width/2, cy = WORLD.height/2;
       const ang = Math.atan2(cy - c.y, cx - c.x);
       const sp  = c.derived.speedMax * STUCK.kickSpeed;
       c.vx = Math.cos(ang) * sp;
       c.vy = Math.sin(ang) * sp;
-      c._stuckT = 0;
-      // kleinen Sprung weg vom Rand, um Kollision zu lösen
       c.x = clamp(c.x + Math.cos(ang)*3, c.radius, WORLD.width - c.radius);
       c.y = clamp(c.y + Math.sin(ang)*3, c.radius, WORLD.height - c.radius);
+      c._stuckT = 0;
     }
   } else {
-    // Abbau
     c._stuckT = Math.max(0, c._stuckT - dt*0.5);
   }
   c._lastX = c.x; c._lastY = c.y;
