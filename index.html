@@ -4,16 +4,14 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <title>CRISPR Genetics Lab</title>
-  <link rel="stylesheet" href="./style.css?v=apoc10" />
-  <link rel="modulepreload" href="./engine.js?v=apoc10">
-  <link rel="modulepreload" href="./errorManager.js?v=apoc10">
-  <link rel="modulepreload" href="./event.js?v=apoc10">
+  <link rel="stylesheet" href="./style.css?v=apoc11" />
+  <link rel="modulepreload" href="./engine.js?v=apoc11">
+  <link rel="modulepreload" href="./errorManager.js?v=apoc11">
+  <link rel="modulepreload" href="./event.js?v=apoc11">
 </head>
 <body>
-  <!-- Fehler-Overlay -->
   <div id="errorOverlay" class="hidden" role="alert" aria-live="assertive"></div>
 
-  <!-- Toolbar (kompakt) -->
   <header class="toolbar" id="toolbar">
     <div class="toolbar-row">
       <button id="btnPlayPause" title="Abspielen/Pausieren (Leertaste)">▶️ Play</button>
@@ -41,7 +39,6 @@
     <canvas id="simCanvas" width="800" height="520"></canvas>
   </main>
 
-  <!-- Narrative-Panel -->
   <section id="narrativeSection" aria-label="Boulevard-Schlagzeilen">
     <header class="paperHead">
       <span class="paperTitle">DNA Daily</span>
@@ -50,12 +47,10 @@
     <div id="narrativePanel" class="scrollbox" tabindex="0" aria-live="polite"></div>
   </section>
 
-  <!-- Ticker -->
   <footer id="ticker" aria-live="polite">
     <div id="tickerInner"><div id="tickerContent"></div></div>
   </footer>
 
-  <!-- Editor-Modal -->
   <dialog id="editorModal" aria-labelledby="editorTitle">
     <form method="dialog" id="editorForm">
       <header class="modalHeader">
@@ -117,7 +112,7 @@
             </div>
             <div class="advisorCtrls">
               <button type="button" id="editorAdvisorToggle" title="Modus umschalten">Modus: Umschalten</button>
-              <input type="text" id="editorModelUrl" placeholder="ml/models/my_model/model.json" value="ml/models/my_model/model.json" />
+              <input type="text" id="editorModelUrl" placeholder="models/model.json" value="models/model.json" />
               <button type="button" id="editorModelLoad" title="TensorFlow.js Modell laden">Modell laden</button>
             </div>
             <small id="editorAdvisorNote">Modi: Aus • Heuristik • Modell (TensorFlow.js)</small>
@@ -127,7 +122,6 @@
     </form>
   </dialog>
 
-  <!-- Früher Watchdog-Hinweis -->
   <script>
     (function(){
       window.__CRISPR_WATCHDOG__ = setTimeout(function(){
@@ -139,31 +133,18 @@
     })();
   </script>
 
-  <!-- Boot lädt zuerst errorManager, dann engine in try/catch -->
   <script type="module">
     (async () => {
       const ov = document.getElementById('errorOverlay');
       const show = (msg)=>{ if(ov){ ov.textContent=msg; ov.classList.add('show'); } };
       try{
-        const em = await import('./errorManager.js?v=apoc10');
-        em.initErrorManager(); // sehr früh aktiv
-        await import('./engine.js?v=apoc10');
+        const em = await import('./errorManager.js?v=apoc11');
+        em.initErrorManager();
+        await import('./engine.js?v=apoc11');
         clearTimeout(window.__CRISPR_WATCHDOG__);
       }catch(err){
         clearTimeout(window.__CRISPR_WATCHDOG__);
-        try{
-          const res = await fetch('./engine.js?v=check_' + Date.now(), { cache:'no-store' });
-          const ct = (res.headers.get('content-type')||'').toLowerCase();
-          if(!res.ok){
-            show(`⚠️ engine.js nicht gefunden (${res.status}). Prüfe Dateiname & Pfad (Kleinschreibung).`);
-          }else if(!ct.includes('javascript')){
-            show(`⚠️ engine.js wurde als "${ct}" ausgeliefert – vermutlich 404‑HTML. Prüfe Schreibweise/Kleinbuchstaben.`);
-          }else{
-            show('⚠️ Importing a module script failed – Unterimport defekt? Prüfe Pfade in Untermodulen (z. B. "./event.js", "./narrative/panel.js").');
-          }
-        }catch{
-          show('⚠️ Netzwerk/Fetch‑Problem beim Laden von engine.js.');
-        }
+        show('⚠️ Importing a module script failed – Unterimport defekt? Prüfe Pfade (./event.js, ./narrative/panel.js).');
         console.error('[CRISPR] Bootfehler', err);
       }
     })();
