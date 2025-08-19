@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <title>CRISPR Genetics Lab</title>
-  <link rel="stylesheet" href="./style.css" />
+  <link rel="stylesheet" href="./style.css?v=apoc6" />
 </head>
 <body>
   <!-- Fehler-Overlay (rot, oben) -->
@@ -16,25 +16,21 @@
       <button id="btnPlayPause" title="Abspielen/Pausieren (Leertaste)">▶️ Play</button>
       <button id="btnReset" title="Simulation zurücksetzen">🔄 Reset</button>
 
-      <label for="timescale">Timescale</label>
-      <select id="timescale" title="Zeitbeschleunigung">
-        <option value="1">1×</option>
-        <option value="5">5×</option>
-        <option value="10">10×</option>
-      </select>
+      <label>Timescale</label>
+      <!-- Zyklus-Button: 1× → 5× → 10× -->
+      <button id="btnSpeedCycle" title="Geschwindigkeit durchschalten">⚡ 1×</button>
 
       <label for="mutationRate">Mutation</label>
       <input id="mutationRate" type="range" min="0" max="100" value="10" step="1" />
       <span id="mutationRateVal" class="mono">10%</span>
 
       <label for="foodRate">Nahrung</label>
-      <input id="foodRate" type="range" min="0" max="200" value="60" step="5" />
-      <span id="foodRateVal" class="mono">60</span>
+      <input id="foodRate" type="range" min="0" max="240" value="90" step="5" />
+      <span id="foodRateVal" class="mono">90</span>
 
-      <label for="highlightSelect">Highlight</label>
-      <select id="highlightSelect">
-        <option value="all">Alle Stämme</option>
-      </select>
+      <label>Highlight</label>
+      <!-- Zyklus-Button: Alle → Stamm 1 → Stamm 2 → … -->
+      <button id="btnHighlightCycle" title="Stämme durchschalten">Alle Stämme</button>
 
       <button id="btnEditor" title="CRISPR-Editor öffnen">🧬 Editor</button>
 
@@ -85,7 +81,7 @@
             <label>TEM – Tempo</label>
             <div class="stepper">
               <button type="button" class="dec">-1</button>
-              <output class="val">0</output>
+              <output class="val">5</output>
               <button type="button" class="inc">+1</button>
             </div>
           </div>
@@ -93,7 +89,7 @@
             <label>GRÖ – Größe</label>
             <div class="stepper">
               <button type="button" class="dec">-1</button>
-              <output class="val">0</output>
+              <output class="val">5</output>
               <button type="button" class="inc">+1</button>
             </div>
           </div>
@@ -101,7 +97,7 @@
             <label>EFF – Effizienz</label>
             <div class="stepper">
               <button type="button" class="dec">-1</button>
-              <output class="val">0</output>
+              <output class="val">5</output>
               <button type="button" class="inc">+1</button>
             </div>
           </div>
@@ -109,7 +105,7 @@
             <label>SCH – Schutz</label>
             <div class="stepper">
               <button type="button" class="dec">-1</button>
-              <output class="val">0</output>
+              <output class="val">5</output>
               <button type="button" class="inc">+1</button>
             </div>
           </div>
@@ -120,18 +116,52 @@
         </section>
 
         <section class="editorRight">
-          <h3>Lebende Zellen • Survival-Score</h3>
+          <h3>Lebende Zellen • Prognose</h3>
           <div id="editorCellList" class="cellList"></div>
           <div class="advisorBox">
             <div><strong>KI-Advisor:</strong> <span id="editorAdvisorStatus">Heuristik aktiv</span></div>
-            <small>Mit Modell: „Modell geladen“ (TensorFlow.js)</small>
+            <small id="editorAdvisorNote">Mit Modell: „Modell geladen“ (TensorFlow.js) • Ohne: Heuristik</small>
           </div>
         </section>
       </div>
     </form>
   </dialog>
 
-  <!-- Einstieg über engine.js -->
-  <script type="module" src="./engine.js"></script>
+  <!-- Watchdog (informativ) -->
+  <script>
+    (function(){
+      window.__CRISPR_WATCHDOG__ = setTimeout(function(){
+        const ov = document.getElementById('errorOverlay');
+        if(!ov) return;
+        ov.textContent = '⚠️ Module laden langsam oder wurden blockiert. Bitte neu laden. Details in der Konsole.';
+        ov.classList.add('show');
+      }, 2500);
+    })();
+  </script>
+
+  <!-- ES-Module robust importieren -->
+  <script type="module">
+    (async () => {
+      try{
+        await import('./engine.js?v=apoc6');
+        clearTimeout(window.__CRISPR_WATCHDOG__);
+      }catch(err){
+        clearTimeout(window.__CRISPR_WATCHDOG__);
+        const ov = document.getElementById('errorOverlay');
+        if(ov){
+          ov.textContent = '⚠️ Module konnten nicht geladen werden: ' +
+            (err?.message || String(err)) +
+            ' — Pfade/Dateinamen prüfen (GitHub Pages: Groß/Kleinschreibung).';
+          ov.classList.add('show');
+        }
+        console.error('[CRISPR] Modul-Importfehler', err);
+      }
+    })();
+  </script>
+
+  <script nomodule>
+    const ov = document.getElementById('errorOverlay');
+    if(ov){ ov.textContent = '⚠️ Dieser Browser unterstützt keine ES-Module.'; ov.classList.add('show'); }
+  </script>
 </body>
 </html>

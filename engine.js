@@ -8,7 +8,7 @@ import { seedWorld } from './spawn.js';
 import * as Entities from './entities.js';
 import { initTicker } from './ticker.js';
 import { initNarrativePanel } from './narrative/panel.js';
-import { initAdvisor, setEnabled as setAdvisorEnabled, getStatusLabel, tryLoadModel, updateAdvisor } from './advisor.js';
+import { initAdvisor, setEnabled as setAdvisorEnabled, getStatusLabel, tryLoadTF, updateAdvisor } from './advisor.js';
 import { initEditor, openEditor } from './editor.js';
 
 let renderer;
@@ -17,7 +17,7 @@ let timescale = 1;
 let lastTs = 0;
 let fps = 0;
 let tickCount = 0;
-let highlightStammId = null;
+let highlightStammId = null; // null = Alle
 const actionLog = [];
 
 function logAction(s){ actionLog.push(s); if(actionLog.length>20) actionLog.shift(); }
@@ -25,7 +25,7 @@ function logAction(s){ actionLog.push(s); if(actionLog.length>20) actionLog.shif
 function setupUI(){
   const btnPlay = document.getElementById('btnPlayPause');
   const btnReset = document.getElementById('btnReset');
-  const selScale = document.getElementById('timescale');
+  const btnSpeed = document.getElementById('btnSpeedCycle');
   const mutRange = document.getElementById('mutationRate');
   const foodRange = document.getElementById('foodRate');
   const mutVal = document.getElementById('mutationRateVal');
@@ -33,7 +33,7 @@ function setupUI(){
   const btnEditor = document.getElementById('btnEditor');
   const btnExport = document.getElementById('btnExport');
   const fileImport = document.getElementById('fileImport');
-  const highlightSel = document.getElementById('highlightSelect');
+  const btnHighlightCycle = document.getElementById('btnHighlightCycle');
   const btnAdvisor = document.getElementById('btnAdvisor');
   const advisorStatus = document.getElementById('advisorStatus');
   const editorAdvisorStatus = document.getElementById('editorAdvisorStatus');
@@ -46,14 +46,22 @@ function setupUI(){
   // Reset
   btnReset.addEventListener('click', ()=> {
     resetWorld();
+    refreshHighlightButton(); // nach neuem Seed
     logAction('Reset');
   });
 
-  // Timescale
-  selScale.addEventListener('change', ()=>{
-    timescale = Number(selScale.value) || 1;
+  // Timescale (Button zyklisch 1×→5×→10×)
+  const speedSteps = [1,5,10];
+  function applyTimescale(v){
+    timescale = v;
+    btnSpeed.textContent = `⚡ ${timescale}×`;
     Events.emit(EVT.STATUS, {source:'engine', text:`Timescale: ${timescale}×`});
+  }
+  btnSpeed.addEventListener('click', ()=>{
+    const idx = (speedSteps.indexOf(timescale)+1) % speedSteps.length;
+    applyTimescale(speedSteps[idx]);
   });
+  applyTimescale(1);
 
   // Mutation
   function applyMut(){ 
@@ -94,55 +102,67 @@ function setupUI(){
     try{
       const text = await file.text();
       Entities.importState(text);
-      refreshHighlightOptions();
+      refreshHighlightButton();
       logAction('Import');
     }catch(err){ showError('Import fehlgeschlagen', err); }
   });
 
-  // Highlight
-  highlightSel.addEventListener('change', ()=>{
-    const v = highlightSel.value;
-    highlightStammId = v==='all' ? null : Number(v);
+  // Highlight (Button zyklisch: Alle → Stamm 1 → Stamm 2 → …)
+  function getHighlightOrder(){
+    const counts = Entities.getStammCounts();
+    return ['all', ...Object.keys(counts).sort((a,b)=>Number(a)-Number(b))];
+  }
+  function refreshHighlightButton(){
+    const counts = Entities.getStammCounts();
+    if (highlightStammId!==null && !counts[highlightStammId]) {
+      // derzeitiger Stamm existiert nicht mehr → zurück auf Alle
+      highlightStammId = null;
+      renderer.setHighlight(null);
+    }
+    const label = (highlightStammId===null)
+      ? 'Alle Stämme'
+      : `Stamm ${highlightStammId} (${counts[highlightStammId]||0})`;
+    btnHighlightCycle.textContent = label;
+  }
+  btnHighlightCycle.addEventListener('click', ()=>{
+    const ids = getHighlightOrder();
+    const cur = (highlightStammId===null) ? 'all' : String(highlightStammId);
+    const idx = (ids.indexOf(cur)+1) % ids.length;
+    const next = ids[idx];
+    highlightStammId = (next==='all') ? null : Number(next);
     renderer.setHighlight(highlightStammId);
     Events.emit(EVT.HIGHLIGHT_CHANGED, { stammId: highlightStammId });
+    refreshHighlightButton();
   });
+  refreshHighlightButton();
+  Events.on(EVT.BIRTH, refreshHighlightButton);
+  Events.on(EVT.DEATH, refreshHighlightButton);
 
   // Advisor
   btnAdvisor.addEventListener('click', async ()=>{
-    const current = advisorStatus.textContent.includes('Aus');
-    setAdvisorEnabled(!current);
+    const isOff = advisorStatus.textContent.includes('Aus');
+    setAdvisorEnabled(isOff);
     advisorStatus.textContent = getStatusLabel();
-    editorAdvisorStatus.textContent = advisorStatus.textContent.replace('Berater: ','');
-    if(!current){
-      // optional: TF.js versuchen zu laden
-      const ok = await tryLoadModel();
-      advisorStatus.textContent = getStatusLabel();
+    if (editorAdvisorStatus) {
       editorAdvisorStatus.textContent = advisorStatus.textContent.replace('Berater: ','');
+    }
+    if(isOff){
+      await tryLoadTF(); // TF-Bib bereitstellen (Modell optional)
+      advisorStatus.textContent = getStatusLabel();
+      if (editorAdvisorStatus) {
+        editorAdvisorStatus.textContent = advisorStatus.textContent.replace('Berater: ','');
+      }
     }
   });
 
-  // Canvas Größe an Renderer melden
+  // Canvas-Größe → Welt
   function onResize(){
     const rect = canvas.getBoundingClientRect();
     Entities.setWorldSize(rect.width, rect.height);
   }
-  new ResizeObserver(onResize).observe(canvas);
+  if ('ResizeObserver' in window) new ResizeObserver(onResize).observe(canvas);
+  else window.addEventListener('resize', onResize);
   onResize();
-
-  // Legende-Optionen initialisieren
-  function refreshHighlightOptions(){
-    const counts = Entities.getStammCounts();
-    const sel = highlightSel;
-    const current = sel.value;
-    sel.innerHTML = `<option value="all">Alle Stämme</option>` +
-      Object.keys(counts).sort((a,b)=>Number(a)-Number(b))
-        .map(id=>`<option value="${id}">Stamm ${id} (${counts[id]})</option>`).join('');
-    if(current && [...sel.options].some(o=>o.value===current)) sel.value = current;
-  }
-  refreshHighlightOptions();
-  // Bei Geburten/Toden aktualisieren
-  Events.on(EVT.BIRTH, refreshHighlightOptions);
-  Events.on(EVT.DEATH, refreshHighlightOptions);
 }
 
 function toggleRun(){
@@ -154,6 +174,7 @@ function toggleRun(){
 function resetWorld(){
   Entities.resetEntities();
   const rect = document.getElementById('simCanvas').getBoundingClientRect();
+  Entities.setWorldSize(rect.width, rect.height);
   seedWorld(rect.width, rect.height);
   Events.emit(EVT.STATUS, {source:'engine', text:'Welt zurückgesetzt'});
 }
@@ -168,57 +189,48 @@ function init(){
     lastActions: actionLog
   }));
 
-  // Grundfunktionalität prüfen
   assertModule('Renderer', Renderer);
   assertModule('Entities', Entities);
 
-  // Module initialisieren
   initTicker();
   initNarrativePanel();
   initAdvisor();
   initEditor();
 
-  // Renderer
   const canvas = document.getElementById('simCanvas');
   renderer = new Renderer(canvas);
 
-  // Welt seed
   const rect = canvas.getBoundingClientRect();
   Entities.setWorldSize(rect.width, rect.height);
   seedWorld(rect.width, rect.height);
 
   setupUI();
 
-  // Start pausiert?
-  toggleRun(); // gleich starten
+  running = true;
+  document.getElementById('btnPlayPause').textContent = '⏸ Pause';
   requestAnimationFrame(loop);
 }
 
 function loop(ts){
   const dtRaw = (ts - (lastTs || ts)) / 1000;
   lastTs = ts;
-  const dt = Math.min(0.05, dtRaw) * timescale; // clamp
+  const dt = Math.min(0.05, dtRaw) * timescale;
 
   if(running){
     tickCount++;
     Entities.updateWorld(dt);
     renderer.renderFrame({ cells: Entities.cells, foods: Entities.foods });
     updateAdvisor(performance.now()/1000);
-    // FPS-Schätzung
     fps = 0.9*fps + 0.1*(1/(dtRaw||1/60));
     Events.emit(EVT.TICK, { tick: tickCount, fps });
   }
-
   requestAnimationFrame(loop);
 }
 
-// Narrative-Spezifische Headlines aufsetzen (einmalig)
 function setupNarrativeTriggers(){
-  // Bei Reset: IDs zurückgesetzt → Status in Narrative/Ticker andeuten
   Events.on(EVT.RESET, ()=> {
     Events.emit(EVT.TIP, {label:'Reset', text:'Welt und IDs wurden zurückgesetzt.'});
   });
-  // Zusätzliche nüchterne Status-Hinweise
   Events.on(EVT.MATE, (d)=>{
     if(d.relatedness >= 0.25){
       Events.emit(EVT.TIP, {label:'Genetik', text:'Inzucht erkannt – höhere Wahrscheinlichkeit negativer Mutationen.'});
@@ -226,11 +238,17 @@ function setupNarrativeTriggers(){
   });
 }
 
-window.addEventListener('DOMContentLoaded', ()=>{
+function start(){
   try{
     init();
     setupNarrativeTriggers();
   }catch(err){
     showError('Initialisierung fehlgeschlagen', err);
   }
-});
+}
+
+if (document.readyState === 'loading') {
+  window.addEventListener('DOMContentLoaded', start, { once: true });
+} else {
+  start();
+}
