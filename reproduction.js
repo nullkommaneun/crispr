@@ -1,74 +1,74 @@
 // reproduction.js
-// Paarungsverhalten & Nachwuchs-Erzeugung.
+// Paarungsverhalten: Bei Begegnung m/f entsteht Nachwuchs.
+// Kind bekommt Gene durch Rekombination + Mutation (mit Inzucht-Malus).
 
-import { recombineGenes } from './genetics.js';
 import { Events, EVT } from './events.js';
+import { recombineGenes } from './genetics.js';
 
-export const MATING = Object.freeze({
-  MIN_AGE: 3,          // Sekunden
-  MIN_ENERGY: 12,      // Energiepunkte
-  ENERGY_COST_PARENT: 6,
-  ENERGY_BONUS_CHILD: 8
-});
+const MATE_DISTANCE_FACTOR = 1.2;   // wie nah müssen sie sein (Summe Radien * Faktor)
+const MATE_COOLDOWN_SEC   = 6;      // Eltern brauchen Pause
+const ENERGY_COST         = 5;      // Energiekosten pro Elternteil
+
+function now(){ return performance.now()/1000; }
 
 /**
- * Prüft und führt ggf. Paarung aus.
- * - cells: Array aller Zellen
- * - makeChild: Funktion(params) -> Cell  (vom Entities-Modul bereitgestellt)
- * - opts: {mutationRate, relatednessFn}
+ * @param {Array} aliveCells - nur lebende Zellen
+ * @param {Function} spawnFn - (params) => newCell
+ * @param {{mutationRate:number, relatednessFn:function}} options
  */
-export function evaluateMatingPairs(cells, makeChild, opts){
-  const { mutationRate, relatednessFn } = opts;
-  // Naive O(n^2) Paarprüfung – für kleine Population ausreichend.
-  for(let i=0;i<cells.length;i++){
-    const a = cells[i]; if(a.dead) continue;
-    for(let j=i+1;j<cells.length;j++){
-      const b = cells[j]; if(b.dead) continue;
+export function evaluateMatingPairs(aliveCells, spawnFn, { mutationRate=0.1, relatednessFn }){
+  const n = aliveCells.length;
+  if(n <= 1) return;
 
-      // Geschlechter verschieden?
+  const t = now();
+
+  for(let i=0;i<n;i++){
+    const a = aliveCells[i];
+    for(let j=i+1;j<n;j++){
+      const b = aliveCells[j];
+      if(a.dead || b.dead) continue;
       if(a.sex === b.sex) continue;
 
-      const r = a.radius + b.radius;
+      // Nähe prüfen
       const dx = a.x - b.x, dy = a.y - b.y;
-      const d2 = dx*dx + dy*dy;
-      if(d2 > r*r) continue;
+      const rr = (a.radius + b.radius) * MATE_DISTANCE_FACTOR;
+      if (dx*dx + dy*dy > rr*rr) continue;
 
-      // Basale Paarungsbedingungen
-      if(a.age < MATING.MIN_AGE || b.age < MATING.MIN_AGE) continue;
-      if(a.energy < MATING.MIN_ENERGY || b.energy < MATING.MIN_ENERGY) continue;
+      // Cooldown
+      if((t - (a.lastMateAt||0)) < MATE_COOLDOWN_SEC) continue;
+      if((t - (b.lastMateAt||0)) < MATE_COOLDOWN_SEC) continue;
 
-      // Paarungswahrscheinlichkeit abhängig von Energie & Kompatibilität
-      const energyFactor = Math.min((a.energy + b.energy)/60, 1);
-      const chance = 0.25 + 0.5*energyFactor; // 0.25..0.75
-      if(Math.random() > chance) continue;
+      // Mutter/Father bestimmen
+      const mother = a.sex==='f' ? a : b;
+      const father = a.sex==='m' ? a : b;
 
-      // Inzucht (Relatedness)
-      const rel = relatednessFn ? relatednessFn(a, b) : 0;
+      const rel = typeof relatednessFn === 'function' ? relatednessFn(a,b) : 0;
+      const genes = recombineGenes(mother.genes, father.genes, { mutationRate, inbreeding: rel });
 
-      // Nachwuchs erzeugen
-      const protection = Math.round((a.genes.SCH + b.genes.SCH)/2);
-      const genes = recombineGenes(a.genes, b.genes, {
-        mutationRate, relatedness: rel, protection
-      });
+      const px = (a.x + b.x)/2 + (Math.random()*12-6);
+      const py = (a.y + b.y)/2 + (Math.random()*12-6);
 
-      // Kind übernimmt Stamm der Mutter (konstant für Legende); Editor erzeugt neue Stämme separat.
-      const mother = a.sex === 'f' ? a : b;
-      const father = a.sex === 'm' ? a : b;
-
-      a.energy -= MATING.ENERGY_COST_PARENT;
-      b.energy -= MATING.ENERGY_COST_PARENT;
-
-      const child = makeChild({
-        x: (a.x + b.x)/2 + (Math.random()*6-3),
-        y: (a.y + b.y)/2 + (Math.random()*6-3),
+      const child = spawnFn({
+        x: px, y: py,
         genes,
-        stammId: mother.stammId,
+        stammId: mother.stammId,                      // Stammlinie = Mutter
         parents: { motherId: mother.id, fatherId: father.id },
-        energy: MATING.ENERGY_BONUS_CHILD,
+        energy: 14
       });
 
-      Events.emit(EVT.BIRTH, { childId: child.id, motherId: mother.id, fatherId: father.id, relatedness: rel });
-      Events.emit(EVT.MATE,  { aId:a.id, bId:b.id, childId: child.id, relatedness: rel });
+      // Eltern belasten & pausieren
+      a.lastMateAt = b.lastMateAt = t;
+      a.energy = Math.max(0, a.energy - ENERGY_COST);
+      b.energy = Math.max(0, b.energy - ENERGY_COST);
+
+      // Events
+      Events.emit(EVT.MATE,  { aId:a.id, bId:b.id, motherId:mother.id, fatherId:father.id, relatedness: rel });
+      Events.emit(EVT.BIRTH, { id: child.id, stammId: child.stammId, parents: child.parents });
+
+      // Mini-Abstoßung, damit sie nicht festkleben
+      const ang = Math.atan2(dy, dx), push = 10;
+      a.vx +=  Math.cos(ang) * push; a.vy +=  Math.sin(ang) * push;
+      b.vx += -Math.cos(ang) * push; b.vy += -Math.sin(ang) * push;
     }
   }
 }
