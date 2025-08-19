@@ -272,3 +272,70 @@ input[type="range"]::-moz-range-thumb{
   #simCanvas{ height:58vh; }
   .paperHead, .scrollbox{ font-size:.95rem; }
 }
+/* === Apokalyptische Verkleidung (Frame + Nieten + Warnband) =============== */
+/* Aktiv, wenn <body class="skin-apoc"> gesetzt ist */
+body.skin-apoc #simCanvas{ position: relative; z-index: 1; }
+
+/* Metallrahmen mit Nieten (ohne zusätzliche DOM-Elemente) */
+body.skin-apoc #simCanvas::before{
+  content:""; position:absolute; inset:-18px; border-radius:22px;
+  /* Nieten in den vier Ecken (radial-gradients) + Metallpanel (linear-gradient) */
+  background:
+    radial-gradient(circle at 18px 18px,                 #5f6a63 0 6px, #2b332e 6px 7px, transparent 7px) no-repeat,
+    radial-gradient(circle at calc(100% - 18px) 18px,    #5f6a63 0 6px, #2b332e 6px 7px, transparent 7px) no-repeat,
+    radial-gradient(circle at 18px calc(100% - 18px),    #5f6a63 0 6px, #2b332e 6px 7px, transparent 7px) no-repeat,
+    radial-gradient(circle at calc(100% - 18px) calc(100% - 18px), #5f6a63 0 6px, #2b332e 6px 7px, transparent 7px) no-repeat,
+    linear-gradient(180deg,#18231c,#0f1713);
+  background-size: 18px 18px, 18px 18px, 18px 18px, 18px 18px, cover;
+  background-position: 0 0, 100% 0, 0 100%, 100% 100%, center;
+  border:1px solid #1a241d;
+  box-shadow:
+    0 14px 40px rgba(0,0,0,.55),
+    inset 0 0 0 1px rgba(255,255,255,.03),
+    inset 0 0 40px rgba(140,255,87,.06);
+  pointer-events:none;
+}
+
+/* Dezentes, halbtransparentes „Warnband“ schräg über den Rahmen */
+body.skin-apoc #simCanvas::after{
+  content:""; position:absolute; inset:-1px; border-radius:14px; pointer-events:none;
+  background:
+    repeating-linear-gradient(135deg,
+      rgba(0,0,0,.15) 0 14px,
+      rgba(255,205,0,.22) 14px 28px);
+  background-size: 220% 20%;
+  background-position: 0 0;
+  transform: translateY(-20%) rotate(-8deg);
+  mix-blend-mode:overlay; opacity:.35; filter: blur(.2px);
+}
+
+/* Optional: „Gefahr“-Badge am Canvas-Rand (klein & subtil) */
+body.skin-apoc #main::after{
+  content:"☣ ZONE-13"; position:absolute; right: 20px; top: 6px;
+  font: 700 12px/1 var(--font, system-ui);
+  letter-spacing:.08em; text-transform:uppercase;
+  color: rgba(140,255,87,.55);
+  text-shadow: 0 0 10px rgba(140,255,87,.18);
+  pointer-events:none;
+}
+
+/* Ticker leicht altern – feine Kanten und „abgegriffen“ */
+body.skin-apoc #ticker{
+  border-top-color:#c2b68a;
+  box-shadow:0 -8px 24px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.25);
+}
+body.skin-apoc .paperHead{
+  background:linear-gradient(180deg,#e6d5ac,#d6c396);
+  border-color:#c2b68a;
+}
+
+/* Leichter Vignette-Ring über dem Canvas (Atmosphäre) */
+body.skin-apoc #simCanvas{
+  box-shadow:inset 0 0 140px rgba(0,0,0,.22), inset 0 0 26px rgba(0,0,0,.25);
+}
+
+/* Wenn die Skin temporär deaktiviert werden soll, Klasse entfernen oder:
+body:not(.skin-apoc) #simCanvas::before,
+body:not(.skin-apoc) #simCanvas::after,
+body:not(.skin-apoc) #main::after{ display:none; }
+*/
