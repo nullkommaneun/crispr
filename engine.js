@@ -1,4 +1,4 @@
-// engine.js – Gameloop, UI, Orchestrierung (Fixed Timestep)
+// engine.js – Gameloop, UI, Orchestrierung (robust gegenüber fehlenden Exports)
 
 import { initErrorManager, setContextGetter, assertModule, showError } from './errorManager.js';
 import { Events, EVT } from './event.js';
@@ -24,6 +24,18 @@ let highlightStammId = null;
 const actionLog = [];
 const logAction = (s)=>{ actionLog.push(s); if(actionLog.length>20) actionLog.shift(); };
 
+// ---- sichere Helfer -------------------------------------------------------
+function safeGetStammCounts(){
+  if (typeof Entities.getStammCounts === 'function') return Entities.getStammCounts();
+  // Fallback: direkt aus Entities.cells ableiten
+  const counts = {};
+  const list = Array.isArray(Entities.cells) ? Entities.cells : [];
+  for (const c of list){ if(!c || c.dead) continue; counts[c.stammId] = (counts[c.stammId]||0)+1; }
+  return counts;
+}
+function safeSetWorldSize(w,h){ try{ Entities.setWorldSize(w,h); }catch{} }
+
+// ---- UI -------------------------------------------------------------------
 function setupUI(){
   const btnPlay = document.getElementById('btnPlayPause');
   const btnReset = document.getElementById('btnReset');
@@ -47,21 +59,21 @@ function setupUI(){
   btnSpeed.addEventListener('click', ()=>{ const i=(steps.indexOf(timescale)+1)%steps.length; applyTs(steps[i]); });
   applyTs(1);
 
-  // Mutation: Slider 0..10 (%)
+  // Mutation 0..10% (Default 0.5%)
   const applyMut=()=>{
-    const pct = Number(mutRange.value);         // 0..10
-    const p = pct/100;                          // 0..0.10
-    Entities.setMutationRate(p);
+    const pct = Number(mutRange.value);       // 0..10
+    const p = pct/100;                        // 0..0.10
+    try{ Entities.setMutationRate(p); }catch{}
     mutVal.textContent = `${pct.toFixed(1).replace('.0','')} %`;
     Events.emit(EVT.STATUS,{source:'engine', key:'mutationRatePct', value:pct});
   };
   mutRange.addEventListener('input', applyMut); applyMut();
 
-  // Nahrung: Slider 0..360 /s  → Entities erwartet pro Minute
+  // Nahrung 0..360 /s  (Entities speichert pro Minute)
   const applyFood=()=>{
-    const perSec = Number(foodRange.value);     // 0..360
-    const perMin = perSec * 60;                 // Entities speichert pro Minute
-    Entities.setFoodRate(perMin);
+    const perSec = Number(foodRange.value);   // 0..360
+    const perMin = perSec * 60;
+    try{ Entities.setFoodRate(perMin); }catch{}
     foodVal.textContent = `${perSec|0} /s`;
     Events.emit(EVT.STATUS,{source:'engine', key:'foodRatePerSec', value: perSec});
   };
@@ -69,10 +81,10 @@ function setupUI(){
 
   btnEditor.addEventListener('click', openEditor);
 
-  // Highlight-Knopf zyklisch
-  function getOrder(){ const counts=Entities.getStammCounts(); return ['all', ...Object.keys(counts).sort((a,b)=>Number(a)-Number(b))]; }
+  // Highlight-Knopf zyklisch (robust: nutzt safeGetStammCounts)
+  function getOrder(){ const counts=safeGetStammCounts(); return ['all', ...Object.keys(counts).sort((a,b)=>Number(a)-Number(b))]; }
   function refreshHighlightButton(){
-    const counts=Entities.getStammCounts();
+    const counts=safeGetStammCounts();
     if (highlightStammId!==null && !counts[highlightStammId]) { highlightStammId=null; renderer.setHighlight(null); }
     btnHighlightCycle.textContent = (highlightStammId===null) ? 'Alle Stämme' : `Stamm ${highlightStammId} (${counts[highlightStammId]||0})`;
   }
@@ -89,34 +101,36 @@ function setupUI(){
   Events.on(EVT.DEATH, refreshHighlightButton);
 
   // Canvas-Größe
-  function onResize(){ const rect=canvas.getBoundingClientRect(); Entities.setWorldSize(rect.width, rect.height); renderer.handleResize?.(); }
+  function onResize(){ const rect=canvas.getBoundingClientRect(); safeSetWorldSize(rect.width, rect.height); renderer.handleResize?.(); }
   if('ResizeObserver' in window) new ResizeObserver(onResize).observe(canvas); else window.addEventListener('resize', onResize);
   onResize();
 }
 
+// ---- Start/Reset -----------------------------------------------------------
 function toggleRun(){ running=!running; document.getElementById('btnPlayPause').textContent = running?'⏸ Pause':'▶️ Play'; }
 
 function resetWorld(){
-  Entities.resetEntities();
+  try{ Entities.resetEntities(); }catch{}
   const rect=document.getElementById('simCanvas').getBoundingClientRect();
-  Entities.setWorldSize(rect.width, rect.height);
+  safeSetWorldSize(rect.width, rect.height);
   seedWorld(rect.width, rect.height);
   accumulator=0;
   Events.emit(EVT.STATUS,{source:'engine', text:'Welt zurückgesetzt'});
 }
 
+// ---- Init / Loop -----------------------------------------------------------
 function init(){
   initErrorManager();
   setContextGetter(()=>({ tick:tickCount, fps, canvasW:renderer?.canvas?.width??0, canvasH:renderer?.canvas?.height??0, lastActions:actionLog }));
 
-  assertModule('Renderer', Renderer); assertModule('Entities', Entities);
+  assertModule('Renderer', Renderer);
 
   initTicker(); initNarrativePanel(); initAdvisor(); initEditor();
 
   const canvas = document.getElementById('simCanvas');
   renderer = new Renderer(canvas);
   const rect = canvas.getBoundingClientRect();
-  Entities.setWorldSize(rect.width, rect.height);
+  safeSetWorldSize(rect.width, rect.height);
   seedWorld(rect.width, rect.height);
 
   setupUI();
@@ -134,18 +148,19 @@ function loop(ts){
     accumulator += Math.min(MAX_ACC, dtRaw * timescale);
     let steps = 0;
     while (accumulator >= FIXED_DT) {
-      Entities.updateWorld(FIXED_DT);
+      try{ Entities.updateWorld(FIXED_DT); }catch(e){ showError('Update fehlgeschlagen', e); }
       accumulator -= FIXED_DT;
       steps++; if(steps>6){ accumulator=0; break; }
       tickCount++;
     }
-    renderer.renderFrame({ cells: Entities.cells, foods: Entities.foods });
+    renderer.renderFrame({ cells: Entities.cells||[], foods: Entities.foods||[] });
     updateAdvisor(performance.now()/1000);
     Events.emit(EVT.TICK, { tick: tickCount, fps });
   }
   requestAnimationFrame(loop);
 }
 
+// Narrative-Hooks
 function setupNarrativeTriggers(){
   Events.on(EVT.RESET, ()=> { Events.emit(EVT.TIP, {label:'Tipp', text:'Welt und IDs wurden zurückgesetzt.'}); });
   Events.on(EVT.MATE, (d)=>{ if(d.relatedness>=0.25){ Events.emit(EVT.TIP, {label:'Tipp', text:'Inzucht erkannt – Wahrscheinlichkeit negativer Mutationen steigt.'}); } });
