@@ -23,7 +23,7 @@ export function seedWorld(areaW, areaH){
   });
   setFounders(adam.id, eva.id);
 
-  // 10 Kinder (Mutterstamm = Eva)
+  // 10 Kinder von Adam & Eva (Mutterstamm = Eva)
   for(let i=0;i<10;i++){
     const jitterX = (Math.random()*40-20);
     const jitterY = (Math.random()*40-20);
@@ -44,6 +44,6 @@ export function seedWorld(areaW, areaH){
     });
   }
 
-  // Startnahrung – gut sichtbar
-  for(let i=0;i<120;i++) createFood();
+  // Erste Nahrung verteilen
+  for(let i=0;i<80;i++) createFood();
 }

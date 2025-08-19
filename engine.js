@@ -100,41 +100,36 @@ function setupUI(){
   });
 
   // Highlight
-  function applyHighlight(){
+  highlightSel.addEventListener('change', ()=>{
     const v = highlightSel.value;
     highlightStammId = v==='all' ? null : Number(v);
     renderer.setHighlight(highlightStammId);
     Events.emit(EVT.HIGHLIGHT_CHANGED, { stammId: highlightStammId });
-  }
-  highlightSel.addEventListener('change', applyHighlight);
+  });
 
   // Advisor
   btnAdvisor.addEventListener('click', async ()=>{
-    const isOff = advisorStatus.textContent.includes('Aus');
-    setAdvisorEnabled(isOff);
+    const current = advisorStatus.textContent.includes('Aus');
+    setAdvisorEnabled(!current);
     advisorStatus.textContent = getStatusLabel();
-    if (editorAdvisorStatus) {
-      editorAdvisorStatus.textContent = advisorStatus.textContent.replace('Berater: ','');
-    }
-    if(isOff){
+    editorAdvisorStatus.textContent = advisorStatus.textContent.replace('Berater: ','');
+    if(!current){
+      // optional: TF.js versuchen zu laden
       const ok = await tryLoadModel();
       advisorStatus.textContent = getStatusLabel();
-      if (editorAdvisorStatus) {
-        editorAdvisorStatus.textContent = advisorStatus.textContent.replace('Berater: ','');
-      }
+      editorAdvisorStatus.textContent = advisorStatus.textContent.replace('Berater: ','');
     }
   });
 
-  // Canvas-Größe → Welt
+  // Canvas Größe an Renderer melden
   function onResize(){
     const rect = canvas.getBoundingClientRect();
     Entities.setWorldSize(rect.width, rect.height);
   }
-  if ('ResizeObserver' in window) new ResizeObserver(onResize).observe(canvas);
-  else window.addEventListener('resize', onResize);
+  new ResizeObserver(onResize).observe(canvas);
   onResize();
 
-  // Legenden-Optionen initialisieren
+  // Legende-Optionen initialisieren
   function refreshHighlightOptions(){
     const counts = Entities.getStammCounts();
     const sel = highlightSel;
@@ -143,9 +138,9 @@ function setupUI(){
       Object.keys(counts).sort((a,b)=>Number(a)-Number(b))
         .map(id=>`<option value="${id}">Stamm ${id} (${counts[id]})</option>`).join('');
     if(current && [...sel.options].some(o=>o.value===current)) sel.value = current;
-    applyHighlight();
   }
   refreshHighlightOptions();
+  // Bei Geburten/Toden aktualisieren
   Events.on(EVT.BIRTH, refreshHighlightOptions);
   Events.on(EVT.DEATH, refreshHighlightOptions);
 }
@@ -159,7 +154,6 @@ function toggleRun(){
 function resetWorld(){
   Entities.resetEntities();
   const rect = document.getElementById('simCanvas').getBoundingClientRect();
-  Entities.setWorldSize(rect.width, rect.height);
   seedWorld(rect.width, rect.height);
   Events.emit(EVT.STATUS, {source:'engine', text:'Welt zurückgesetzt'});
 }
@@ -174,49 +168,57 @@ function init(){
     lastActions: actionLog
   }));
 
+  // Grundfunktionalität prüfen
   assertModule('Renderer', Renderer);
   assertModule('Entities', Entities);
 
+  // Module initialisieren
   initTicker();
   initNarrativePanel();
   initAdvisor();
   initEditor();
 
+  // Renderer
   const canvas = document.getElementById('simCanvas');
   renderer = new Renderer(canvas);
 
+  // Welt seed
   const rect = canvas.getBoundingClientRect();
   Entities.setWorldSize(rect.width, rect.height);
   seedWorld(rect.width, rect.height);
 
   setupUI();
 
-  // Starten
-  running = true;
-  document.getElementById('btnPlayPause').textContent = '⏸ Pause';
+  // Start pausiert?
+  toggleRun(); // gleich starten
   requestAnimationFrame(loop);
 }
 
 function loop(ts){
   const dtRaw = (ts - (lastTs || ts)) / 1000;
   lastTs = ts;
-  const dt = Math.min(0.05, dtRaw) * timescale;
+  const dt = Math.min(0.05, dtRaw) * timescale; // clamp
 
   if(running){
     tickCount++;
     Entities.updateWorld(dt);
     renderer.renderFrame({ cells: Entities.cells, foods: Entities.foods });
     updateAdvisor(performance.now()/1000);
+    // FPS-Schätzung
     fps = 0.9*fps + 0.1*(1/(dtRaw||1/60));
     Events.emit(EVT.TICK, { tick: tickCount, fps });
   }
+
   requestAnimationFrame(loop);
 }
 
+// Narrative-Spezifische Headlines aufsetzen (einmalig)
 function setupNarrativeTriggers(){
+  // Bei Reset: IDs zurückgesetzt → Status in Narrative/Ticker andeuten
   Events.on(EVT.RESET, ()=> {
     Events.emit(EVT.TIP, {label:'Reset', text:'Welt und IDs wurden zurückgesetzt.'});
   });
+  // Zusätzliche nüchterne Status-Hinweise
   Events.on(EVT.MATE, (d)=>{
     if(d.relatedness >= 0.25){
       Events.emit(EVT.TIP, {label:'Genetik', text:'Inzucht erkannt – höhere Wahrscheinlichkeit negativer Mutationen.'});
@@ -224,17 +226,11 @@ function setupNarrativeTriggers(){
   });
 }
 
-function start(){
+window.addEventListener('DOMContentLoaded', ()=>{
   try{
     init();
     setupNarrativeTriggers();
   }catch(err){
     showError('Initialisierung fehlgeschlagen', err);
   }
-}
-
-if (document.readyState === 'loading') {
-  window.addEventListener('DOMContentLoaded', start, { once: true });
-} else {
-  start();
-}
+});

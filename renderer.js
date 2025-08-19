@@ -8,7 +8,7 @@ export class Renderer {
   constructor(canvas){
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
-    this.pixelRatio = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
+    this.pixelRatio = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
     this.highlightStammId = null;
   }
 
@@ -35,7 +35,7 @@ export class Renderer {
   drawGrid(){
     const {ctx, canvas} = this;
     ctx.save();
-    ctx.strokeStyle = 'rgba(121,255,156,0.05)'; // Theme
+    ctx.strokeStyle = 'rgba(255,255,255,0.05)';
     ctx.lineWidth = 1;
     const step = 40 * this.pixelRatio;
     for(let x=0; x<canvas.width; x+=step){
@@ -50,12 +50,11 @@ export class Renderer {
   drawFoods(foods){
     const {ctx} = this;
     ctx.save();
+    ctx.fillStyle = 'rgba(100, 255, 150, 0.9)';
     for(const f of foods){
       const x = Math.round(f.x * this.pixelRatio);
       const y = Math.round(f.y * this.pixelRatio);
-      const s = Math.max(5, 5*this.pixelRatio); // gut sichtbar
-      ctx.fillStyle = 'rgba(122, 255, 180, 0.95)';
-      ctx.fillRect(x - s/2, y - s/2, s, s);
+      ctx.fillRect(x-2, y-2, 4, 4);
     }
     ctx.restore();
   }
@@ -70,18 +69,13 @@ export class Renderer {
       const y = Math.round(c.y * this.pixelRatio);
       const r = Math.max(2, c.radius) * this.pixelRatio;
 
-      // Außenkreis
       ctx.globalAlpha = color.alpha;
       ctx.fillStyle = color.fill;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI*2);
+      ctx.fill();
 
-      // Glow bei Highlight
-      const glow = (this.highlightStammId===null || c.stammId===this.highlightStammId) ? 8*this.pixelRatio : 0;
-      if(glow>0){ ctx.shadowColor = 'rgba(121,255,156,0.25)'; ctx.shadowBlur = glow; }
-
-      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2); ctx.fill();
-
-      // Innenpunkt (Geschlecht)
-      ctx.shadowBlur = 0;
+      // kleiner Innenpunkt für Geschlecht
       ctx.globalAlpha = color.alpha * 0.9;
       ctx.fillStyle = c.sex === 'm' ? 'rgba(120,180,255,0.9)' : 'rgba(255,160,200,0.9)';
       ctx.beginPath(); ctx.arc(x, y, Math.max(1, r*0.35), 0, Math.PI*2); ctx.fill();

@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <title>CRISPR Genetics Lab</title>
-  <link rel="stylesheet" href="./style.css?v=apoc3" />
+  <link rel="stylesheet" href="./style.css" />
 </head>
 <body>
   <!-- Fehler-Overlay (rot, oben) -->
@@ -28,8 +28,8 @@
       <span id="mutationRateVal" class="mono">10%</span>
 
       <label for="foodRate">Nahrung</label>
-      <input id="foodRate" type="range" min="0" max="240" value="90" step="5" />
-      <span id="foodRateVal" class="mono">90</span>
+      <input id="foodRate" type="range" min="0" max="200" value="60" step="5" />
+      <span id="foodRateVal" class="mono">60</span>
 
       <label for="highlightSelect">Highlight</label>
       <select id="highlightSelect">
@@ -131,41 +131,7 @@
     </form>
   </dialog>
 
-  <!-- Boot-Watchdog (nur informative Meldung, kein „lokaler Webserver“ mehr) -->
-  <script>
-    (function(){
-      window.__CRISPR_WATCHDOG__ = setTimeout(function(){
-        const ov = document.getElementById('errorOverlay');
-        if(!ov) return;
-        ov.textContent = '⚠️ Module laden ungewöhnlich langsam oder wurden blockiert. Bitte neu laden. Details in der Konsole.';
-        ov.classList.add('show');
-      }, 2500);
-    })();
-  </script>
-
-  <!-- ES-Module robust importieren + echte Fehlermeldung -->
-  <script type="module">
-    (async () => {
-      try{
-        await import('./engine.js?v=apoc3');
-        clearTimeout(window.__CRISPR_WATCHDOG__);
-      }catch(err){
-        clearTimeout(window.__CRISPR_WATCHDOG__);
-        const ov = document.getElementById('errorOverlay');
-        if(ov){
-          ov.textContent = '⚠️ Module konnten nicht geladen werden: ' +
-            (err?.message || String(err)) +
-            ' — Prüfe Pfade/Dateinamen und MIME-Type. (GitHub Pages: Groß/Kleinschreibung!)';
-          ov.classList.add('show');
-        }
-        console.error('[CRISPR] Modul-Importfehler', err);
-      }
-    })();
-  </script>
-
-  <script nomodule>
-    const ov = document.getElementById('errorOverlay');
-    if(ov){ ov.textContent = '⚠️ Dieser Browser unterstützt keine ES‑Module.'; ov.classList.add('show'); }
-  </script>
+  <!-- Einstieg über engine.js -->
+  <script type="module" src="./engine.js"></script>
 </body>
 </html>

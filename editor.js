@@ -60,18 +60,11 @@ export function initEditor(){
       energy: 22
     });
     Events.emit(EVT.TIP, { label:'Editor', text:`Neue Zelle #${c.id} als neuer Stamm ${stamm} erzeugt.` });
-    if (dlg && dlg.close) dlg.close('ok'); else if (dlg) dlg.removeAttribute('open');
+    dlg.close('ok');
   });
 
   // Close
-  closeBtn.addEventListener('click', ()=>{
-    if (dlg && dlg.close) dlg.close('cancel'); else if (dlg) dlg.removeAttribute('open');
-  });
+  closeBtn.addEventListener('click', ()=> dlg.close('cancel'));
 }
 
-export function openEditor(){
-  const dlg = document.getElementById('editorModal');
-  if (!dlg) return;
-  if (dlg.showModal) dlg.showModal();
-  else dlg.setAttribute('open','');
-}
+export function openEditor(){ document.getElementById('editorModal').showModal(); }
