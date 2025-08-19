@@ -4,20 +4,19 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <title>CRISPR Genetics Lab</title>
-  <link rel="stylesheet" href="./style.css?v=apoc6" />
+  <link rel="stylesheet" href="./style.css?v=apoc7" />
 </head>
 <body>
   <!-- Fehler-Overlay (rot, oben) -->
   <div id="errorOverlay" class="hidden" role="alert" aria-live="assertive"></div>
 
-  <!-- Toolbar -->
+  <!-- Toolbar (ohne Advisor/Export/Import) -->
   <header class="toolbar" id="toolbar">
     <div class="toolbar-row">
       <button id="btnPlayPause" title="Abspielen/Pausieren (Leertaste)">▶️ Play</button>
       <button id="btnReset" title="Simulation zurücksetzen">🔄 Reset</button>
 
       <label>Timescale</label>
-      <!-- Zyklus-Button: 1× → 5× → 10× -->
       <button id="btnSpeedCycle" title="Geschwindigkeit durchschalten">⚡ 1×</button>
 
       <label for="mutationRate">Mutation</label>
@@ -29,19 +28,9 @@
       <span id="foodRateVal" class="mono">90</span>
 
       <label>Highlight</label>
-      <!-- Zyklus-Button: Alle → Stamm 1 → Stamm 2 → … -->
       <button id="btnHighlightCycle" title="Stämme durchschalten">Alle Stämme</button>
 
       <button id="btnEditor" title="CRISPR-Editor öffnen">🧬 Editor</button>
-
-      <button id="btnExport" title="Welt exportieren">⬇️ Export</button>
-      <label class="importLabel">
-        ⬆️ Import
-        <input id="fileImport" type="file" accept="application/json" />
-      </label>
-
-      <button id="btnAdvisor" title="KI-Berater umschalten">🤖 Advisor</button>
-      <span id="advisorStatus" class="status-badge">Berater: Aus</span>
     </div>
   </header>
 
@@ -66,7 +55,7 @@
     </div>
   </footer>
 
-  <!-- Editor-Modal -->
+  <!-- Editor-Modal (mit Advisor-Steuerung) -->
   <dialog id="editorModal" aria-labelledby="editorTitle">
     <form method="dialog" id="editorForm">
       <header class="modalHeader">
@@ -77,6 +66,7 @@
       <div class="modalBody">
         <section class="editorLeft">
           <h3>Traits anpassen</h3>
+
           <div class="traitRow" data-trait="TEM">
             <label>TEM – Tempo</label>
             <div class="stepper">
@@ -85,6 +75,7 @@
               <button type="button" class="inc">+1</button>
             </div>
           </div>
+
           <div class="traitRow" data-trait="GRO">
             <label>GRÖ – Größe</label>
             <div class="stepper">
@@ -93,6 +84,7 @@
               <button type="button" class="inc">+1</button>
             </div>
           </div>
+
           <div class="traitRow" data-trait="EFF">
             <label>EFF – Effizienz</label>
             <div class="stepper">
@@ -101,6 +93,7 @@
               <button type="button" class="inc">+1</button>
             </div>
           </div>
+
           <div class="traitRow" data-trait="SCH">
             <label>SCH – Schutz</label>
             <div class="stepper">
@@ -109,6 +102,7 @@
               <button type="button" class="inc">+1</button>
             </div>
           </div>
+
           <div class="editorActions">
             <button id="editorApply" class="primary" type="submit" value="ok">Übernehmen</button>
           </div>
@@ -118,9 +112,19 @@
         <section class="editorRight">
           <h3>Lebende Zellen • Prognose</h3>
           <div id="editorCellList" class="cellList"></div>
+
           <div class="advisorBox">
-            <div><strong>KI-Advisor:</strong> <span id="editorAdvisorStatus">Heuristik aktiv</span></div>
-            <small id="editorAdvisorNote">Mit Modell: „Modell geladen“ (TensorFlow.js) • Ohne: Heuristik</small>
+            <div class="advisorHeader">
+              <strong>KI‑Advisor:</strong>
+              <span id="editorAdvisorStatus">Aus</span>
+            </div>
+
+            <div class="advisorCtrls">
+              <button type="button" id="editorAdvisorToggle" title="Modus umschalten">Modus: Umschalten</button>
+              <input type="text" id="editorModelUrl" placeholder="ml/models/my_model/model.json" value="ml/models/my_model/model.json" />
+              <button type="button" id="editorModelLoad" title="TensorFlow.js Modell laden">Modell laden</button>
+            </div>
+            <small id="editorAdvisorNote">Modi: Aus • Heuristik • Modell (TensorFlow.js)</small>
           </div>
         </section>
       </div>
@@ -143,7 +147,7 @@
   <script type="module">
     (async () => {
       try{
-        await import('./engine.js?v=apoc6');
+        await import('./engine.js?v=apoc7');
         clearTimeout(window.__CRISPR_WATCHDOG__);
       }catch(err){
         clearTimeout(window.__CRISPR_WATCHDOG__);

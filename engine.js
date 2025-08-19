@@ -1,5 +1,5 @@
 // engine.js
-// Gameloop, Tick, UI-Verknüpfung, Gesamtorchestrierung.
+// Gameloop, Tick, UI-Verknüpfung, Gesamtorchestrierung (ohne Advisor-/Export-/Import-Buttons in der Toolbar).
 
 import { initErrorManager, setContextGetter, assertModule, showError } from './errorManager.js';
 import { Events, EVT } from './events.js';
@@ -8,7 +8,7 @@ import { seedWorld } from './spawn.js';
 import * as Entities from './entities.js';
 import { initTicker } from './ticker.js';
 import { initNarrativePanel } from './narrative/panel.js';
-import { initAdvisor, setEnabled as setAdvisorEnabled, getStatusLabel, tryLoadTF, updateAdvisor } from './advisor.js';
+import { initAdvisor, updateAdvisor } from './advisor.js';
 import { initEditor, openEditor } from './editor.js';
 
 let renderer;
@@ -31,12 +31,7 @@ function setupUI(){
   const mutVal = document.getElementById('mutationRateVal');
   const foodVal = document.getElementById('foodRateVal');
   const btnEditor = document.getElementById('btnEditor');
-  const btnExport = document.getElementById('btnExport');
-  const fileImport = document.getElementById('fileImport');
   const btnHighlightCycle = document.getElementById('btnHighlightCycle');
-  const btnAdvisor = document.getElementById('btnAdvisor');
-  const advisorStatus = document.getElementById('advisorStatus');
-  const editorAdvisorStatus = document.getElementById('editorAdvisorStatus');
   const canvas = document.getElementById('simCanvas');
 
   // Play/Pause
@@ -82,31 +77,6 @@ function setupUI(){
   // Editor
   btnEditor.addEventListener('click', openEditor);
 
-  // Export
-  btnExport.addEventListener('click', ()=>{
-    try{
-      const json = Entities.exportState();
-      const blob = new Blob([json], {type:'application/json'});
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url; a.download = `crispr_world_${Date.now()}.json`;
-      a.click();
-      URL.revokeObjectURL(url);
-      logAction('Export');
-    }catch(err){ showError('Export fehlgeschlagen', err); }
-  });
-
-  // Import
-  fileImport.addEventListener('change', async (e)=>{
-    const file = e.target.files?.[0]; if(!file) return;
-    try{
-      const text = await file.text();
-      Entities.importState(text);
-      refreshHighlightButton();
-      logAction('Import');
-    }catch(err){ showError('Import fehlgeschlagen', err); }
-  });
-
   // Highlight (Button zyklisch: Alle → Stamm 1 → Stamm 2 → …)
   function getHighlightOrder(){
     const counts = Entities.getStammCounts();
@@ -115,7 +85,6 @@ function setupUI(){
   function refreshHighlightButton(){
     const counts = Entities.getStammCounts();
     if (highlightStammId!==null && !counts[highlightStammId]) {
-      // derzeitiger Stamm existiert nicht mehr → zurück auf Alle
       highlightStammId = null;
       renderer.setHighlight(null);
     }
@@ -137,23 +106,6 @@ function setupUI(){
   refreshHighlightButton();
   Events.on(EVT.BIRTH, refreshHighlightButton);
   Events.on(EVT.DEATH, refreshHighlightButton);
-
-  // Advisor
-  btnAdvisor.addEventListener('click', async ()=>{
-    const isOff = advisorStatus.textContent.includes('Aus');
-    setAdvisorEnabled(isOff);
-    advisorStatus.textContent = getStatusLabel();
-    if (editorAdvisorStatus) {
-      editorAdvisorStatus.textContent = advisorStatus.textContent.replace('Berater: ','');
-    }
-    if(isOff){
-      await tryLoadTF(); // TF-Bib bereitstellen (Modell optional)
-      advisorStatus.textContent = getStatusLabel();
-      if (editorAdvisorStatus) {
-        editorAdvisorStatus.textContent = advisorStatus.textContent.replace('Berater: ','');
-      }
-    }
-  });
 
   // Canvas-Größe → Welt
   function onResize(){
@@ -194,7 +146,7 @@ function init(){
 
   initTicker();
   initNarrativePanel();
-  initAdvisor();
+  initAdvisor();     // Advisor existiert weiterhin; Steuerung erfolgt im Editor
   initEditor();
 
   const canvas = document.getElementById('simCanvas');

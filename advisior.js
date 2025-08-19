@@ -1,6 +1,6 @@
 // advisor.js
 // KI-Berater: Heuristik; optional TensorFlow.js + Modell.
-// Liefert Prognose für den Editor und sendet Tipps/Status in den Ticker.
+// Modus: Aus • Heuristik • Modell. Steuerung erfolgt im Editor.
 
 import { Events, EVT } from './events.js';
 import { survivalScore } from './genetics.js';
@@ -9,6 +9,7 @@ const state = {
   enabled: false,
   libReady: false,   // tf.js Bibliothek geladen?
   model: null,       // tf.Model (optional)
+  useModel: false,   // wenn Modell vorhanden, ob es aktiv genutzt wird
   metrics: { births:0, deaths:0, hungerDeaths:0 },
   lastHeuristicAt: 0
 };
@@ -19,25 +20,23 @@ export function initAdvisor(){
     state.metrics.deaths++;
     if(d?.reason==='hunger') state.metrics.hungerDeaths++;
   });
-  Events.on(EVT.HUNGER_CRISIS, (d)=>{
-    tip('🔥 Hungersnot', `> ${d.inLastMinute} Todesfälle in 60 s. Tipp: Nahrung erhöhen oder Timescale senken.`);
-  });
-  Events.on(EVT.OVERPOP, (d)=>{
-    tip('🐝 Überbevölkerung', `Population ${d.population}. Tipp: Nahrung reduzieren oder Mutationsrate erhöhen.`);
-  });
 }
 
 function tip(label, text){ Events.emit(EVT.TIP, { label, text }); }
 
 export function setEnabled(on){
-  state.enabled = on;
+  state.enabled = !!on;
+  Events.emit(EVT.STATUS, { source:'advisor', text: getStatusLabel().replace('Berater: ','') });
+}
+
+export function setUseModel(on){
+  state.useModel = !!on && !!state.model;
   Events.emit(EVT.STATUS, { source:'advisor', text: getStatusLabel().replace('Berater: ','') });
 }
 
 export function getStatusLabel(){
   if(!state.enabled) return 'Berater: Aus';
-  if(state.model)     return 'Berater: Modell geladen';
-  if(state.libReady)  return 'Berater: Heuristik (TF bereit)';
+  if(state.useModel && state.model) return 'Berater: Modell aktiv';
   return 'Berater: Heuristik aktiv';
 }
 
@@ -62,19 +61,37 @@ export async function loadModelFromUrl(url){
   if(!ok) return null;
   const tf = window.tf;
   state.model = await tf.loadLayersModel(url);
+  state.useModel = true;
+  setEnabled(true);
   Events.emit(EVT.STATUS, { source:'advisor', text:'Modell geladen' });
   return state.model;
 }
 
-/** Kompatibilitäts‑Alias: alte Aufrufer erwarteten tryLoadModel(). */
-export async function tryLoadModel(url){
-  // Mit URL: echtes Modell laden, ohne URL: nur TF-Bibliothek bereitstellen.
-  return url ? loadModelFromUrl(url) : tryLoadTF();
+/** Zyklischer Moduswechsel für den Editor: Off → Heuristik → Modell (falls vorhanden) → Heuristik ... */
+export async function cycleAdvisorMode(defaultModelUrl){
+  if(!state.enabled){
+    setEnabled(true);
+    await tryLoadTF();
+    state.useModel = false;
+    return 'heuristic';
+  }
+  if(state.model){
+    state.useModel = !state.useModel;
+    return state.useModel ? 'model' : 'heuristic';
+  }
+  // Kein Modell vorhanden → versuchen zu laden, falls URL gegeben, sonst ausschalten
+  if(defaultModelUrl){
+    const m = await loadModelFromUrl(defaultModelUrl).catch(()=>null);
+    if(m){ state.useModel = true; return 'model'; }
+  }
+  setEnabled(false);
+  state.useModel = false;
+  return 'off';
 }
 
-/** Prognose 0..1 (TF‑Modell falls vorhanden, sonst Heuristik). */
+/** Prognose 0..1 (TF‑Modell falls aktiv, sonst Heuristik). */
 export function predictProbability(genome){
-  if(state.model && window.tf){
+  if(state.enabled && state.useModel && state.model && window.tf){
     const tf = window.tf;
     const x = [genome.TEM, genome.GRO, genome.EFF, genome.SCH].map(v=>v/9);
     const t = tf.tensor2d([x]);
@@ -85,7 +102,7 @@ export function predictProbability(genome){
     t.dispose?.();
     return Math.max(0, Math.min(1, p));
   }
-  // Heuristik: nutzt unsere Survival-Score-Skala 0..100
+  // Heuristik
   return survivalScore(genome) / 100;
 }
 
