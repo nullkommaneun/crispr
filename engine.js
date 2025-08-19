@@ -1,4 +1,4 @@
-// engine.js – Gameloop, UI, Orchestrierung
+// engine.js – Gameloop, UI, Orchestrierung (mit Fixed Timestep)
 
 import { initErrorManager, setContextGetter, assertModule, showError } from './errorManager.js';
 import { Events, EVT } from './event.js';
@@ -13,7 +13,13 @@ import { initEditor, openEditor } from './editor.js';
 let renderer;
 let running = false;
 let timescale = 1;
+
+// Fixed timestep
+const FIXED_DT = 1/60;          // 60 Hz
+const MAX_ACC  = 0.25;          // Max. aufzuarbeitende Zeit
 let lastTs = 0;
+let accumulator = 0;
+
 let fps = 0;
 let tickCount = 0;
 let highlightStammId = null;
@@ -41,26 +47,25 @@ function setupUI(){
     logAction('Reset');
   });
 
-  // Timescale zyklisch
-  const speedSteps = [1,5,10];
-  const applyTimescale=(v)=>{
-    timescale=v;
-    btnSpeed.textContent=`⚡ ${v}×`;
-    // -> als Statuswert (nicht im Ticker anzeigen, nur für Metriken)
-    Events.emit(EVT.STATUS,{source:'engine', key:'timescale', value: v, text:`Timescale: ${v}×`});
+  // Timescale – zyklisch 1× → 5× → 10×
+  const steps = [1,5,10];
+  const applyTs = (v)=>{
+    timescale = v;
+    btnSpeed.textContent = `⚡ ${v}×`;
+    Events.emit(EVT.STATUS,{source:'engine', key:'timescale', value:v, text:`Timescale: ${v}×`});
   };
   btnSpeed.addEventListener('click', ()=>{
-    const idx=(speedSteps.indexOf(timescale)+1)%speedSteps.length;
-    applyTimescale(speedSteps[idx]);
+    const i = (steps.indexOf(timescale)+1)%steps.length;
+    applyTs(steps[i]);
   });
-  applyTimescale(1);
+  applyTs(1);
 
   // Mutation
   const applyMut=()=>{
     const p=Number(mutRange.value)/100;
     Entities.setMutationRate(p);
     mutVal.textContent=`${Math.round(p*100)}%`;
-    Events.emit(EVT.STATUS,{source:'engine', key:'mutationRate', value: p, text:`Mutation: ${Math.round(p*100)}%`});
+    Events.emit(EVT.STATUS,{source:'engine', key:'mutationRate', value:p, text:`Mutation: ${Math.round(p*100)}%`});
   };
   mutRange.addEventListener('input', applyMut); applyMut();
 
@@ -69,41 +74,42 @@ function setupUI(){
     const r=Number(foodRange.value);
     Entities.setFoodRate(r);
     foodVal.textContent=`${r}`;
-    Events.emit(EVT.STATUS,{source:'engine', key:'foodRate', value: r, text:`Nahrung: ${r}/min`});
+    Events.emit(EVT.STATUS,{source:'engine', key:'foodRate', value:r, text:`Nahrung: ${r}/min`});
   };
   foodRange.addEventListener('input', applyFood); applyFood();
 
   // Editor
   btnEditor.addEventListener('click', openEditor);
 
-  // Highlight-Knopf zyklisch
-  function getHighlightOrder(){
-    const counts=Entities.getStammCounts();
+  // Highlight – zyklisch
+  function getOrder(){
+    const counts = Entities.getStammCounts();
     return ['all', ...Object.keys(counts).sort((a,b)=>Number(a)-Number(b))];
   }
   function refreshHighlightButton(){
-    const counts=Entities.getStammCounts();
+    const counts = Entities.getStammCounts();
     if (highlightStammId!==null && !counts[highlightStammId]) { highlightStammId=null; renderer.setHighlight(null); }
     btnHighlightCycle.textContent = (highlightStammId===null) ? 'Alle Stämme' : `Stamm ${highlightStammId} (${counts[highlightStammId]||0})`;
   }
   btnHighlightCycle.addEventListener('click', ()=>{
-    const ids=getHighlightOrder();
-    const cur=(highlightStammId===null)?'all':String(highlightStammId);
-    const idx=(ids.indexOf(cur)+1)%ids.length;
+    const ids = getOrder();
+    const cur = (highlightStammId===null)?'all':String(highlightStammId);
+    const idx = (ids.indexOf(cur)+1)%ids.length;
     const next=ids[idx];
-    highlightStammId=(next==='all')?null:Number(next);
+    highlightStammId = (next==='all')?null:Number(next);
     renderer.setHighlight(highlightStammId);
-    Events.emit(EVT.HIGHLIGHT_CHANGED, {stammId:highlightStammId});
+    Events.emit(EVT.HIGHLIGHT_CHANGED,{stammId:highlightStammId});
     refreshHighlightButton();
   });
-  refreshHighlightButton(); 
-  Events.on(EVT.BIRTH, refreshHighlightButton); 
+  refreshHighlightButton();
+  Events.on(EVT.BIRTH, refreshHighlightButton);
   Events.on(EVT.DEATH, refreshHighlightButton);
 
   // Canvas-Größe
   function onResize(){
     const rect = canvas.getBoundingClientRect();
     Entities.setWorldSize(rect.width, rect.height);
+    renderer.handleResize();
   }
   if('ResizeObserver' in window) new ResizeObserver(onResize).observe(canvas);
   else window.addEventListener('resize', onResize);
@@ -117,6 +123,7 @@ function resetWorld(){
   const rect = document.getElementById('simCanvas').getBoundingClientRect();
   Entities.setWorldSize(rect.width, rect.height);
   seedWorld(rect.width, rect.height);
+  accumulator = 0;
   Events.emit(EVT.STATUS, {source:'engine', text:'Welt zurückgesetzt'});
 }
 
@@ -146,17 +153,40 @@ function init(){
 }
 
 function loop(ts){
-  const dtRaw=(ts-(lastTs||ts))/1000; lastTs=ts;
-  const dt = Math.min(0.05, dtRaw)*timescale;
+  if(!lastTs) lastTs = ts;
+  const dtRaw = (ts - lastTs) / 1000;
+  lastTs = ts;
+
+  // FPS-Schätzung
+  const instFps = 1 / Math.max(1e-6, dtRaw);
+  fps = 0.9*fps + 0.1*instFps;
 
   if(running){
-    tickCount++;
-    Entities.updateWorld(dt);
+    // Zeitschritt-Akkumulator (mit Timescale)
+    accumulator += Math.min(MAX_ACC, dtRaw * timescale);
+
+    // Physik in konstanten Schritten
+    let steps = 0;
+    while (accumulator >= FIXED_DT) {
+      Entities.updateWorld(FIXED_DT);
+      accumulator -= FIXED_DT;
+      steps++;
+      tickCount++;
+      if (steps > 6) { // Panikschutz
+        accumulator = 0;
+        break;
+      }
+    }
+
+    // EIN Render pro rAF
     renderer.renderFrame({ cells: Entities.cells, foods: Entities.foods });
+
+    // Advisor nur 1× pro rAF
     updateAdvisor(performance.now()/1000);
-    fps = 0.9*fps + 0.1*(1/(dtRaw||1/60));
-    Events.emit(EVT.TICK, { tick:tickCount, fps });
+
+    Events.emit(EVT.TICK, { tick: tickCount, fps });
   }
+
   requestAnimationFrame(loop);
 }
 
