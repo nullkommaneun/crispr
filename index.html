@@ -4,7 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <title>CRISPR Genetics Lab</title>
-  <link rel="stylesheet" href="./style.css?v=apoc7" />
+  <link rel="stylesheet" href="./style.css?v=apoc8" />
+  <!-- optional: hilft beim schnelleren Laden -->
+  <link rel="modulepreload" href="./engine.js?v=apoc8">
 </head>
 <body>
   <!-- Fehler-Overlay (rot, oben) -->
@@ -143,20 +145,34 @@
     })();
   </script>
 
-  <!-- ES-Module robust importieren -->
+  <!-- ES-Module robust importieren (mit Diagnose bei 404/MIME-Problemen) -->
   <script type="module">
     (async () => {
+      const ov = document.getElementById('errorOverlay');
+      function show(msg){
+        if(!ov) return;
+        ov.textContent = msg;
+        ov.classList.add('show');
+      }
       try{
-        await import('./engine.js?v=apoc7');
+        // Import ohne Query-String (minimiert 404-Fallen)
+        await import('./engine.js?v=apoc8');
         clearTimeout(window.__CRISPR_WATCHDOG__);
       }catch(err){
         clearTimeout(window.__CRISPR_WATCHDOG__);
-        const ov = document.getElementById('errorOverlay');
-        if(ov){
-          ov.textContent = '⚠️ Module konnten nicht geladen werden: ' +
-            (err?.message || String(err)) +
-            ' — Pfade/Dateinamen prüfen (GitHub Pages: Groß/Kleinschreibung).';
-          ov.classList.add('show');
+        // Diagnose: existiert die Datei wirklich?
+        try{
+          const res = await fetch('./engine.js?v=cachebuster_' + Date.now(), { cache: 'no-store' });
+          const ct = (res.headers.get('content-type') || '').toLowerCase();
+          if(!res.ok){
+            show(`⚠️ engine.js nicht gefunden (${res.status}). Prüfe Dateiname & Pfad: exakt "engine.js" (klein) neben index.html. (GitHub Pages ist case-sensitiv.)`);
+          }else if(!ct.includes('javascript')){
+            show(`⚠️ engine.js geladen, aber MIME‑Type ist "${ct}". Häufige Ursache: 404‑Fallback als HTML. Prüfe Schreibweise/Kleinbuchstaben.`);
+          }else{
+            show('⚠️ Importing a module script failed – Unterimport defekt? Prüfe Pfade in engine.js (z. B. "./events.js").');
+          }
+        }catch{
+          show('⚠️ Module konnten nicht geladen werden: Netzwerk/Fetch‑Problem beim Laden von engine.js.');
         }
         console.error('[CRISPR] Modul-Importfehler', err);
       }
