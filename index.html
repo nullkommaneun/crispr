@@ -131,24 +131,41 @@
     </form>
   </dialog>
 
-  <!-- Boot‑Watchdog: zeigt klaren Fehler, falls Module nicht laden (z. B. file://) -->
+  <!-- BOOT‑WATCHDOG + robuster Modul‑Import -->
   <script>
     (function(){
-      // Startet einen Timer. Wenn der Inline-ESM unten nicht feuert, wird nach 1200ms
-      // das Fehler-Overlay sichtbar – auch ohne engine.js/errorManager.js.
+      // Meldung nur, wenn wirklich nichts importiert werden konnte.
       window.__CRISPR_WATCHDOG__ = setTimeout(function(){
         var ov = document.getElementById('errorOverlay');
         if(!ov) return;
-        ov.textContent = '⚠️ Module wurden nicht geladen. Öffne die Seite über einen lokalen Webserver (http://…), nicht per Datei. Beispiel: python -m http.server';
+        var msg = (location.protocol === 'file:')
+          ? '⚠️ Module wurden nicht geladen. Öffne die Seite über einen Webserver (http://…), nicht per Datei.'
+          : '⚠️ Module laden ungewöhnlich langsam oder wurden blockiert. Bitte neu laden. Falls es bleibt: Konsole prüfen.';
+        ov.textContent = msg;
         ov.classList.add('show');
-      }, 1200);
+      }, 2000);
     })();
   </script>
 
-  <!-- ESM-Loader: importiert die Engine. Wenn das klappt, wird der Watchdog gestoppt. -->
+  <!-- ESM-Loader mit Fehlertext (zeigt z.B. 404/MIME-Probleme) -->
   <script type="module">
-    import './engine.js';
-    clearTimeout(window.__CRISPR_WATCHDOG__);
+    (async () => {
+      try{
+        await import('./engine.js');
+        clearTimeout(window.__CRISPR_WATCHDOG__);
+      }catch(err){
+        clearTimeout(window.__CRISPR_WATCHDOG__);
+        const ov = document.getElementById('errorOverlay');
+        if(ov){
+          const txt = '⚠️ Module konnten nicht geladen werden: ' +
+                      (err && (err.message || String(err))) +
+                      ' — Prüfe, ob alle JS-Dateien existieren und unter demselben Pfad liegen.';
+          ov.textContent = txt;
+          ov.classList.add('show');
+        }
+        console.error('[CRISPR] Modul-Importfehler', err);
+      }
+    })();
   </script>
 
   <!-- Fallback für Browser ohne Module -->
@@ -159,7 +176,5 @@
       ov.classList.add('show');
     }
   </script>
-</body>
-</html>
 </body>
 </html>

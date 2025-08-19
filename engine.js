@@ -100,36 +100,45 @@ function setupUI(){
   });
 
   // Highlight
-  highlightSel.addEventListener('change', ()=>{
+  function applyHighlight(){
     const v = highlightSel.value;
     highlightStammId = v==='all' ? null : Number(v);
     renderer.setHighlight(highlightStammId);
     Events.emit(EVT.HIGHLIGHT_CHANGED, { stammId: highlightStammId });
-  });
+  }
+  highlightSel.addEventListener('change', applyHighlight);
 
   // Advisor
   btnAdvisor.addEventListener('click', async ()=>{
-    const current = advisorStatus.textContent.includes('Aus');
-    setAdvisorEnabled(!current);
+    const isOff = advisorStatus.textContent.includes('Aus');
+    setAdvisorEnabled(isOff);
     advisorStatus.textContent = getStatusLabel();
-    editorAdvisorStatus.textContent = advisorStatus.textContent.replace('Berater: ','');
-    if(!current){
+    if (editorAdvisorStatus) {
+      editorAdvisorStatus.textContent = advisorStatus.textContent.replace('Berater: ','');
+    }
+    if(isOff){
       // optional: TF.js versuchen zu laden
       const ok = await tryLoadModel();
       advisorStatus.textContent = getStatusLabel();
-      editorAdvisorStatus.textContent = advisorStatus.textContent.replace('Berater: ','');
+      if (editorAdvisorStatus) {
+        editorAdvisorStatus.textContent = advisorStatus.textContent.replace('Berater: ','');
+      }
     }
   });
 
-  // Canvas Größe an Renderer melden
+  // Canvas Größe an Renderer melden – mit Fallback falls ResizeObserver fehlt
   function onResize(){
     const rect = canvas.getBoundingClientRect();
     Entities.setWorldSize(rect.width, rect.height);
   }
-  new ResizeObserver(onResize).observe(canvas);
+  if ('ResizeObserver' in window) {
+    new ResizeObserver(onResize).observe(canvas);
+  } else {
+    window.addEventListener('resize', onResize);
+  }
   onResize();
 
-  // Legende-Optionen initialisieren
+  // Legenden-Optionen initialisieren
   function refreshHighlightOptions(){
     const counts = Entities.getStammCounts();
     const sel = highlightSel;
@@ -138,6 +147,7 @@ function setupUI(){
       Object.keys(counts).sort((a,b)=>Number(a)-Number(b))
         .map(id=>`<option value="${id}">Stamm ${id} (${counts[id]})</option>`).join('');
     if(current && [...sel.options].some(o=>o.value===current)) sel.value = current;
+    applyHighlight();
   }
   refreshHighlightOptions();
   // Bei Geburten/Toden aktualisieren
@@ -154,6 +164,7 @@ function toggleRun(){
 function resetWorld(){
   Entities.resetEntities();
   const rect = document.getElementById('simCanvas').getBoundingClientRect();
+  Entities.setWorldSize(rect.width, rect.height);
   seedWorld(rect.width, rect.height);
   Events.emit(EVT.STATUS, {source:'engine', text:'Welt zurückgesetzt'});
 }
@@ -189,8 +200,8 @@ function init(){
 
   setupUI();
 
-  // Start pausiert?
-  toggleRun(); // gleich starten
+  // Start
+  toggleRun(); // sofort starten
   requestAnimationFrame(loop);
 }
 
@@ -226,11 +237,18 @@ function setupNarrativeTriggers(){
   });
 }
 
-window.addEventListener('DOMContentLoaded', ()=>{
+// Robuster Starter: sofort ausführen, falls DOM schon geladen ist
+function start(){
   try{
     init();
     setupNarrativeTriggers();
   }catch(err){
     showError('Initialisierung fehlgeschlagen', err);
   }
-});
+}
+
+if (document.readyState === 'loading') {
+  window.addEventListener('DOMContentLoaded', start, { once: true });
+} else {
+  start();
+}
