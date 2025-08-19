@@ -1,147 +1,189 @@
+/* === CRISPR Genetics Lab — Postapokalyptisches Theme =======================
+   Einheitliche Controls, raue Optik, gute Lesbarkeit auf Mobile.
+   ======================================================================= */
+
 :root{
-  --bg:#0f1220;
-  --panel:#14182b;
-  --ink:#e6e8f2;
-  --ink-dim:#aab0c5;
-  --accent:#6ae3ff;
-  --accent-2:#ffc36a;
-  --danger:#ff4d5a;
-  --ok:#43d39e;
-  --grid:#1c223d;
-  --ticker-bg:#0b0f1c;
-  --paper:#f8f4ea;
-  --paper-ink:#1b1b1b;
-  --shadow: 0 8px 24px rgba(0,0,0,.3);
+  /* Farbwelt: verwittert + Neon-Akzent */
+  --bg-0:#0a0d10;           /* Hintergrund tief */
+  --bg-1:#0f1418;           /* Paneele */
+  --bg-2:#141a1f;           /* Vertiefungen */
+  --ink:#e5e9ef;            /* Text hell */
+  --ink-dim:#a8b0bb;        /* Text gedimmt */
+  --accent:#79ff9c;         /* „Radioaktiv“-Neon */
+  --accent-2:#ffdd6a;       /* Warnlicht */
+  --danger:#ff4b55;         /* Fehler */
+  --ok:#44d39a;
+
+  --grid:#1b242b;
+  --paper:#f2ebd5;          /* vergilbtes Papier */
+  --paper-ink:#1a1a1a;
+
+  --edge: rgba(255,255,255,.06);
+  --shadow: 0 10px 26px rgba(0,0,0,.45);
 }
 
+/* Reset / Basis */
 *{box-sizing:border-box}
 html,body{height:100%}
 body{
   margin:0;
   color:var(--ink);
-  background:linear-gradient(180deg,#0d1120 0%,#0b0f1c 100%);
-  font: 16px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji";
+  background:
+    radial-gradient(1200px 600px at 20% -10%, rgba(121,255,156,.07), transparent 60%),
+    radial-gradient(1000px 500px at 110% 10%, rgba(255,221,106,.06), transparent 55%),
+    linear-gradient(180deg, #0a0d10 0%, #0b0e12 100%);
+  font: 16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,Ubuntu,"Helvetica Neue",Arial,"Noto Sans","Apple Color Emoji","Segoe UI Emoji";
   -webkit-font-smoothing:antialiased;
   text-rendering:optimizeLegibility;
 }
-
-.mono{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace}
-
+.mono{font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace}
 .hidden{display:none}
 
-/* Fehlerbalken */
+/* === Fehlerbalken ======================================================= */
 #errorOverlay{
-  position:fixed; inset:auto 0 0 0; top:0;
-  background:var(--danger);
-  color:#fff; padding:.6rem 1rem;
-  font-weight:600; z-index:9999;
-  box-shadow:var(--shadow);
+  position:fixed; left:0; right:0; top:0;
+  background:linear-gradient(180deg, #ff5a64 0%, #c43a41 100%);
+  color:#fff; padding:.65rem 1rem;
+  font-weight:700; z-index:9999; box-shadow:var(--shadow);
+  border-bottom:1px solid rgba(0,0,0,.25);
   display:none;
 }
 #errorOverlay.show{display:block}
 
-/* Toolbar */
+/* === Toolbar (postapokalyptisch, einheitliche Controls) ================= */
 .toolbar{
   position:sticky; top:0; z-index:1000;
-  background:rgba(12,15,30,.85);
-  backdrop-filter:saturate(160%) blur(6px);
-  padding:.5rem .75rem; border-bottom:1px solid #1d2442;
+  background:rgba(10,14,18,.85);
+  backdrop-filter:saturate(150%) blur(8px);
+  border-bottom:1px solid var(--edge);
+  padding:.6rem .75rem;
 }
 .toolbar-row{
-  display:flex; flex-wrap:wrap; gap:.5rem; align-items:center;
+  display:flex; flex-wrap:wrap; gap:.5rem .55rem; align-items:center;
 }
-.toolbar button,
-.toolbar select, 
-.toolbar input[type="range"]{
+
+/* Einheitlicher Control‑Look */
+button,
+select,
+input[type="range"]{
   appearance:none; -webkit-appearance:none;
-  border:1px solid #273056; border-radius:.5rem;
-  background:var(--panel); color:var(--ink);
-  padding:.5rem .7rem; font-weight:600;
+  background: linear-gradient(180deg, var(--bg-1), var(--bg-2));
+  color:var(--ink);
+  border:1px solid #232d35;
+  border-radius:.6rem;
+  min-height:42px;
+  padding:.55rem .8rem;
+  font-weight:700;
+  letter-spacing:.02em;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.04), 0 1px 0 rgba(255,255,255,.05);
 }
-.toolbar button:hover{border-color:#3a4780}
-.toolbar label{color:var(--ink-dim); margin:0 .2rem 0 .6rem}
-.toolbar .status-badge{
-  padding:.25rem .5rem; border-radius:.4rem; background:#1f2a4a; border:1px solid #2e3962;
+button:hover, select:hover{ border-color:#2e3a44 }
+button:active{
+  transform: translateY(1px);
 }
+button.primary{
+  border-color:#2f3f33;
+  background: linear-gradient(180deg, #19231d, #121a15);
+  box-shadow: inset 0 0 0 1px rgba(121,255,156,.18), 0 0 16px rgba(121,255,156,.08);
+}
+.toolbar label{
+  color:var(--ink-dim);
+  margin:0 .2rem 0 .6rem;
+  font-weight:600;
+}
+
+/* Status-Badge */
+.status-badge{
+  padding:.32rem .6rem; border-radius:.5rem;
+  background:#0f151a; border:1px solid var(--edge);
+  color:var(--ink-dim); font-weight:700;
+}
+
+/* Import-Label wie Button */
 .importLabel{
-  border:1px dashed #37416f; border-radius:.5rem; padding:.4rem .6rem; cursor:pointer;
+  display:inline-flex; align-items:center; gap:.45rem;
+  border:1px dashed #2b3640; border-radius:.6rem; padding:.55rem .8rem; cursor:pointer;
+  background:linear-gradient(180deg, var(--bg-1), var(--bg-2));
+  color:var(--ink); font-weight:700;
 }
 .importLabel input{display:none}
 
-/* Canvas */
-#main{
-  display:grid; place-items:center;
-  padding: .5rem .75rem;
-}
+/* === Canvas/Stage ======================================================= */
+#main{ display:grid; place-items:center; padding:.6rem .75rem; }
 #simCanvas{
   width: min(100vw - 1.5rem, 1200px);
   height: calc((min(100vw - 1.5rem, 1200px)) * 0.6);
-  background:#080b16;
-  border:1px solid #1c2242; border-radius:.75rem;
-  box-shadow:var(--shadow);
+  background:
+    linear-gradient(180deg,#080b0f,#070a0d);
+  border:1px solid var(--edge);
+  border-radius:.9rem;
+  box-shadow: var(--shadow), inset 0 0 120px rgba(121,255,156,.04);
   touch-action:none;
 }
 
-/* Narrative Panel */
+/* === Narrative Panel (Zeitungsstil – vergilbt) ========================== */
 #narrativeSection{
-  margin:.75rem .75rem 4.5rem .75rem;
-  background:var(--paper);
+  margin:.8rem .75rem 4.6rem .75rem;
+  background: var(--paper);
   color:var(--paper-ink);
-  border-radius:.75rem;
+  border-radius:.8rem;
   box-shadow:var(--shadow);
   overflow:hidden;
+  border:1px solid #ddd2b2;
 }
 .paperHead{
   display:flex; justify-content:space-between; align-items:baseline;
   padding:.75rem 1rem .5rem;
-  background:linear-gradient(180deg,#fff,#f4eee2);
-  border-bottom:2px solid #e4dcc8;
+  background:linear-gradient(180deg,#fff,#efe5c9);
+  border-bottom:2px solid #e2d8b4;
 }
-.paperTitle{font:700 1.35rem/1 Georgia, "Times New Roman", Times, serif; letter-spacing:.02em}
-.paperSub{color:#6b614f}
-.scrollbox{
-  max-height: 220px; overflow:auto; padding:.75rem 1rem;
+.paperTitle{
+  font:700 1.35rem/1 Georgia,"Times New Roman",Times,serif;
+  letter-spacing:.02em
 }
-.headline{
-  font:700 1rem/1.25 Georgia, "Times New Roman", Times, serif;
-  margin:.5rem 0; display:block;
-}
-.headline strong{font-weight:800}
-.headline .src{font-weight:600; color:#555; margin-left:.35rem}
+.paperSub{ color:#6e634b }
+.scrollbox{ max-height: 220px; overflow:auto; padding:.75rem 1rem; }
+.headline{ font:700 1rem/1.25 Georgia,"Times New Roman",Times,serif; margin:.5rem 0; display:block; }
+.headline strong{ font-weight:800 }
+.headline .src{ font-weight:600; color:#5b5341; margin-left:.35rem }
 
-/* Ticker */
+/* === Ticker (LED-Band) ================================================== */
 #ticker{
   position:fixed; left:0; right:0; bottom:0;
-  background:var(--ticker-bg);
-  border-top:1px solid #152042; color:var(--ink);
-  padding:.15rem 0; z-index:1001;
+  background:linear-gradient(180deg,#0c1014,#080b0f);
+  border-top:1px solid var(--edge);
+  color:var(--ink);
+  padding:.2rem 0; z-index:1001;
+  box-shadow:0 -8px 20px rgba(0,0,0,.35), inset 0 1px 0 rgba(121,255,156,.12);
 }
-#tickerInner{overflow:hidden; white-space:nowrap;}
+#tickerInner{ overflow:hidden; white-space:nowrap; }
 #tickerContent{
   display:inline-block; padding-left:100%;
-  animation: marquee 30s linear infinite;
+  animation: marquee 28s linear infinite;
   will-change:transform;
+  text-shadow: 0 0 8px rgba(121,255,156,.15);
 }
 #tickerContent .tick{
   display:inline-block; margin:0 2rem; color:var(--ink-dim);
+  font-weight:700;
 }
-#tickerContent .tick .label{color:#6ae3ff; font-weight:700; margin-right:.25rem}
-@keyframes marquee {
-  0% { transform: translateX(0); }
-  100% { transform: translateX(-100%); }
-}
+#tickerContent .tick .label{ color:var(--accent); margin-right:.25rem }
+@keyframes marquee { 0% {transform:translateX(0)} 100% {transform:translateX(-100%)} }
 
-/* Modal (Editor) */
+/* === Modal (Editor) ===================================================== */
 dialog#editorModal{
   width:min(100vw - 1.5rem, 980px);
-  border:none; border-radius:.75rem;
-  background:var(--panel); color:var(--ink);
+  border:none; border-radius:.8rem;
+  background:linear-gradient(180deg, var(--bg-1), var(--bg-2));
+  color:var(--ink);
   box-shadow:var(--shadow);
   padding:0; max-height:85vh;
+  border:1px solid var(--edge);
 }
 .modalHeader{
   display:flex; align-items:center; justify-content:space-between;
-  padding:.75rem 1rem; border-bottom:1px solid #28315f;
+  padding:.8rem 1rem; border-bottom:1px solid var(--edge);
+  background:linear-gradient(180deg,#12171c,#0f1418);
 }
 .modalBody{
   display:grid; grid-template-columns: 1fr 1fr; gap:1rem;
@@ -149,34 +191,61 @@ dialog#editorModal{
 }
 .editorLeft .traitRow{
   display:flex; align-items:center; justify-content:space-between;
-  padding:.5rem 0; border-bottom:1px dotted #2f3968;
+  padding:.55rem 0; border-bottom:1px dashed #2a353d;
 }
-.stepper{display:flex; align-items:center; gap:.5rem}
+.stepper{ display:flex; align-items:center; gap:.5rem }
 .stepper button{
-  width:2.5rem; height:2.5rem; font-weight:800; border-radius:.6rem;
+  width:42px; height:42px; font-weight:900; border-radius:.6rem;
+  background:linear-gradient(180deg,#182018,#121812);
+  border:1px solid #2f3f33;
+  box-shadow: inset 0 0 0 1px rgba(121,255,156,.18);
 }
-.stepper .val{min-width:2ch; text-align:center}
+.stepper .val{ min-width:2ch; text-align:center }
 .editorActions{ margin-top:1rem }
-button.primary{ background: #1f2a4a; border-color:#3c4a7e }
-.hint{color:var(--ink-dim)}
 
-.editorRight .cellList{
-  display:grid; gap:.35rem;
-}
+/* Karten in Editor-Rechts */
+.editorRight .cellList{ display:grid; gap:.4rem; }
 .cellCard{
-  border:1px solid #2d3767; border-radius:.5rem; padding:.5rem .6rem; background:#121730;
+  border:1px solid #2b343c; border-radius:.6rem; padding:.55rem .65rem;
+  background:linear-gradient(180deg,#0f1418,#0d1115);
   display:flex; align-items:baseline; justify-content:space-between;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.03);
 }
 .cellCard .id{font-weight:700}
 .cellCard .score{font-variant-numeric: tabular-nums; color:var(--accent-2)}
 
+/* Advisor Box */
 .advisorBox{
-  margin-top:1rem; padding:.5rem .6rem; background:#101631; border:1px solid #2d3767; border-radius:.5rem;
+  margin-top:1rem; padding:.6rem .7rem;
+  background:linear-gradient(180deg,#0f151a,#0c1115);
+  border:1px solid var(--edge); border-radius:.6rem;
 }
 
-/* Touchgrößen */
-button, select{ min-height: 40px }
-input[type="range"]{ height: 32px }
+/* === Range Slider (einheitlich, iOS kompatibel) ======================== */
+input[type="range"]{
+  width:170px; height:34px; padding:0 .4rem;
+  background: linear-gradient(180deg, #0e1418, #0b1014);
+}
+input[type="range"]::-webkit-slider-runnable-track{
+  height:6px; background:#1f2a31; border-radius:3px;
+  border:1px solid #2a3640;
+}
+input[type="range"]::-webkit-slider-thumb{
+  -webkit-appearance:none; appearance:none;
+  width:18px; height:18px; margin-top:-7px; border-radius:4px;
+  background: linear-gradient(180deg,#79ff9c,#4ad476);
+  border:1px solid #2b3c2f; box-shadow:0 0 0 2px rgba(0,0,0,.25);
+}
+input[type="range"]::-moz-range-track{
+  height:6px; background:#1f2a31; border-radius:3px; border:1px solid #2a3640;
+}
+input[type="range"]::-moz-range-thumb{
+  width:18px; height:18px; border-radius:4px; border:1px solid #2b3c2f;
+  background: linear-gradient(180deg,#79ff9c,#4ad476);
+}
 
-/* Fokus sichtbar */
+/* === Fokus sichtbar ===================================================== */
 :focus-visible{ outline:2px solid var(--accent); outline-offset:2px }
+
+/* === Responsive Touchgrößen ============================================ */
+button, select{ min-height: 42px }

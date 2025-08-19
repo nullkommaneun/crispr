@@ -131,7 +131,35 @@
     </form>
   </dialog>
 
-  <!-- Einstieg über engine.js -->
-  <script type="module" src="./engine.js"></script>
+  <!-- Boot‑Watchdog: zeigt klaren Fehler, falls Module nicht laden (z. B. file://) -->
+  <script>
+    (function(){
+      // Startet einen Timer. Wenn der Inline-ESM unten nicht feuert, wird nach 1200ms
+      // das Fehler-Overlay sichtbar – auch ohne engine.js/errorManager.js.
+      window.__CRISPR_WATCHDOG__ = setTimeout(function(){
+        var ov = document.getElementById('errorOverlay');
+        if(!ov) return;
+        ov.textContent = '⚠️ Module wurden nicht geladen. Öffne die Seite über einen lokalen Webserver (http://…), nicht per Datei. Beispiel: python -m http.server';
+        ov.classList.add('show');
+      }, 1200);
+    })();
+  </script>
+
+  <!-- ESM-Loader: importiert die Engine. Wenn das klappt, wird der Watchdog gestoppt. -->
+  <script type="module">
+    import './engine.js';
+    clearTimeout(window.__CRISPR_WATCHDOG__);
+  </script>
+
+  <!-- Fallback für Browser ohne Module -->
+  <script nomodule>
+    var ov = document.getElementById('errorOverlay');
+    if(ov){
+      ov.textContent = '⚠️ Dieser Browser unterstützt keine ES‑Module. Bitte aktuelle Version verwenden.';
+      ov.classList.add('show');
+    }
+  </script>
+</body>
+</html>
 </body>
 </html>
