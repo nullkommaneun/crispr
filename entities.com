@@ -1,7 +1,5 @@
-// entities.js – Welt, Zellen, Nahrung, Verhalten
-// Spatial Grid + Scheduler + wandernde Food-Cluster
-// NAT-Nav+: Wall-aware Scoring, Dichtebonus, Reflexion, Rand-Rauschen,
-//           Tangential-Dämpfung + Escape-Waypoint
+// entities.js – Welt, Zellen, Nahrung, Verhalten/Navigation, Scheduler
+// Saubere benannte Exporte (nur EIN Exportblock am Ende)
 
 import { Events, EVT } from './event.js';
 import { getStammColor, resetLegend } from './legend.js';
@@ -12,40 +10,37 @@ import { evaluateMatingPairs } from './reproduction.js';
 const WORLD = {
   width: 800,
   height: 520,
-  mutationRate: 0.10,    // 0..1 (Engine schreibt 0..0.10 rein)
-  foodRate: 100,         // pro Minute (Engine-Regler liefert /s → *60)
+  mutationRate: 0.10,  // 0..1 (Engine liefert 0..0.10)
+  foodRate: 100,       // pro Minute (Engine-Regler: /s → *60)
   maxFood: 400
 };
 
 /* ---------- IDs / Container ---------- */
 let nextCellId = 1, nextFoodId = 1, nextStammId = 1;
-
-export const cells = [];
-export const foods = [];
+const cells = [];
+const foods = [];
 
 let foundersIds = { adam: null, eva: null };
 let foundersEverMated = false;
-const hungerDeaths = []; // Zeitstempel für 60s-Fenster
+const hungerDeaths = []; // Timestamps der letzten 60s
 
 /* ---------- Navigation-Parameter ---------- */
 const NAV = {
-  margin: 36,             // sichere Innenzone (für Scoring)
-  gamma: 2.2,             // Exponent Innenraum-Faktor
-  r0: 8,                  // Distanz-Offset
-  alpha: 1.5,             // Distanz-Exponent
-  densityR: 50,           // Food-Dichte-Radius
-  densityK: 0.25,         // Dichtebonus (max ~ +25%)
-  wallWanderBoost: 1.25,  // extra Rauschen nahe Wand
-
-  // zusätzlich gegen Gleiten:
-  tanDamp: 0.45,          // tangentiale Dämpfung nahe Wand
-  escapeStay: 0.8,        // s Randnähe bis Escape-Target
-  escapeHop: 90,          // px Hop ins Feld
-  escapeHold: 1.2,        // s Escape-Target Vorrang
-  stuckNear: 40,          // px für Stuck-Check
-  stuckSpeedMin: 8,       // px/s
-  stuckWindow: 1.5,       // s
-  edgeCooldown: 1.5       // s: Randziele nach Stuck meiden
+  margin: 36,
+  gamma: 2.2,
+  r0: 8,
+  alpha: 1.5,
+  densityR: 50,
+  densityK: 0.25,
+  wallWanderBoost: 1.25,
+  tanDamp: 0.45,
+  escapeStay: 0.8,
+  escapeHop: 90,
+  escapeHold: 1.2,
+  stuckNear: 40,
+  stuckSpeedMin: 8,
+  stuckWindow: 1.5,
+  edgeCooldown: 1.5
 };
 
 /* ---------- Helpers ---------- */
@@ -102,7 +97,7 @@ function* neighborCells(x,y){
 /* ---------- Weltzeit & Scheduler ---------- */
 let worldTime = 0;
 const scheduled = []; // {due:number, fn:Function}
-export function schedule(fn, delaySec=0){ scheduled.push({ due: worldTime + Math.max(0, delaySec), fn }); }
+function schedule(fn, delaySec=0){ scheduled.push({ due: worldTime + Math.max(0, delaySec), fn }); }
 function runScheduler(){
   for(let i=scheduled.length-1;i>=0;i--){
     if(scheduled[i].due <= worldTime){
@@ -162,7 +157,7 @@ function updateFoodClusters(dt){
 }
 
 /* ---------- Welt-API ---------- */
-export function setWorldSize(w,h){
+function setWorldSize(w,h){
   WORLD.width=Math.max(50,w|0); WORLD.height=Math.max(50,h|0);
   gridResize();
   for(const c of FOOD_CLUSTERS){
@@ -170,20 +165,10 @@ export function setWorldSize(w,h){
     c.y = clamp(c.y, NAV.margin, WORLD.height - NAV.margin);
   }
 }
-export function setMutationRate(p){ WORLD.mutationRate=Math.max(0,Math.min(1,p)); }
-export function setFoodRate(perMinute){ WORLD.foodRate=Math.max(0, perMinute|0); }
-export function getWorldConfig(){ return {...WORLD}; }
-export function setFounders(adamId, evaId){ foundersIds = {adam: adamId, eva: evaId}; }
-
-export function resetEntities(){
-  cells.length=0; foods.length=0; resetLegend(); hungerDeaths.length=0;
-  nextCellId=1; nextFoodId=1; nextStammId=1;
-  foundersIds={adam:null,eva:null}; foundersEverMated=false;
-  worldTime=0; scheduled.length=0;
-  gridResize(); initFoodClusters();
-  Events.emit(EVT.RESET,{});
-}
-export function newStammId(){ return nextStammId++; }
+function setMutationRate(p){ WORLD.mutationRate=Math.max(0,Math.min(1,p)); }
+function setFoodRate(perMinute){ WORLD.foodRate=Math.max(0, perMinute|0); }
+function getWorldConfig(){ return {...WORLD}; }
+function setFounders(adamId, evaId){ foundersIds = {adam: adamId, eva: evaId}; }
 
 /* ---------- Gene → abgeleitete Werte ---------- */
 function n(v){ return (v-5)/4; }
@@ -210,22 +195,57 @@ function applyDerived(c){
   if(c.vx===undefined || c.vy===undefined){ const ang=Math.random()*Math.PI*2; c.vx=Math.cos(ang)*10; c.vy=Math.sin(ang)*10; }
   c.scanTimer=Math.random()*d.scanInterval; c.target=null;
   c._stuckT = 0; c._lastX = c.x; c._lastY = c.y;
-  c._avoidEdgeUntil = 0; // Rand-Blacklist nach Stuck
-  c._nearWallT = 0;      // Zeit in Randnähe
-  c._escapeUntil = 0;    // Escape-Fenster
+  c._avoidEdgeUntil = 0;
+  c._nearWallT = 0;
+  c._escapeUntil = 0;
   c._escapeTarget = null;
 }
 
-/* ---------- Speciation (optional) ---------- */
-const SPEC={ split:{ sum:7, max:3, crossBonus:-2, randomProb:0.003 } };
-function sumAbsDiff(a,b){ return Math.abs(a.TEM-b.TEM)+Math.abs(a.GRO-b.GRO)+Math.abs(a.EFF-b.EFF)+Math.abs(a.SCH-b.SCH); }
-function maxAbsDiff(a,b){
-  return Math.max(
-    Math.abs(a.TEM - b.TEM),
-    Math.abs(a.GRO - b.GRO),
-    Math.abs(a.EFF - b.EFF),
-    Math.abs(a.SCH - b.SCH)
-  );
+/* ---------- Verwandtschaft (einfach) ---------- */
+function relatedness(a,b){
+  if(!a || !b) return 0;
+  if(a.id===b.id) return 1;
+  const pa=a.parents||{}, pb=b.parents||{};
+  let r=0;
+  if(pa.motherId && pb.motherId && pa.motherId===pb.motherId) r+=0.25;
+  if(pa.fatherId && pb.fatherId && pa.fatherId===pb.fatherId) r+=0.25;
+  if(pa.motherId && (pb.motherId===a.id || pb.fatherId===a.id)) r+=0.5;
+  if(pb.motherId && (pa.motherId===b.id || pa.fatherId===b.id)) r+=0.5;
+  return Math.min(1,r);
+}
+
+/* ---------- Zellerzeugung / Nahrung ---------- */
+function newStammId(){ return nextStammId++; }
+
+function createCell(params = {}){
+  const id = nextCellId++;
+  const sex = params.sex || (Math.random()<0.5 ? 'm':'f');
+  const genes = params.genes || createGenome({});
+  const stammId = (params.stammId!=null) ? params.stammId : newStammId();
+  const c = {
+    id,
+    name: params.name || `Zelle #${id}`,
+    sex, stammId,
+    x: clamp(params.x ?? Math.random()*WORLD.width, 0, WORLD.width),
+    y: clamp(params.y ?? Math.random()*WORLD.height, 0, WORLD.height),
+    vx: params.vx ?? 0, vy: params.vy ?? 0,
+    energy: (params.energy!=null) ? params.energy : 24,
+    genes, radius: 3, derived: null, age: 0, dead: false,
+    parents: params.parents || null
+  };
+  applyDerived(c);
+  cells.push(c);
+  return c;
+}
+
+function createFood(p = {}){
+  const f = {
+    id: nextFoodId++,
+    x: clamp(p.x ?? Math.random()*WORLD.width, 2, WORLD.width-2),
+    y: clamp(p.y ?? Math.random()*WORLD.height, 2, WORLD.height-2),
+    value: p.value ?? 10
+  };
+  foods.push(f); addFoodToGrid(f); return f;
 }
 
 /* ---------- Scoring-Hilfen ---------- */
@@ -324,7 +344,6 @@ function updateCellBehavior(c, alive, dt){
     const sp=c.derived.speedMax;
     dVX=(dx/d)*sp; dVY=(dy/d)*sp;
   }else{
-    // Run-and-Tumble; nahe Wand stärker
     const base = 0.3 * (near ? NAV.wallWanderBoost : 1);
     c.wanderAng=(c.wanderAng??Math.random()*Math.PI*2)+(Math.random()*2-1)*base*dt;
     const sp=c.derived.speedMax*0.6;
@@ -335,7 +354,7 @@ function updateCellBehavior(c, alive, dt){
   c.vx = 0.85*c.vx + 0.15*dVX;
   c.vy = 0.85*c.vy + 0.15*dVY;
 
-  // Tangential-Dämpfung nahe Wand (gegen „Entlang-Gleiten“)
+  // Tangential-Dämpfung nahe Wand
   if(near){
     const nx = Math.sign((WORLD.width/2)  - c.x);
     const ny = Math.sign((WORLD.height/2) - c.y);
@@ -354,7 +373,7 @@ function updateCellBehavior(c, alive, dt){
   if(c.y < c.radius){ c.y=c.radius; c.vy = Math.abs(c.vy); }
   if(c.y > WORLD.height - c.radius){ c.y=WORLD.height - c.radius; c.vy = -Math.abs(c.vy); }
 
-  // Stuck-Detektor: Rand + wenig Fortschritt ⇒ Randziele meiden + kleiner Hop
+  // Stuck-Detektor
   const dxm=c.x-(c._lastX||c.x), dym=c.y-(c._lastY||c.y);
   const effSpeed = Math.hypot(dxm,dym) / Math.max(1e-6, dt);
   const nearStuck = distToWall(c.x,c.y) < NAV.stuckNear;
@@ -415,8 +434,20 @@ function crisisCheck(){
   if(alive>140) Events.emit(EVT.OVERPOP,{population:alive});
 }
 
-/* ---------- Hauptupdate ---------- */
-export function updateWorld(dt){
+/* ---------- Darstellung ---------- */
+function getFoundersState(){ return {...foundersIds, foundersEverMated}; }
+function cellColor(c, highlightStammId){
+  const col=getStammColor(c.stammId);
+  if(highlightStammId!==null && c.stammId!==highlightStammId) return { fill: col, alpha: 0.25 };
+  return { fill: col, alpha: 1 };
+}
+function getStammCounts(){
+  const counts={}; for(const c of cells){ if(!c.dead) counts[c.stammId]=(counts[c.stammId]||0)+1; }
+  return counts;
+}
+
+/* ---------- Update-Schleife ---------- */
+function updateWorld(dt){
   worldTime += dt; runScheduler();
   updateFoodClusters(dt);
 
@@ -440,40 +471,25 @@ export function updateWorld(dt){
   }
 }
 
-/* ---------- Darstellungshilfen ---------- */
-export function getFoundersState(){ return {...foundersIds, foundersEverMated}; }
-export function cellColor(c, highlightStammId){
-  const col=getStammColor(c.stammId);
-  if(highlightStammId!==null && c.stammId!==highlightStammId) return { fill: col, alpha: 0.25 };
-  return { fill: col, alpha: 1 };
-}
-
-/* ---------- Stämme zählen (benannter Export, wie von engine.js erwartet) --- */
-export function getStammCounts(){
-  const counts={}; for(const c of cells){ if(!c.dead) counts[c.stammId]=(counts[c.stammId]||0)+1; }
-  return counts;
-}
-
-/* init */
+/* ---------- Init ---------- */
 gridResize(); initFoodClusters();
 
-// --- explizite benannte Exporte (Sicherungs-Exportliste) -------------------
+/* ---------- Benannte Exporte (einziger Exportblock!) ---------- */
 export {
-  // Welt/Config
-  WORLD as __WORLD,
+  // Welt
   setWorldSize,
   setMutationRate,
   setFoodRate,
   getWorldConfig,
 
-  // IDs/Erzeuger
+  // Erzeugung/Scheduler
+  newStammId,
   createCell,
   createFood,
-  newStammId,
   schedule,
   resetEntities,
 
-  // Zähler/Infos
+  // Infos/Zähler
   getStammCounts,
   getFoundersState,
   cellColor,
@@ -481,7 +497,7 @@ export {
   // Genetik/Verwandtschaft
   relatedness,
 
-  // Fluss
+  // Sim
   updateWorld,
 
   // Narrative
