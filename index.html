@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <title>CRISPR Genetics Lab</title>
   <link rel="stylesheet" href="./style.css" />
-  <!-- nur Engine preloadden; Untermodule lädt der Booter gezielt -->
   <link rel="modulepreload" href="./engine.js">
 </head>
 <body>
@@ -20,13 +19,15 @@
       <label>Timescale</label>
       <button id="btnSpeedCycle">⚡ 1×</button>
 
+      <!-- Mutation: 0..10% (Default 0.5%) -->
       <label for="mutationRate">Mutation</label>
-      <input id="mutationRate" type="range" min="0" max="100" value="10" step="1" />
-      <span id="mutationRateVal" class="mono">10%</span>
+      <input id="mutationRate" type="range" min="0" max="10" value="0.5" step="0.1" />
+      <span id="mutationRateVal" class="mono">0.5 %</span>
 
-      <label for="foodRate">Nahrung</label>
-      <input id="foodRate" type="range" min="0" max="240" value="90" step="5" />
-      <span id="foodRateVal" class="mono">90</span>
+      <!-- Nahrung: 0..360 /s (Default 90/s) -->
+      <label for="foodRate">Nahrung (pro Sekunde)</label>
+      <input id="foodRate" type="range" min="0" max="360" value="90" step="1" />
+      <span id="foodRateVal" class="mono">90 /s</span>
 
       <label>Highlight</label>
       <button id="btnHighlightCycle">Alle Stämme</button>
@@ -35,10 +36,12 @@
     </div>
   </header>
 
+  <!-- Canvas -->
   <main id="main">
     <canvas id="simCanvas" width="800" height="520"></canvas>
   </main>
 
+  <!-- DNA Daily (Narrative) -->
   <section id="narrativeSection" aria-label="Boulevard-Schlagzeilen">
     <header class="paperHead">
       <span class="paperTitle">DNA Daily</span>
@@ -47,6 +50,7 @@
     <div id="narrativePanel" class="scrollbox" tabindex="0" aria-live="polite"></div>
   </section>
 
+  <!-- Ticker -->
   <footer id="ticker" aria-live="polite">
     <div id="tickerInner"><div id="tickerContent"></div></div>
   </footer>
@@ -58,20 +62,16 @@
         <h2 id="editorTitle">CRISPR-Editor</h2>
         <button id="editorClose" value="cancel" title="Schließen">✖</button>
       </header>
-
       <div class="modalBody">
         <section class="editorLeft">
           <h3>Traits anpassen</h3>
-
           <div class="traitRow" data-trait="TEM"><label>TEM – Tempo</label><div class="stepper"><button type="button" class="dec">-1</button><output class="val">5</output><button type="button" class="inc">+1</button></div></div>
           <div class="traitRow" data-trait="GRO"><label>GRÖ – Größe</label><div class="stepper"><button type="button" class="dec">-1</button><output class="val">5</output><button type="button" class="inc">+1</button></div></div>
           <div class="traitRow" data-trait="EFF"><label>EFF – Effizienz</label><div class="stepper"><button type="button" class="dec">-1</button><output class="val">5</output><button type="button" class="inc">+1</button></div></div>
           <div class="traitRow" data-trait="SCH"><label>SCH – Schutz</label><div class="stepper"><button type="button" class="dec">-1</button><output class="val">5</output><button type="button" class="inc">+1</button></div></div>
-
           <div class="editorActions"><button id="editorApply" class="primary" type="submit" value="ok">Übernehmen</button></div>
           <p class="hint mono">Neue Zellen aus dem Editor starten immer als <strong>neuer Stamm</strong>.</p>
         </section>
-
         <section class="editorRight">
           <h3>Lebende Zellen • Prognose</h3>
           <div id="editorCellList" class="cellList"></div>
@@ -89,61 +89,18 @@
     </form>
   </dialog>
 
-  <!-- Watchdog (Info, falls der Booter gar nicht läuft) -->
-  <script>
-    (function(){
-      window.__CRISPR_WATCHDOG__ = setTimeout(function(){
-        const ov = document.getElementById('errorOverlay');
-        if(!ov) return;
-        ov.textContent = '⚠️ Module laden langsam oder wurden blockiert. Bitte neu laden. Details in der Konsole.';
-        ov.classList.add('show');
-      }, 2500);
-    })();
-  </script>
-
-  <!-- Booter: lädt Module nacheinander und zeigt exakte Fehler pro Datei -->
+  <!-- Booter -->
   <script type="module">
     const ov = document.getElementById('errorOverlay');
-    const show = (msg)=>{ if(ov){ ov.textContent=msg; ov.classList.add('show'); } };
-
-    async function safeImport(spec){
-      try {
-        return await import(spec);
-      } catch (e) {
-        show(`⚠️ Import fehlgeschlagen: ${spec} — ${e?.message || e}`);
-        console.error('[Boot import error]', spec, e);
-        throw e;
-      }
+    const show = (m)=>{ if(ov){ ov.textContent=m; ov.classList.add('show'); } };
+    try{
+      const em = await import('./errorManager.js'); em.initErrorManager?.();
+      await import('./engine.js');
+    }catch(e){
+      show('⚠️ Module laden langsam oder wurden blockiert. Details in der Konsole.');
+      console.error(e);
     }
-
-    (async () => {
-      try {
-        // 1) Fehler-Manager zuerst (früheUI)
-        const em = await safeImport('./errorManager.js');
-        em.initErrorManager?.();
-
-        // 2) Basismodule (alle ohne ?v und exakt kleingeschrieben)
-        await safeImport('./event.js');
-        await safeImport('./genetics.js');
-        await safeImport('./entities.js');
-        await safeImport('./reproduction.js');
-        await safeImport('./renderer.js');
-        await safeImport('./ticker.js');
-        await safeImport('./advisor.js');
-        await safeImport('./editor.js');
-        await safeImport('./narrative/panel.js');
-        await safeImport('./spawn.js');
-
-        // 3) Engine zuletzt
-        await safeImport('./engine.js');
-
-        clearTimeout(window.__CRISPR_WATCHDOG__);
-      } catch (err) {
-        // obige safeImport meldet bereits die konkrete Datei
-      }
-    })();
   </script>
-
   <script nomodule>
     const ov = document.getElementById('errorOverlay');
     if(ov){ ov.textContent = '⚠️ Dieser Browser unterstützt keine ES-Module.'; ov.classList.add('show'); }
