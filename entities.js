@@ -8,7 +8,7 @@ import { getStammColor, resetLegend } from './legend.js';
 import { createGenome } from './genetics.js';
 import { evaluateMatingPairs } from './reproduction.js';
 
-// ---------- Welt-Config ----------
+/* ---------- Welt-Config ---------- */
 const WORLD = {
   width: 800,
   height: 520,
@@ -17,7 +17,7 @@ const WORLD = {
   maxFood: 400
 };
 
-// ---------- IDs / Container ----------
+/* ---------- IDs / Container ---------- */
 let nextCellId = 1, nextFoodId = 1, nextStammId = 1;
 
 export const cells = [];
@@ -27,7 +27,7 @@ let foundersIds = { adam: null, eva: null };
 let foundersEverMated = false;
 const hungerDeaths = []; // Zeitstempel der letzten 60 s
 
-// ---------- Navigation-Parameter ----------
+/* ---------- Navigation-Parameter ---------- */
 const NAV = {
   margin: 36,             // sichere Innenzone (für Scoring)
   gamma: 2.2,             // Exponent Innenraum-Faktor
@@ -48,15 +48,19 @@ const NAV = {
   edgeCooldown: 1.5       // s: nach Stuck Randziele meiden
 };
 
-// ---------- Spatial Grid ----------
+/* ---------- Hilfsfunktionen ---------- */
+function clamp(v,min,max){ return Math.max(min, Math.min(max, v)); }
+function nowSec(){ return performance.now()/1000; }
+function distToWall(x,y){ return Math.min(x, WORLD.width-x, y, WORLD.height-y); }
+
+/* ---------- Spatial Grid ---------- */
 const GRID = { size:48, cols:0, rows:0, foodB:[], cellB:[] };
 
-const gi = (x,y)=>{
+function gi(x,y){
   const gx=Math.max(0,Math.min(GRID.cols-1,(x/GRID.size|0)));
   const gy=Math.max(0,Math.min(GRID.rows-1,(y/GRID.size|0)));
   return gy*GRID.cols+gx;
-};
-
+}
 function gridResize(){
   GRID.cols=Math.max(1,Math.ceil(WORLD.width/GRID.size));
   GRID.rows=Math.max(1,Math.ceil(WORLD.height/GRID.size));
@@ -95,7 +99,7 @@ function* neighborCells(x,y){
   }
 }
 
-// ---------- Weltzeit & Scheduler ----------
+/* ---------- Weltzeit & Scheduler ---------- */
 let worldTime = 0;
 const scheduled = []; // {due:number, fn:Function}
 export function schedule(fn, delaySec=0){ scheduled.push({ due: worldTime + Math.max(0, delaySec), fn }); }
@@ -108,12 +112,11 @@ function runScheduler(){
   }
 }
 
-// ---------- Food-Cluster ----------
+/* ---------- Food-Cluster (wandernde Hotspots) ---------- */
 const FOOD_CLUSTERS = [];
 const CLUSTER_CONF = { count: 3, driftSpeed: 20, jitter: 0.6, radius: 80 };
-const randRange=(a,b)=> a + Math.random()*(b-a);
+function randRange(a,b){ return a + Math.random()*(b-a); }
 function gauss(){ let u=0,v=0; while(u===0) u=Math.random(); while(v===0) v=Math.random(); return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v); }
-const clamp=(v,min,max)=> Math.max(min, Math.min(max, v));
 
 function initFoodClusters(){
   FOOD_CLUSTERS.length = 0;
@@ -158,7 +161,7 @@ function updateFoodClusters(dt){
   }
 }
 
-// ---------- Welt-API ----------
+/* ---------- Welt-API ---------- */
 export function setWorldSize(w,h){
   WORLD.width=Math.max(50,w|0); WORLD.height=Math.max(50,h|0);
   gridResize();
@@ -182,7 +185,7 @@ export function resetEntities(){
 }
 export function newStammId(){ return nextStammId++; }
 
-// ---------- Gene → abgeleitete Werte ----------
+/* ---------- Gene → abgeleitete Werte ---------- */
 function n(v){ return (v-5)/4; }
 function deriveFromGenes(g){
   const nTEM=n(g.TEM), nGRO=n(g.GRO), nEFF=n(g.EFF), nSCH=n(g.SCH);
@@ -213,13 +216,19 @@ function applyDerived(c){
   c._escapeTarget = null;          // Wegpunkt ins Feld
 }
 
-// ---------- Speciation (optional) ----------
+/* ---------- Speciation (optional) ---------- */
 const SPEC={ split:{ sum:7, max:3, crossBonus:-2, randomProb:0.003 } };
 function sumAbsDiff(a,b){ return Math.abs(a.TEM-b.TEM)+Math.abs(a.GRO-b.GRO)+Math.abs(a.EFF-b.EFF)+Math.abs(a.SCH-b.SCH); }
-function maxAbsDiff(a,b){ return Math.max(Math.abs(a.TEM-b.TEM),Math.abs(a.GRO-b.GRO),Math.abs(a.EFF-b-EFF),Math.abs(a.SCH-b.SCH)); } // (wird hier nicht benutzt, belassen falls gebraucht)
+function maxAbsDiff(a,b){ // ← FIX: korrekt b.EFF (nicht b-EFF)
+  return Math.max(
+    Math.abs(a.TEM - b.TEM),
+    Math.abs(a.GRO - b.GRO),
+    Math.abs(a.EFF - b.EFF),
+    Math.abs(a.SCH - b.SCH)
+  );
+}
 
-// ---------- Scoring-Hilfen ----------
-const distToWall = (x,y)=> Math.min(x, WORLD.width-x, y, WORLD.height-y);
+/* ---------- Scoring-Hilfen ---------- */
 function interiorFactor(x,y){ const t = clamp(distToWall(x,y)/NAV.margin, 0, 1); return Math.pow(t, NAV.gamma); }
 function densityBoostAt(x,y){
   const R2 = NAV.densityR*NAV.densityR;
@@ -227,9 +236,8 @@ function densityBoostAt(x,y){
   for(const f of neighborFoods(x,y)){ const dx=f.x-x, dy=f.y-y; if(dx*dx+dy*dy <= R2){ cnt++; if(--cap<=0) break; } }
   return 1 + NAV.densityK * Math.min(1, cnt/20);
 }
-const nowSec = ()=> performance.now()/1000;
 
-// ---------- Zielwahl ----------
+/* ---------- Zielwahl ---------- */
 function chooseFoodTarget(c){
   const now = nowSec();
   const avoidEdge = now < (c._avoidEdgeUntil || 0);
@@ -261,7 +269,7 @@ function chooseMateTarget(c, alive){
     if (o.energy < (o.derived?.mateEnergyThreshold ?? 14)) continue;
     const interior = interiorFactor(o.x, o.y);
     if(avoidEdge && interior < 0.6) continue;
-    const dist = Math.max(1, Math.hypot(o.x-c.x, o.y-c.y));
+    const dist = Math.max(1, Math.hypot(o.x,c.x) + Math.hypot(o.y,c.y)); // robust
     const score = interior / Math.pow(dist + NAV.r0, NAV.alpha);
     if(score > bestScore){ bestScore = score; best = o; }
   }
@@ -269,7 +277,7 @@ function chooseMateTarget(c, alive){
   return false;
 }
 
-// ---------- Verhalten / Bewegung ----------
+/* ---------- Verhalten / Bewegung ---------- */
 function updateCellBehavior(c, alive, dt){
   // Zielpflege
   if(c.target){
@@ -282,11 +290,9 @@ function updateCellBehavior(c, alive, dt){
     }
   }
 
-  // Zeit in Randnähe akkumulieren
+  // Zeit in Randnähe akkumulieren + Escape-Ziel ggf. setzen
   const near = distToWall(c.x,c.y) < NAV.margin;
   c._nearWallT = Math.max(0, (c._nearWallT || 0) + (near ? dt : -dt));
-
-  // Escape-Waypoint setzen, wenn lange in Randnähe
   const now = nowSec();
   if(near && c._nearWallT > NAV.escapeStay && now > (c._escapeUntil || 0)){
     const cx = WORLD.width/2, cy = WORLD.height/2;
@@ -329,31 +335,26 @@ function updateCellBehavior(c, alive, dt){
   c.vx = 0.85*c.vx + 0.15*dVX;
   c.vy = 0.85*c.vy + 0.15*dVY;
 
-  // Tangential-Dämpfung nahe Wand (reduziert „Entlang-Gleiten“)
+  // Tangential-Dämpfung nahe Wand
   if(near){
-    // Inwärts-Normale (ungefähr): Richtung zur Feldmitte
     const nx = Math.sign((WORLD.width/2)  - c.x);
     const ny = Math.sign((WORLD.height/2) - c.y);
     const nlen = Math.hypot(nx,ny) || 1;
     const inx = nx/nlen, iny = ny/nlen;
-    // Tangente
     let tx = -iny, ty = inx;
-    // Projektion der Velocity auf Tangente -> dämpfen
     const vdot = c.vx*tx + c.vy*ty;
     c.vx -= tx * vdot * NAV.tanDamp;
     c.vy -= ty * vdot * NAV.tanDamp;
   }
 
-  // Bewegung
+  // Bewegung + Reflexion
   c.x += c.vx * dt; c.y += c.vy * dt;
-
-  // einfache Reflexion
   if(c.x < c.radius){ c.x=c.radius; c.vx = Math.abs(c.vx); }
   if(c.x > WORLD.width - c.radius){ c.x=WORLD.width - c.radius; c.vx = -Math.abs(c.vx); }
   if(c.y < c.radius){ c.y=c.radius; c.vy = Math.abs(c.vy); }
   if(c.y > WORLD.height - c.radius){ c.y=WORLD.height - c.radius; c.vy = -Math.abs(c.vy); }
 
-  // Stuck: Rand + wenig Fortschritt → Randziele meiden
+  // Stuck: Rand + wenig Fortschritt ⇒ Randziele meiden
   const dxm=c.x-(c._lastX||c.x), dym=c.y-(c._lastY||c.y);
   const effSpeed = Math.hypot(dxm,dym) / Math.max(1e-6, dt);
   const nearStuck = distToWall(c.x,c.y) < NAV.stuckNear;
@@ -362,9 +363,8 @@ function updateCellBehavior(c, alive, dt){
     if(c._stuckT > NAV.stuckWindow){
       c._stuckT = 0;
       c._avoidEdgeUntil = now + NAV.edgeCooldown;
-      // zusätzlich leichter Richtungswechsel
       c.wanderAng = (c.wanderAng ?? 0) + (Math.random()*2-1)*0.8;
-      // Escape-Target forcieren (kleiner Hop)
+      // zusätzlichen kleinen Hop ins Feld
       const cx=WORLD.width/2, cy=WORLD.height/2;
       const ang=Math.atan2(cy-c.y, cx-c.x);
       c._escapeTarget = {
@@ -385,7 +385,7 @@ function updateCellBehavior(c, alive, dt){
   c.age += dt;
 }
 
-// ---------- Eat/Death/Crisis ----------
+/* ---------- Eat/Death/Crisis ---------- */
 function eatPhase(){
   for(const c of cells){
     if(c.dead) continue;
@@ -416,7 +416,7 @@ function crisisCheck(){
   if(alive>140) Events.emit(EVT.OVERPOP,{population:alive});
 }
 
-// ---------- Hauptupdate ----------
+/* ---------- Hauptupdate ---------- */
 export function updateWorld(dt){
   worldTime += dt; runScheduler();
   updateFoodClusters(dt);
@@ -441,7 +441,7 @@ export function updateWorld(dt){
   }
 }
 
-// ---------- Darstellungshilfen ----------
+/* ---------- Darstellungshilfen ---------- */
 export function getFoundersState(){ return {...foundersIds, foundersEverMated}; }
 export function cellColor(c, highlightStammId){
   const col=getStammColor(c.stammId);
@@ -449,5 +449,5 @@ export function cellColor(c, highlightStammId){
   return { fill: col, alpha: 1 };
 }
 
-// init
+/* init */
 gridResize(); initFoodClusters();
