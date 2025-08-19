@@ -4,15 +4,16 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <title>CRISPR Genetics Lab</title>
-  <link rel="stylesheet" href="./style.css?v=apoc8" />
-  <!-- optional: hilft beim schnelleren Laden -->
-  <link rel="modulepreload" href="./engine.js?v=apoc8">
+  <link rel="stylesheet" href="./style.css?v=apoc10" />
+  <link rel="modulepreload" href="./engine.js?v=apoc10">
+  <link rel="modulepreload" href="./errorManager.js?v=apoc10">
+  <link rel="modulepreload" href="./event.js?v=apoc10">
 </head>
 <body>
-  <!-- Fehler-Overlay (rot, oben) -->
+  <!-- Fehler-Overlay -->
   <div id="errorOverlay" class="hidden" role="alert" aria-live="assertive"></div>
 
-  <!-- Toolbar (ohne Advisor/Export/Import) -->
+  <!-- Toolbar (kompakt) -->
   <header class="toolbar" id="toolbar">
     <div class="toolbar-row">
       <button id="btnPlayPause" title="Abspielen/Pausieren (Leertaste)">▶️ Play</button>
@@ -36,7 +37,6 @@
     </div>
   </header>
 
-  <!-- Spielfläche -->
   <main id="main">
     <canvas id="simCanvas" width="800" height="520"></canvas>
   </main>
@@ -52,12 +52,10 @@
 
   <!-- Ticker -->
   <footer id="ticker" aria-live="polite">
-    <div id="tickerInner">
-      <div id="tickerContent"></div>
-    </div>
+    <div id="tickerInner"><div id="tickerContent"></div></div>
   </footer>
 
-  <!-- Editor-Modal (mit Advisor-Steuerung) -->
+  <!-- Editor-Modal -->
   <dialog id="editorModal" aria-labelledby="editorTitle">
     <form method="dialog" id="editorForm">
       <header class="modalHeader">
@@ -77,7 +75,6 @@
               <button type="button" class="inc">+1</button>
             </div>
           </div>
-
           <div class="traitRow" data-trait="GRO">
             <label>GRÖ – Größe</label>
             <div class="stepper">
@@ -86,7 +83,6 @@
               <button type="button" class="inc">+1</button>
             </div>
           </div>
-
           <div class="traitRow" data-trait="EFF">
             <label>EFF – Effizienz</label>
             <div class="stepper">
@@ -95,7 +91,6 @@
               <button type="button" class="inc">+1</button>
             </div>
           </div>
-
           <div class="traitRow" data-trait="SCH">
             <label>SCH – Schutz</label>
             <div class="stepper">
@@ -120,7 +115,6 @@
               <strong>KI‑Advisor:</strong>
               <span id="editorAdvisorStatus">Aus</span>
             </div>
-
             <div class="advisorCtrls">
               <button type="button" id="editorAdvisorToggle" title="Modus umschalten">Modus: Umschalten</button>
               <input type="text" id="editorModelUrl" placeholder="ml/models/my_model/model.json" value="ml/models/my_model/model.json" />
@@ -133,7 +127,7 @@
     </form>
   </dialog>
 
-  <!-- Watchdog (informativ) -->
+  <!-- Früher Watchdog-Hinweis -->
   <script>
     (function(){
       window.__CRISPR_WATCHDOG__ = setTimeout(function(){
@@ -145,43 +139,38 @@
     })();
   </script>
 
-  <!-- ES-Module robust importieren (mit Diagnose bei 404/MIME-Problemen) -->
+  <!-- Boot lädt zuerst errorManager, dann engine in try/catch -->
   <script type="module">
     (async () => {
       const ov = document.getElementById('errorOverlay');
-      function show(msg){
-        if(!ov) return;
-        ov.textContent = msg;
-        ov.classList.add('show');
-      }
+      const show = (msg)=>{ if(ov){ ov.textContent=msg; ov.classList.add('show'); } };
       try{
-        // Import ohne Query-String (minimiert 404-Fallen)
-        await import('./engine.js?v=apoc8');
+        const em = await import('./errorManager.js?v=apoc10');
+        em.initErrorManager(); // sehr früh aktiv
+        await import('./engine.js?v=apoc10');
         clearTimeout(window.__CRISPR_WATCHDOG__);
       }catch(err){
         clearTimeout(window.__CRISPR_WATCHDOG__);
-        // Diagnose: existiert die Datei wirklich?
         try{
-          const res = await fetch('./engine.js?v=cachebuster_' + Date.now(), { cache: 'no-store' });
-          const ct = (res.headers.get('content-type') || '').toLowerCase();
+          const res = await fetch('./engine.js?v=check_' + Date.now(), { cache:'no-store' });
+          const ct = (res.headers.get('content-type')||'').toLowerCase();
           if(!res.ok){
-            show(`⚠️ engine.js nicht gefunden (${res.status}). Prüfe Dateiname & Pfad: exakt "engine.js" (klein) neben index.html. (GitHub Pages ist case-sensitiv.)`);
+            show(`⚠️ engine.js nicht gefunden (${res.status}). Prüfe Dateiname & Pfad (Kleinschreibung).`);
           }else if(!ct.includes('javascript')){
-            show(`⚠️ engine.js geladen, aber MIME‑Type ist "${ct}". Häufige Ursache: 404‑Fallback als HTML. Prüfe Schreibweise/Kleinbuchstaben.`);
+            show(`⚠️ engine.js wurde als "${ct}" ausgeliefert – vermutlich 404‑HTML. Prüfe Schreibweise/Kleinbuchstaben.`);
           }else{
-            show('⚠️ Importing a module script failed – Unterimport defekt? Prüfe Pfade in engine.js (z. B. "./events.js").');
+            show('⚠️ Importing a module script failed – Unterimport defekt? Prüfe Pfade in Untermodulen (z. B. "./event.js", "./narrative/panel.js").');
           }
         }catch{
-          show('⚠️ Module konnten nicht geladen werden: Netzwerk/Fetch‑Problem beim Laden von engine.js.');
+          show('⚠️ Netzwerk/Fetch‑Problem beim Laden von engine.js.');
         }
-        console.error('[CRISPR] Modul-Importfehler', err);
+        console.error('[CRISPR] Bootfehler', err);
       }
     })();
   </script>
-
   <script nomodule>
     const ov = document.getElementById('errorOverlay');
-    if(ov){ ov.textContent = '⚠️ Dieser Browser unterstützt keine ES-Module.'; ov.classList.add('show'); }
+    if(ov){ ov.textContent = '⚠️ Dieser Browser unterstützt keine ES‑Module.'; ov.classList.add('show'); }
   </script>
 </body>
 </html>

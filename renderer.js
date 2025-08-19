@@ -1,99 +1,76 @@
-// renderer.js
-// Zeichnet: Grid → Nahrung → Zellen. Kein Schlieren. Legend im Canvas.
+// renderer.js – Canvas-Rendering (Grid → Nahrung → Zellen), kein Schlieren.
 
-import { drawLegend } from './legend.js';
-import { getStammCounts, cellColor } from './entities.js';
+import { getStammColor } from './legend.js';
 
-export class Renderer {
+export class Renderer{
   constructor(canvas){
     this.canvas = canvas;
-    this.ctx = canvas.getContext('2d');
-    this.pixelRatio = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+    this.ctx = canvas.getContext('2d', { alpha: false });
     this.highlightStammId = null;
+    this._setupHiDPI();
   }
-
-  setHighlight(stammIdOrNull){
-    this.highlightStammId = stammIdOrNull;
+  _setupHiDPI(){
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    const { width, height } = this.canvas.getBoundingClientRect();
+    this.canvas.width = Math.max(1, Math.round(width * dpr));
+    this.canvas.height = Math.max(1, Math.round(height * dpr));
+    this.ctx.setTransform(dpr,0,0,dpr,0,0);
   }
-
-  resize(){
-    const cssW = this.canvas.clientWidth;
-    const cssH = this.canvas.clientHeight;
-    const pr = this.pixelRatio;
-    const w = Math.floor(cssW * pr);
-    const h = Math.floor(cssH * pr);
-    if(this.canvas.width !== w || this.canvas.height !== h){
-      this.canvas.width = w; this.canvas.height = h;
-    }
+  setHighlight(stammId){ this.highlightStammId = stammId; }
+  _clear(){
+    const { ctx } = this;
+    const { width, height } = this.canvas.getBoundingClientRect();
+    ctx.clearRect(0,0,width,height);
   }
-
-  clear(){
-    const {ctx, canvas} = this;
-    ctx.clearRect(0,0,canvas.width,canvas.height);
-  }
-
-  drawGrid(){
-    const {ctx, canvas} = this;
+  _drawGrid(){
+    const { ctx } = this;
+    const { width, height } = this.canvas.getBoundingClientRect();
     ctx.save();
-    ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+    ctx.strokeStyle = 'rgba(255,255,255,0.04)';
     ctx.lineWidth = 1;
-    const step = 40 * this.pixelRatio;
-    for(let x=0; x<canvas.width; x+=step){
-      ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,canvas.height); ctx.stroke();
-    }
-    for(let y=0; y<canvas.height; y+=step){
-      ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(canvas.width,y); ctx.stroke();
-    }
+    const step = 22;
+    for(let x=0;x<width;x+=step){ ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,height); ctx.stroke(); }
+    for(let y=0;y<height;y+=step){ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(width,y); ctx.stroke(); }
     ctx.restore();
   }
-
-  drawFoods(foods){
-    const {ctx} = this;
-    ctx.save();
-    ctx.fillStyle = 'rgba(100, 255, 150, 0.9)';
+  _drawFoods(foods){
+    const { ctx } = this; ctx.save();
     for(const f of foods){
-      const x = Math.round(f.x * this.pixelRatio);
-      const y = Math.round(f.y * this.pixelRatio);
-      ctx.fillRect(x-2, y-2, 4, 4);
+      ctx.fillStyle = 'rgba(124,247,166,0.9)';
+      ctx.fillRect(f.x-2, f.y-2, 4, 4);
     }
     ctx.restore();
   }
-
-  drawCells(cells){
-    const {ctx} = this;
+  _drawCells(cells){
+    const { ctx } = this;
     ctx.save();
     for(const c of cells){
       if(c.dead) continue;
-      const color = cellColor(c, this.highlightStammId);
-      const x = Math.round(c.x * this.pixelRatio);
-      const y = Math.round(c.y * this.pixelRatio);
-      const r = Math.max(2, c.radius) * this.pixelRatio;
+      const base = getStammColor(c.stammId);
+      const faded = (this.highlightStammId!==null && this.highlightStammId!==c.stammId);
+      const alpha = faded ? 0.25 : 1.0;
 
-      ctx.globalAlpha = color.alpha;
-      ctx.fillStyle = color.fill;
+      // Glow für Highlight
+      if(!faded){
+        ctx.beginPath();
+        ctx.fillStyle = `rgba(124,247,166,0.12)`;
+        ctx.arc(c.x, c.y, c.radius+6, 0, Math.PI*2);
+        ctx.fill();
+      }
+
       ctx.beginPath();
-      ctx.arc(x, y, r, 0, Math.PI*2);
+      ctx.fillStyle = base;
+      ctx.globalAlpha = alpha;
+      ctx.arc(c.x, c.y, c.radius, 0, Math.PI*2);
       ctx.fill();
-
-      // kleiner Innenpunkt für Geschlecht
-      ctx.globalAlpha = color.alpha * 0.9;
-      ctx.fillStyle = c.sex === 'm' ? 'rgba(120,180,255,0.9)' : 'rgba(255,160,200,0.9)';
-      ctx.beginPath(); ctx.arc(x, y, Math.max(1, r*0.35), 0, Math.PI*2); ctx.fill();
+      ctx.globalAlpha = 1;
     }
     ctx.restore();
   }
-
-  drawLegendOverlay(){
-    const counts = getStammCounts();
-    drawLegend(this.ctx, counts, this.highlightStammId);
-  }
-
   renderFrame({cells, foods}){
-    this.resize();
-    this.clear();
-    this.drawGrid();
-    this.drawFoods(foods);
-    this.drawCells(cells);
-    this.drawLegendOverlay();
+    this._clear();
+    this._drawGrid();
+    this._drawFoods(foods);
+    this._drawCells(cells);
   }
 }

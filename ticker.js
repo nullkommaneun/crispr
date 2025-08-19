@@ -1,31 +1,12 @@
-// ticker.js
-// Marquee-Ticker unten: sachliche Tipps/Statusmeldungen.
+// ticker.js – Marquee-Ticker unten
 
 import { Events, EVT } from './event.js';
-
 let elContent;
-
-function show(text){
-  if(!elContent) return;
-  elContent.textContent = text;
-  // CSS-Animation läuft endlos; hier nur Textwechsel.
-}
+const show=(t)=>{ if(elContent) elContent.textContent=t; };
 
 export function initTicker(){
-  elContent = document.getElementById('tickerContent');
-  if(!elContent) return;
-
-  // Starttext
+  elContent=document.getElementById('tickerContent'); if(!elContent) return;
   show('Tipp: Erhöhe die Nahrung, wenn viele Zellen verhungern.');
-
-  Events.on(EVT.TIP, (d)=>{
-    if(!d) return;
-    const label = d.label ? `${d.label}: ` : '';
-    show(`${label}${d.text}`);
-  });
-  Events.on(EVT.STATUS, (d)=>{
-    if(!d) return;
-    const src = d.source ? `${d.source} – ` : '';
-    show(`${src}${d.text}`);
-  });
+  Events.on(EVT.TIP,(d)=>{ if(!d) return; const label=d.label?`${d.label}: `:''; show(`${label}${d.text}`); });
+  Events.on(EVT.STATUS,(d)=>{ if(!d) return; const src=d.source?`${d.source} – `:''; show(`${src}${d.text}`); });
 }

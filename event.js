@@ -1,5 +1,4 @@
-// event.js
-// Kleiner, schneller Event-Bus mit benannten Event-Typen.
+// event.js – zentraler Event-Bus (einzige gültige Variante)
 
 const listeners = new Map(); // Map<string, Set<Function>>
 
@@ -16,7 +15,7 @@ function once(type, handler){
 }
 function emit(type, payload){
   const set = listeners.get(type); if(!set) return;
-  for(const fn of Array.from(set)){ // Kopie, damit Mutationen erlaubt sind
+  for(const fn of Array.from(set)){
     try{ fn(payload); }catch(e){ console.error('[EVT]', type, e); }
   }
 }

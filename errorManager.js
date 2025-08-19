@@ -1,49 +1,36 @@
-// errorManager.js
-// Anzeige eines roten Fehler-Overlays + Sammeln von Laufzeitinfos.
+// errorManager.js – frühes Fehler-Overlay + Utilities
 
-let _ctxGetter = null;
+let overlayEl = null;
+let contextGetter = null;
+
+function getOverlay(){
+  if(!overlayEl) overlayEl = document.getElementById('errorOverlay');
+  return overlayEl;
+}
 
 export function initErrorManager(){
-  const overlay = document.getElementById('errorOverlay');
-  if(!overlay) throw new Error('Fehler-Overlay nicht gefunden (errorOverlay).');
-  // Globale Fehlerfänger
+  const el = getOverlay();
+  // globale Handler
   window.addEventListener('error', (e)=>{
-    showError('Unbehandelter Fehler: ' + (e.message || 'Unbekannt'), e.error);
+    showError('Laufzeitfehler', e?.error || e?.message || e);
   });
   window.addEventListener('unhandledrejection', (e)=>{
-    showError('Unbehandelte Promise-Ablehnung', e.reason);
+    showError('Unhandled Promise', e?.reason || e);
   });
+  if(el){ el.classList.add('hidden'); el.textContent=''; }
 }
 
-export function setContextGetter(fn){
-  _ctxGetter = fn;
+export function setContextGetter(fn){ contextGetter = fn; }
+
+export function showError(title, err){
+  const el = getOverlay(); if(!el) return;
+  const msg = `${title}: ${err?.message || String(err)}`;
+  el.textContent = `⚠️ ${msg}`;
+  el.classList.remove('hidden');
+  el.classList.add('show');
+  console.error('[CRISPR ERROR]', msg, { context: contextGetter?.() });
 }
 
-export function assertModule(name, value){
-  if(value === undefined || value === null){
-    showError(`Modul „${name}“ fehlt – Start abgebrochen.`);
-    throw new Error(`Modul fehlt: ${name}`);
-  }
-}
-
-export function showError(message, err){
-  const overlay = document.getElementById('errorOverlay');
-  if(!overlay) return;
-  const extra = [];
-  if(err){
-    extra.push(String(err));
-    if(err.stack) extra.push(err.stack.slice(0, 400));
-  }
-  if(_ctxGetter){
-    try{
-      const {tick, fps, canvasW, canvasH, lastActions=[]} = _ctxGetter() || {};
-      extra.push(`Tick:${tick} • FPS:${fps?.toFixed?.(1) ?? '--'} • Canvas:${canvasW}×${canvasH}`);
-      if(lastActions.length){
-        extra.push('Letzte Aktionen: ' + lastActions.slice(-5).join(' | '));
-      }
-    }catch(e){}
-  }
-  overlay.textContent = `⚠️ Fehler: ${message}${extra.length? ' — ' + extra.join(' / ') : ''}`;
-  overlay.classList.add('show');
-  console.error('[ErrorOverlay]', message, err);
+export function assertModule(name, mod){
+  if(!mod) showError(`Modul ${name} fehlt`, new Error('undefined'));
 }
