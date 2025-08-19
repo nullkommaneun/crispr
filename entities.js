@@ -1,6 +1,6 @@
 // entities.js – Welt, Zellen, Nahrung, Verhalten
 // Spatial Grid + Scheduler + wandernde Food-Cluster
-// Anti-Stick v2: Outward-Clamp + Tangential-Slide + Stuck-Kick
+// NAV (natürlich): Wall-aware Scoring, Dichtebonus, Reflexion, Rand-Rauschen, Edge-Cooldown
 
 import { Events, EVT } from './event.js';
 import { getStammColor, resetLegend } from './legend.js';
@@ -10,8 +10,8 @@ import { evaluateMatingPairs } from './reproduction.js';
 const WORLD = {
   width: 800,
   height: 520,
-  mutationRate: 0.10,
-  foodRate: 100,   // Gesamtziel pro Minute (wird auf Cluster verteilt)
+  mutationRate: 0.10,     // 0..1 (Engine liefert 0..0.10)
+  foodRate: 100,          // pro Minute; Engine-Regler liefert /s ⇒ *60
   maxFood: 400
 };
 
@@ -20,19 +20,30 @@ let nextCellId = 1, nextFoodId = 1, nextStammId = 1;
 export const cells = [];
 export const foods = [];
 
-const pedigree = new Map();
-const lastMinuteHungerDeaths = [];
-let foundersIds = { adam: null, eva: null };
-let foundersEverMated = false;
+// ---- Navigation-Parameter (natürlich) -------------------------------------
+const NAV = {
+  margin: 36,             // sichere Innenzone (beeinflusst Scoring)
+  gamma: 2.2,             // Exponent für Innenraum-Faktor
+  r0: 8,                  // Distanz-Offset im Score
+  alpha: 1.5,             // Distanz-Exponent
+  densityR: 50,           // Reichweite für Dichtebonus (px)
+  densityK: 0.25,         // Stärke des Dichtebonus (max ~ +25%)
+  wallWanderBoost: 1.25,  // erhöhtes Richtungsrauschen nahe der Wand
+  stuckNear: 40,          // Stuck-Check nur nahe Wand (px)
+  stuckSpeedMin: 8,       // px/s
+  stuckWindow: 1.5,       // s
+  edgeCooldown: 1.5       // s: nach Stuck Randziele ignorieren
+};
 
-// ---------- Spatial Grid ----------
+// ---- Spatial Grid ----------------------------------------------------------
 const GRID = { size:48, cols:0, rows:0, foodB:[], cellB:[] };
 
-function gi(x,y){
+const gi = (x,y)=>{
   const gx=Math.max(0,Math.min(GRID.cols-1,(x/GRID.size|0)));
   const gy=Math.max(0,Math.min(GRID.rows-1,(y/GRID.size|0)));
   return gy*GRID.cols+gx;
-}
+};
+
 function gridResize(){
   GRID.cols=Math.max(1,Math.ceil(WORLD.width/GRID.size));
   GRID.rows=Math.max(1,Math.ceil(WORLD.height/GRID.size));
@@ -42,10 +53,7 @@ function gridResize(){
 }
 function addFoodToGrid(f){ GRID.foodB[gi(f.x,f.y)].push(f); }
 function removeFoodFromGrid(fid){
-  for(const b of GRID.foodB){
-    const i=b.findIndex(o=>o.id===fid);
-    if(i!==-1){ b.splice(i,1); return; }
-  }
+  for(const b of GRID.foodB){ const i=b.findIndex(o=>o.id===fid); if(i!==-1){ b.splice(i,1); return; } }
 }
 function rebuildCellGrid(alive){
   for(let i=0;i<GRID.cellB.length;i++) GRID.cellB[i].length=0;
@@ -74,7 +82,7 @@ function* neighborCells(x,y){
   }
 }
 
-// ---------- Weltzeit & Scheduler ----------
+// ---- Weltzeit & Scheduler --------------------------------------------------
 let worldTime = 0;
 const scheduled = []; // {due:number, fn:Function}
 export function schedule(fn, delaySec=0){ scheduled.push({ due: worldTime + Math.max(0, delaySec), fn }); }
@@ -87,12 +95,12 @@ function runScheduler(){
   }
 }
 
-// ---------- Food-Cluster ----------
+// ---- Food-Cluster (wandernde Hotspots) ------------------------------------
 const FOOD_CLUSTERS = [];
 const CLUSTER_CONF = { count: 3, driftSpeed: 20, jitter: 0.6, radius: 80 };
-function randRange(a,b){ return a + Math.random()*(b-a); }
+const randRange=(a,b)=> a + Math.random()*(b-a);
 function gauss(){ let u=0,v=0; while(u===0) u=Math.random(); while(v===0) v=Math.random(); return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v); }
-function clamp(v,min,max){ return Math.max(min, Math.min(max, v)); }
+const clamp=(v,min,max)=> Math.max(min, Math.min(max, v));
 
 function initFoodClusters(){
   FOOD_CLUSTERS.length = 0;
@@ -116,13 +124,13 @@ function updateFoodClusters(dt){
     const angJitter = (Math.random()*2-1) * CLUSTER_CONF.jitter * dt;
     const ang = Math.atan2(c.vy, c.vx) + angJitter;
     const sp = CLUSTER_CONF.driftSpeed;
-    c.vx = Math.cos(ang) * sp;
-    c.vy = Math.sin(ang) * sp;
+    c.vx = Math.cos(ang) * sp; c.vy = Math.sin(ang) * sp;
     c.x += c.vx * dt; c.y += c.vy * dt;
-    if(c.x < 30){ c.x=30; c.vx = Math.abs(c.vx); }
-    if(c.x > WORLD.width-30){ c.x=WORLD.width-30; c.vx = -Math.abs(c.vx); }
-    if(c.y < 30){ c.y=30; c.vy = Math.abs(c.vy); }
-    if(c.y > WORLD.height-30){ c.y=WORLD.height-30; c.vy = -Math.abs(c.vy); }
+
+    if(c.x < NAV.margin){ c.x= NAV.margin; c.vx = Math.abs(c.vx); }
+    if(c.x > WORLD.width - NAV.margin){ c.x=WORLD.width-NAV.margin; c.vx = -Math.abs(c.vx); }
+    if(c.y < NAV.margin){ c.y= NAV.margin; c.vy = Math.abs(c.vy); }
+    if(c.y > WORLD.height - NAV.margin){ c.y=WORLD.height-NAV.margin; c.vy = -Math.abs(c.vy); }
 
     const perSec = basePerCluster * c.rateMult;
     c.acc += perSec * dt;
@@ -137,14 +145,13 @@ function updateFoodClusters(dt){
   }
 }
 
-// ---------- Welt-API ----------
+// ---- Welt-API --------------------------------------------------------------
 export function setWorldSize(w,h){
-  WORLD.width=Math.max(50,w|0);
-  WORLD.height=Math.max(50,h|0);
+  WORLD.width=Math.max(50,w|0); WORLD.height=Math.max(50,h|0);
   gridResize();
   for(const c of FOOD_CLUSTERS){
-    c.x = clamp(c.x, 30, WORLD.width-30);
-    c.y = clamp(c.y, 30, WORLD.height-30);
+    c.x = clamp(c.x, NAV.margin, WORLD.width - NAV.margin);
+    c.y = clamp(c.y, NAV.margin, WORLD.height - NAV.margin);
   }
 }
 export function setMutationRate(p){ WORLD.mutationRate=Math.max(0,Math.min(1,p)); }
@@ -152,16 +159,15 @@ export function setFoodRate(perMinute){ WORLD.foodRate=Math.max(0, perMinute|0);
 export function getWorldConfig(){ return {...WORLD}; }
 
 export function resetEntities(){
-  cells.length=0; foods.length=0; pedigree.clear(); resetLegend(); lastMinuteHungerDeaths.length=0;
-  foundersIds={adam:null,eva:null}; foundersEverMated=false;
-  nextCellId=1; nextFoodId=1; nextStammId=1;
+  cells.length=0; foods.length=0; resetLegend(); pedigree.clear(); lastMinuteHungerDeaths.length=0;
+  nextCellId=1; nextFoodId=1; nextStammId=1; foundersIds={adam:null,eva:null}; foundersEverMated=false;
   worldTime=0; scheduled.length=0;
   gridResize(); initFoodClusters();
   Events.emit(EVT.RESET,{});
 }
 export function newStammId(){ return nextStammId++; }
 
-// ---------- abgeleitete Werte aus Genen ----------
+// ---- abgeleitete Werte aus Genen ------------------------------------------
 function n(v){ return (v-5)/4; }
 function deriveFromGenes(g){
   const nTEM=n(g.TEM), nGRO=n(g.GRO), nEFF=n(g.EFF), nSCH=n(g.SCH);
@@ -186,14 +192,15 @@ function applyDerived(c){
   if(c.vx===undefined || c.vy===undefined){ const ang=Math.random()*Math.PI*2; c.vx=Math.cos(ang)*10; c.vy=Math.sin(ang)*10; }
   c.scanTimer=Math.random()*d.scanInterval; c.target=null;
   c._stuckT = 0; c._lastX = c.x; c._lastY = c.y;
+  c._avoidEdgeUntil = 0; // Rand-Blacklist nach Stuck
 }
 
-// ---------- Speciation ----------
+// ---- Speciation (optional, beibehalten) -----------------------------------
 const SPEC={ split:{ sum:7, max:3, crossBonus:-2, randomProb:0.003 } };
 function sumAbsDiff(a,b){ return Math.abs(a.TEM-b.TEM)+Math.abs(a.GRO-b.GRO)+Math.abs(a.EFF-b.EFF)+Math.abs(a.SCH-b.SCH); }
 function maxAbsDiff(a,b){ return Math.max(Math.abs(a.TEM-b.TEM),Math.abs(a.GRO-b.GRO),Math.abs(a.EFF-b.EFF),Math.abs(a.SCH-b.SCH)); }
 
-// ---------- Erzeuger ----------
+// ---- Erzeugung -------------------------------------------------------------
 export function createCell(params={}){
   const id=params.id??nextCellId++; const parents=params.parents||null;
   let stammId=params.stammId??newStammId();
@@ -205,7 +212,7 @@ export function createCell(params={}){
       const sum=sumAbsDiff(params.genes,mother.genes);
       const mx =maxAbsDiff(params.genes,mother.genes);
       const cross=!!(father && mother.stammId!==father.stammId);
-      const thresh=SPEC.split.sum + (cross?SPEC.split.crossBonus:0);
+      const thresh=SPEC.split.sum+(cross?SPEC.split.crossBonus:0);
       if(sum>=thresh || mx>=SPEC.split.max || Math.random()<SPEC.split.randomProb){
         stammId=newStammId();
         Events.emit(EVT.TIP,{label:'Tipp', text:`Neuer Stamm ${stammId} abgespalten.`});
@@ -221,9 +228,7 @@ export function createCell(params={}){
             vx:Math.cos(angle)*10, vy:Math.sin(angle)*10,
             genes, energy:params.energy??22, age:0, dead:false, parents,
             bornAt:performance.now()/1000, lastMateAt:-999 };
-  applyDerived(c);
-  cells.push(c);
-  pedigree.set(c.id,{motherId:c.parents?.motherId??null, fatherId:c.parents?.fatherId??null, stammId:c.stammId});
+  applyDerived(c); cells.push(c);
   return c;
 }
 
@@ -235,8 +240,10 @@ export function createFood(params = {}){
   return f;
 }
 
-// ---------- Zähler / Export ----------
-export function getStammCounts(){ const counts={}; for(const c of cells){ if(c.dead) continue; counts[c.stammId]=(counts[c.stammId]||0)+1; } return counts; }
+// ---- Zähler / Export / Import ---------------------------------------------
+export function getStammCounts(){
+  const counts={}; for(const c of cells){ if(c.dead) continue; counts[c.stammId]=(counts[c.stammId]||0)+1; } return counts;
+}
 export function setFounders(adamId,evaId){ foundersIds = {adam: adamId, eva: evaId}; }
 export function exportState(){
   return JSON.stringify({
@@ -252,95 +259,111 @@ export function importState(json){
   const data=typeof json==='string'?JSON.parse(json):json;
   resetEntities(); Object.assign(WORLD,data.WORLD); gridResize();
   nextCellId=data.nextCellId; nextFoodId=data.nextFoodId; nextStammId=data.nextStammId;
-  for(const c of data.cells){ const cc={...c,dead:false}; applyDerived(cc); cells.push(cc);
-    pedigree.set(cc.id,{motherId:cc.parents?.motherId??null,fatherId:cc.parents?.fatherId??null,stammId:cc.stammId}); }
+  for(const c of data.cells){ const cc={...c,dead:false}; applyDerived(cc); cells.push(cc); }
   for(const f of data.foods){ foods.push({...f}); addFoodToGrid(f); }
   foundersIds=data.foundersIds||foundersIds;
 }
 
-// ---------- Verwandtschaft ----------
-export function relatedness(a,b){
+// ---- Verwandtschaft (für reproduction.js via Funktionsübergabe) -----------
+export function relatedness(a, b){
   if(a.id===b.id) return 1;
-  const mapA=ancUp(a.id,3), mapB=ancUp(b.id,3); let best=Infinity;
-  for(const [aid,da] of mapA){ if(mapB.has(aid)){ const sum=da+mapB.get(aid); if(sum<best) best=sum; } }
-  if(best===Infinity) return 0; return Math.pow(0.5,best);
+  const ancUp = (id, depth)=>{
+    const map=new Map(); const q=[{id,d:0}];
+    while(q.length){
+      const {id:cur,d}=q.shift();
+      const p=cells.find(x=>x.id===cur);
+      if(!p?.parents) continue;
+      const m=p.parents.motherId, f=p.parents.fatherId;
+      if(m && d+1<=depth && !map.has(m)){ map.set(m,d+1); q.push({id:m,d:d+1}); }
+      if(f && d+1<=depth && !map.has(f)){ map.set(f,d+1); q.push({id:f,d:d+1}); }
+    }
+    return map;
+  };
+  const A=ancUp(a.id,3), B=ancUp(b.id,3);
+  let best=Infinity;
+  for(const [aid,da] of A){ if(B.has(aid)){ const sum=da+B.get(aid); if(sum<best) best=sum; } }
+  if(best===Infinity) return 0;
+  return Math.pow(0.5, best);
 }
-function ancUp(id,depth){
-  const map=new Map(); const q=[{id,d:0}];
-  while(q.length){
-    const {id:cur,d}=q.shift();
-    const p=pedigree.get(cur); if(!p) continue;
-    if(p.motherId && d+1<=depth){ if(!map.has(p.motherId)) map.set(p.motherId,d+1); q.push({id:p.motherId,d:d+1}); }
-    if(p.fatherId && d+1<=depth){ if(!map.has(p.fatherId)) map.set(p.fatherId,d+1); q.push({id:p.fatherId,d:d+1}); }
+
+// ---- Hilfen für Scoring ----------------------------------------------------
+const distToWall = (x,y)=> Math.min(x, WORLD.width-x, y, WORLD.height-y);
+function interiorFactor(x,y){ // 0..1 (am Rand 0, innen ~1), geglättet
+  const t = clamp(distToWall(x,y)/NAV.margin, 0, 1);
+  return Math.pow(t, NAV.gamma);
+}
+function densityBoostAt(x,y){ // 1..(1+K)
+  const R2 = NAV.densityR*NAV.densityR;
+  let cnt = 0, cap = 24; // Deckel aus Performancegründen
+  for(const f of neighborFoods(x,y)){
+    const dx=f.x-x, dy=f.y-y;
+    if(dx*dx+dy*dy <= R2){ cnt++; if(--cap<=0) break; }
   }
-  return map;
+  return 1 + NAV.densityK * Math.min(1, cnt/20);
 }
+const nowSec = ()=> performance.now()/1000;
 
-// ---------- Verhalten / Anti-Stick v2 ----------
-const WALL = { margin: 28 };         // “Near-Wall”-Zone
-const STUCK = { near: 40, speedMin: 8, window: 2.0, kickSpeed: 0.85 };
+// ---- Zielwahl (nur Entscheidungslogik ändern – Physik bleibt einfach) -----
+function chooseFoodTarget(c){
+  const now = nowSec();
+  const avoidEdge = now < (c._avoidEdgeUntil || 0);
+  let best=null, bestScore=-Infinity;
+  for(const f of neighborFoods(c.x,c.y)){
+    // Reichweite
+    const dx=f.x-c.x, dy=f.y-c.y; const d2=dx*dx+dy*dy;
+    if (d2 > c.derived.sense*c.derived.sense) continue;
 
-function wallNormal(c){
-  // Inwärts gerichtete Normale (nx,ny) in {-1,0,1}; near=true, wenn in Randzone
-  let nx=0, ny=0, near=false;
-  if(c.x < WALL.margin){ nx = 1; near=true; }
-  else if(c.x > WORLD.width - WALL.margin){ nx = -1; near=true; }
-  if(c.y < WALL.margin){ ny = 1; near=true; }
-  else if(c.y > WORLD.height - WALL.margin){ ny = -1; near=true; }
-  return { nx, ny, near };
-}
+    // Innenraum-Faktor + ggf. Edge-Cooldown
+    const interior = interiorFactor(f.x, f.y);
+    if(avoidEdge && interior < 0.6) continue;
 
-function applyWallAvoidance(c, dvx, dvy){
-  const { nx, ny, near } = wallNormal(c);
-  if(!near) return { dvx, dvy };
+    // Distanzkomponente
+    const dist = Math.sqrt(Math.max(1,d2));
+    const distTerm = Math.pow(dist + NAV.r0, NAV.alpha);
 
-  // Inwärts-Normalenvektor
-  const nlen = Math.hypot(nx, ny) || 1;
-  const inx = nx / nlen, iny = ny / nlen;        // inward
-  const outx = -inx, outy = -iny;                // outward
+    // Dichtebonus (führt organisch in Cluster hinein)
+    const density = densityBoostAt(f.x, f.y);
 
-  // 1) Outward-Komponente hart entfernen (kein Steueranteil Richtung Wand)
-  const outDot = dvx*outx + dvy*outy;            // Anteil zum Rand
-  if(outDot > 0){
-    dvx -= outx * outDot;
-    dvy -= outy * outDot;
+    const score = interior * density * c.derived.digestionMult * (f.value / distTerm);
+    if(score > bestScore){ bestScore = score; best = f; }
   }
-
-  // 2) Tangential-Slide hinzufügen (seitlich an der Wand entlang)
-  //    Tangente = 90° gedrehte Normale; Richtung anhand aktueller Bewegung
-  let tx = -iny, ty = inx;                       // eine mögliche Tangente
-  const vdot = (c.vx*tx + c.vy*ty);
-  if(vdot < 0){ tx = -tx; ty = -ty; }            // mit Bewegungsrichtung mitlaufen
-
-  const slideBoost = 0.35 * c.derived.speedMax;  // moderates Gleiten
-  dvx += tx * slideBoost;
-  dvy += ty * slideBoost;
-
-  // 3) Mindest Inwärts-Anteil, damit sie nicht “einhaken”
-  const inDot = dvx*inx + dvy*iny;
-  if(inDot < 4){                                 // 4 px/s Inwärtsanteil
-    dvx += inx * (4 - inDot);
-    dvy += iny * (4 - inDot);
+  if(best){
+    // Ziel übernehmen (kein hartes Clamping – innen-Faktor reicht)
+    c.target = { type:'food', id: best.id, x: best.x, y: best.y };
+    return true;
   }
-
-  return { dvx, dvy };
+  return false;
 }
 
-function cornerKickIfNeeded(c){
-  const nearX = (c.x < WALL.margin) || (c.x > WORLD.width - WALL.margin);
-  const nearY = (c.y < WALL.margin) || (c.y > WORLD.height - WALL.margin);
-  if(nearX && nearY){
-    const cx = WORLD.width/2, cy = WORLD.height/2;
-    const ang = Math.atan2(cy - c.y, cx - c.x);
-    const sp  = c.derived.speedMax * 0.9;
-    c.vx = Math.cos(ang) * sp;
-    c.vy = Math.sin(ang) * sp;
-    c.x += Math.cos(ang) * 2;
-    c.y += Math.sin(ang) * 2;
-    c._stuckT = 0;
+function chooseMateTarget(c, alive){
+  const now = nowSec();
+  const avoidEdge = now < (c._avoidEdgeUntil || 0);
+  const tNow = now;
+  if((tNow-(c.lastMateAt||0))<c.derived.mateCooldown) return false;
+  if(c.energy<c.derived.mateEnergyThreshold) return false;
+
+  let best=null, bestScore=-Infinity;
+  for(const o of neighborCells(c.x,c.y)){
+    if (o===c || o.dead) continue;
+    if (o.sex === c.sex) continue;
+    if ((tNow - (o.lastMateAt||0)) < (o.derived?.mateCooldown ?? 6)) continue;
+    if (o.energy < (o.derived?.mateEnergyThreshold ?? 14)) continue;
+
+    const interior = interiorFactor(o.x, o.y);
+    if(avoidEdge && interior < 0.6) continue;
+
+    const dx=o.x-c.x, dy=o.y-c.y; const dist = Math.max(1, Math.hypot(dx,dy));
+    const score = interior / Math.pow(dist + NAV.r0, NAV.alpha);
+    if(score > bestScore){ bestScore = score; best = o; }
   }
+  if(best){
+    c.target = { type:'mate', id: best.id, x: best.x, y: best.y };
+    return true;
+  }
+  return false;
 }
 
+// ---- Verhalten / Bewegung --------------------------------------------------
 function updateCellBehavior(c, alive, dt){
   // Zielpflege
   if(c.target){
@@ -363,18 +386,20 @@ function updateCellBehavior(c, alive, dt){
     c.scanTimer = c.derived.scanInterval;
   }
 
-  // Wunschvektor (vor Wand-Anpassung)
+  // Wunschvektor
   let dVX=0, dVY=0;
   if(c.target){
-    const dx=c.target.x-c.x, dy=c.target.y-c.y; const d=Math.max(1,Math.hypot(dx,dy));
-    const sp=c.derived.speedMax; dVX=(dx/d)*sp; dVY=(dy/d)*sp;
+    const dx=c.target.x-c.x, dy=c.target.y-c.y;
+    const d=Math.max(1,Math.hypot(dx,dy));
+    const sp=c.derived.speedMax;
+    dVX=(dx/d)*sp; dVY=(dy/d)*sp;
   }else{
-    c.wanderAng=(c.wanderAng??Math.random()*Math.PI*2)+(Math.random()*2-1)*0.3*dt;
-    const sp=c.derived.speedMax*0.6; dVX=Math.cos(c.wanderAng)*sp; dVY=Math.sin(c.wanderAng)*sp;
+    // Run-and-Tumble, nahe Wand etwas stärker
+    const base = 0.3 * (distToWall(c.x,c.y) < NAV.margin ? NAV.wallWanderBoost : 1);
+    c.wanderAng=(c.wanderAng??Math.random()*Math.PI*2)+(Math.random()*2-1)*base*dt;
+    const sp=c.derived.speedMax*0.6;
+    dVX=Math.cos(c.wanderAng)*sp; dVY=Math.sin(c.wanderAng)*sp;
   }
-
-  // Wandverhalten anwenden (Outward-Clamp + Slide)
-  ({ dvx: dVX, dvy: dVY } = applyWallAvoidance(c, dVX, dVY));
 
   // Glättung
   c.vx = 0.85*c.vx + 0.15*dVX;
@@ -383,33 +408,29 @@ function updateCellBehavior(c, alive, dt){
   // Bewegung
   c.x += c.vx * dt; c.y += c.vy * dt;
 
-  // Harte Grenzen + Corner-Kick
-  if(c.x < c.radius){ c.x=c.radius; c.vx = Math.abs(c.vx); }
-  if(c.x > WORLD.width - c.radius){ c.x = WORLD.width - c.radius; c.vx = -Math.abs(c.vx); }
-  if(c.y < c.radius){ c.y=c.radius; c.vy = Math.abs(c.vy); }
-  if(c.y > WORLD.height - c.radius){ c.y = WORLD.height - c.radius; c.vy = -Math.abs(c.vy); }
-  cornerKickIfNeeded(c);
+  // einfache Reflexion an Wänden (natürliches Bounce, keine Pushes)
+  let hit=false;
+  if(c.x < c.radius){ c.x=c.radius; c.vx = Math.abs(c.vx); hit=true; }
+  if(c.x > WORLD.width - c.radius){ c.x=WORLD.width - c.radius; c.vx = -Math.abs(c.vx); hit=true; }
+  if(c.y < c.radius){ c.y=c.radius; c.vy = Math.abs(c.vy); hit=true; }
+  if(c.y > WORLD.height - c.radius){ c.y=WORLD.height - c.radius; c.vy = -Math.abs(c.vy); hit=true; }
 
-  // Stuck-Detektor (nahe Wand, wenig Bewegung → Kick Richtung Mitte)
-  const dxm = c.x - c._lastX, dym = c.y - c._lastY;
-  const effSpeed = Math.hypot(dxm, dym) / Math.max(1e-6, dt);
-  const nearWall = (c.x < STUCK.near) || (c.x > WORLD.width - STUCK.near) || (c.y < STUCK.near) || (c.y > WORLD.height - STUCK.near);
-  if(nearWall && effSpeed < STUCK.speedMin){
-    c._stuckT += dt;
-    if(c._stuckT > STUCK.window){
-      const cx = WORLD.width/2, cy = WORLD.height/2;
-      const ang = Math.atan2(cy - c.y, cx - c.x);
-      const sp  = c.derived.speedMax * STUCK.kickSpeed;
-      c.vx = Math.cos(ang) * sp;
-      c.vy = Math.sin(ang) * sp;
-      c.x = clamp(c.x + Math.cos(ang)*3, c.radius, WORLD.width - c.radius);
-      c.y = clamp(c.y + Math.sin(ang)*3, c.radius, WORLD.height - c.radius);
+  // Stuck-Detektor: nahe Wand + wenig Fortschritt ⇒ Randziele meiden
+  const dxm=c.x-c._lastX, dym=c.y-c._lastY;
+  const effSpeed = Math.hypot(dxm,dym) / Math.max(1e-6, dt);
+  const nearWall = distToWall(c.x,c.y) < NAV.stuckNear;
+  if(nearWall && effSpeed < NAV.stuckSpeedMin){
+    c._stuckT = (c._stuckT||0) + dt;
+    if(c._stuckT > NAV.stuckWindow){
       c._stuckT = 0;
+      c._avoidEdgeUntil = nowSec() + NAV.edgeCooldown;
+      // Mini-„Ausbrechen“: kleines Zusatzrauschen
+      c.wanderAng = (c.wanderAng ?? 0) + (Math.random()*2-1)*0.8;
     }
   } else {
-    c._stuckT = Math.max(0, c._stuckT - dt*0.5);
+    c._stuckT = Math.max(0, (c._stuckT||0) - dt*0.5);
   }
-  c._lastX = c.x; c._lastY = c.y;
+  c._lastX=c.x; c._lastY=c.y;
 
   // Energie
   const speed=Math.hypot(c.vx,c.vy);
@@ -418,46 +439,10 @@ function updateCellBehavior(c, alive, dt){
   c.age += dt;
 }
 
-function chooseFoodTarget(c){
-  let best=null, bestScore=-Infinity;
-  for(const f of neighborFoods(c.x,c.y)){
-    const dx=f.x-c.x, dy=f.y-c.y; const d2=dx*dx+dy*dy;
-    if (d2 > c.derived.sense*c.derived.sense) continue;
-    const dist = Math.sqrt(Math.max(1,d2));
-    const alpha = 1.5 - 0.3*((c.genes.EFF-5)/4) + 0.2*((c.genes.TEM-5)/4);
-    const score = c.derived.digestionMult * f.value / Math.pow(dist+8, alpha);
-    if(score > bestScore){ bestScore = score; best = f; }
-  }
-  if(best){
-    c.target = { type:'food', id: best.id, x: best.x, y: best.y };
-    return true;
-  }
-  return false;
-}
+// ---- Scoring-Hilfen --------------------------------------------------------
+const distToWall = (x,y)=> Math.min(x, WORLD.width-x, y, WORLD.height-y);
 
-function chooseMateTarget(c, alive){
-  const tNow=performance.now()/1000;
-  if((tNow-(c.lastMateAt||0))<c.derived.mateCooldown) return false;
-  if(c.energy<c.derived.mateEnergyThreshold) return false;
-
-  let best=null, bestD2=Infinity;
-  for(const o of neighborCells(c.x,c.y)){
-    if (o===c || o.dead) continue;
-    if (o.sex === c.sex) continue;
-    if ((tNow - (o.lastMateAt||0)) < (o.derived?.mateCooldown ?? 6)) continue;
-    if (o.energy < (o.derived?.mateEnergyThreshold ?? 14)) continue;
-    const dx = o.x - c.x, dy = o.y - c.y;
-    const d2 = dx*dx + dy*dy;
-    if (d2 > c.derived.sense*c.derived.sense) continue;
-    if (d2 < bestD2){ bestD2 = d2; best = o; }
-  }
-  if(best){
-    c.target = { type:'mate', id: best.id, x: best.x, y: best.y };
-    return true;
-  }
-  return false;
-}
-
+// ---- Eat/Death/Crisis ------------------------------------------------------
 function eatPhase(){
   for(const c of cells){
     if(c.dead) continue;
@@ -472,31 +457,27 @@ function eatPhase(){
   }
 }
 
+const lastMinuteHungerDeaths = [];
 function deathPhase(){
-  const now=performance.now()/1000;
+  const now=nowSec();
   for(const c of cells){
     if(c.dead) continue;
     if(c.energy<=0){
-      c.dead=true;
-      lastMinuteHungerDeaths.push(now);
+      c.dead=true; lastMinuteHungerDeaths.push(now);
       Events.emit(EVT.DEATH,{id:c.id,stammId:c.stammId,reason:'hunger'});
     }
   }
   while(lastMinuteHungerDeaths.length && now-lastMinuteHungerDeaths[0] > 60) lastMinuteHungerDeaths.shift();
 }
-
 function crisisCheck(){
-  if(lastMinuteHungerDeaths.length>10){
-    Events.emit(EVT.HUNGER_CRISIS,{inLastMinute:lastMinuteHungerDeaths.length});
-  }
+  if(lastMinuteHungerDeaths.length>10) Events.emit(EVT.HUNGER_CRISIS,{inLastMinute:lastMinuteHungerDeaths.length});
   const alive=cells.filter(c=>!c.dead).length;
   if(alive>140) Events.emit(EVT.OVERPOP,{population:alive});
 }
 
-// ---------- Hauptupdate ----------
+// ---- Hauptupdate -----------------------------------------------------------
 export function updateWorld(dt){
-  worldTime += dt;
-  runScheduler();
+  worldTime += dt; runScheduler();
 
   updateFoodClusters(dt);
   const alive=cells.filter(c=>!c.dead);
@@ -511,16 +492,16 @@ export function updateWorld(dt){
     { mutationRate: WORLD.mutationRate, relatednessFn: relatedness, neighborQuery: (cell)=>neighborCells(cell.x,cell.y) }
   );
 
-  deathPhase();
-  crisisCheck();
+  deathPhase(); crisisCheck();
 
+  // Gründerliebe (für Narrativ)
   if(!foundersEverMated && foundersIds.adam && foundersIds.eva){
     const kids=cells.filter(x=>x.parents?.motherId===foundersIds.eva);
     foundersEverMated = kids.some(k=>k.parents?.fatherId===foundersIds.adam);
   }
 }
 
-// ---------- Darstellung ----------
+// ---- Darstellungshilfen ----------------------------------------------------
 export function getFoundersState(){ return {...foundersIds, foundersEverMated}; }
 export function cellColor(c, highlightStammId){
   const col=getStammColor(c.stammId);
@@ -529,5 +510,4 @@ export function cellColor(c, highlightStammId){
 }
 
 // init
-gridResize();
-initFoodClusters();
+gridResize(); initFoodClusters();
