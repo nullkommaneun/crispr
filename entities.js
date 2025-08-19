@@ -456,3 +456,38 @@ export function getStammCounts(){
 
 /* init */
 gridResize(); initFoodClusters();
+
+// --- explizite benannte Exporte (Sicherungs-Exportliste) -------------------
+export {
+  // Welt/Config
+  WORLD as __WORLD,
+  setWorldSize,
+  setMutationRate,
+  setFoodRate,
+  getWorldConfig,
+
+  // IDs/Erzeuger
+  createCell,
+  createFood,
+  newStammId,
+  schedule,
+  resetEntities,
+
+  // Zähler/Infos
+  getStammCounts,
+  getFoundersState,
+  cellColor,
+
+  // Genetik/Verwandtschaft
+  relatedness,
+
+  // Fluss
+  updateWorld,
+
+  // Narrative
+  setFounders,
+
+  // Datencontainer
+  cells,
+  foods,
+};

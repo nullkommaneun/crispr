@@ -1,41 +1,38 @@
 // spawn.js – Adam & Eva + 8 Startkinder im Sekundentakt (wechselweise)
-// Robuster Namespace-Import aus entities.js (kein Name-Mismatch mehr)
 
-import * as Entities from './entities.js';
+import {
+  createCell,
+  createFood,
+  newStammId,
+  schedule,
+  setFounders,
+} from './entities.js';
 import { createGenome } from './genetics.js';
 import { Events, EVT } from './event.js';
 
 export function seedWorld(w, h){
   // Adam
-  const stammAdam = Entities.newStammId();
-  const adam = Entities.createCell({
-    name:'Adam',
-    sex:'m',
-    stammId: stammAdam,
-    x: w*0.30,
-    y: h*0.50,
+  const stammAdam = newStammId();
+  const adam = createCell({
+    name:'Adam', sex:'m', stammId: stammAdam,
+    x: w*0.30, y: h*0.50,
     genes: createGenome({TEM:6, GRO:5, EFF:5, SCH:5}),
     energy: 36
   });
 
   // Eva
-  const stammEva = Entities.newStammId();
-  const eva = Entities.createCell({
-    name:'Eva',
-    sex:'f',
-    stammId: stammEva,
-    x: w*0.70,
-    y: h*0.50,
+  const stammEva = newStammId();
+  const eva = createCell({
+    name:'Eva', sex:'f', stammId: stammEva,
+    x: w*0.70, y: h*0.50,
     genes: createGenome({TEM:5, GRO:6, EFF:5, SCH:6}),
     energy: 36
   });
 
-  // Gründer registrieren (für Narrative)
-  if (typeof Entities.setFounders === 'function') {
-    Entities.setFounders(adam.id, eva.id);
-  }
+  // Gründer registrieren (Narrative)
+  setFounders(adam.id, eva.id);
 
-  // Hilfsfunktion: Kind (Gene ≈ Mittelwert + Jitter), Stammlinie = Mutter
+  // Kind erzeugen (Gene ≈ Mittel + Jitter), Stammlinie = Mutter
   function makeChild(mother, father){
     const mg = mother.genes, dg = father.genes;
     const g = createGenome({
@@ -44,7 +41,7 @@ export function seedWorld(w, h){
       EFF: (mg.EFF + dg.EFF)/2 + (Math.random()*2-1),
       SCH: (mg.SCH + dg.SCH)/2 + (Math.random()*2-1),
     });
-    const c = Entities.createCell({
+    const c = createCell({
       x: mother.x + (Math.random()*60-30),
       y: mother.y + (Math.random()*60-30),
       genes: g,
@@ -58,7 +55,7 @@ export function seedWorld(w, h){
 
   // 8 Startkinder im Sekundentakt, alternierend Eva/Adam als Mutter
   for(let k=1;k<=8;k++){
-    Entities.schedule(()=> {
+    schedule(()=> {
       const mother = (k % 2 === 1) ? eva : adam;
       const father = (mother===eva) ? adam : eva;
       makeChild(mother, father);
@@ -66,6 +63,6 @@ export function seedWorld(w, h){
     }, k * 1.0);
   }
 
-  // Start-Nahrung (Cluster spawnen zwar weiter, aber etwas „Futter im Haus“ hilft)
-  for(let i=0;i<140;i++) Entities.createFood();
+  // Start-Nahrung
+  for(let i=0;i<140;i++) createFood();
 }
