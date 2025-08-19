@@ -41,22 +41,42 @@ function setupUI(){
     logAction('Reset');
   });
 
+  // Timescale zyklisch
   const speedSteps = [1,5,10];
-  const applyTimescale=(v)=>{ timescale=v; btnSpeed.textContent=`⚡ ${v}×`; Events.emit(EVT.STATUS,{source:'engine',text:`Timescale: ${v}×`}); };
+  const applyTimescale=(v)=>{
+    timescale=v;
+    btnSpeed.textContent=`⚡ ${v}×`;
+    // -> als Statuswert (nicht im Ticker anzeigen, nur für Metriken)
+    Events.emit(EVT.STATUS,{source:'engine', key:'timescale', value: v, text:`Timescale: ${v}×`});
+  };
   btnSpeed.addEventListener('click', ()=>{
     const idx=(speedSteps.indexOf(timescale)+1)%speedSteps.length;
     applyTimescale(speedSteps[idx]);
   });
   applyTimescale(1);
 
-  const applyMut=()=>{ const p=Number(mutRange.value)/100; Entities.setMutationRate(p); mutVal.textContent=`${Math.round(p*100)}%`; };
+  // Mutation
+  const applyMut=()=>{
+    const p=Number(mutRange.value)/100;
+    Entities.setMutationRate(p);
+    mutVal.textContent=`${Math.round(p*100)}%`;
+    Events.emit(EVT.STATUS,{source:'engine', key:'mutationRate', value: p, text:`Mutation: ${Math.round(p*100)}%`});
+  };
   mutRange.addEventListener('input', applyMut); applyMut();
 
-  const applyFood=()=>{ const r=Number(foodRange.value); Entities.setFoodRate(r); foodVal.textContent=`${r}`; };
+  // Nahrung
+  const applyFood=()=>{
+    const r=Number(foodRange.value);
+    Entities.setFoodRate(r);
+    foodVal.textContent=`${r}`;
+    Events.emit(EVT.STATUS,{source:'engine', key:'foodRate', value: r, text:`Nahrung: ${r}/min`});
+  };
   foodRange.addEventListener('input', applyFood); applyFood();
 
+  // Editor
   btnEditor.addEventListener('click', openEditor);
 
+  // Highlight-Knopf zyklisch
   function getHighlightOrder(){
     const counts=Entities.getStammCounts();
     return ['all', ...Object.keys(counts).sort((a,b)=>Number(a)-Number(b))];
@@ -76,8 +96,11 @@ function setupUI(){
     Events.emit(EVT.HIGHLIGHT_CHANGED, {stammId:highlightStammId});
     refreshHighlightButton();
   });
-  refreshHighlightButton(); Events.on(EVT.BIRTH, refreshHighlightButton); Events.on(EVT.DEATH, refreshHighlightButton);
+  refreshHighlightButton(); 
+  Events.on(EVT.BIRTH, refreshHighlightButton); 
+  Events.on(EVT.DEATH, refreshHighlightButton);
 
+  // Canvas-Größe
   function onResize(){
     const rect = canvas.getBoundingClientRect();
     Entities.setWorldSize(rect.width, rect.height);
