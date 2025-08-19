@@ -1,4 +1,5 @@
 // entities.js – Welt, Zellen, Nahrung, Verhalten (Spatial Grid + Scheduler + Food-Cluster)
+// + Anti-Stick: Soft-Wall Push, Corner-Kick, Stuck-Detektor
 
 import { Events, EVT } from './event.js';
 import { getStammColor, resetLegend } from './legend.js';
@@ -87,23 +88,16 @@ function runScheduler(){
 }
 
 // ---------- Food-Cluster (wandernde Hotspots) ----------
-/**
- * Jedes Cluster spawnt Food in seiner Nähe (Gauss-Distribution) und driftet langsam.
- * rateMult: 0.6..1.4 → individuelle Abweichung von der globalen foodRate.
- */
 const FOOD_CLUSTERS = [];
 const CLUSTER_CONF = {
   count: 3,
-  driftSpeed: 20,       // px/s (langsam)
-  jitter: 0.6,          // zufällige Richtungsänderung
+  driftSpeed: 20,       // px/s
+  jitter: 0.6,          // Richtungsrauschen
   radius: 80,           // Spawn-Streuung (σ)
 };
 
 function randRange(a,b){ return a + Math.random()*(b-a); }
-function gauss(){ // Box-Muller
-  let u=0, v=0; while(u===0) u=Math.random(); while(v===0) v=Math.random();
-  return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);
-}
+function gauss(){ let u=0,v=0; while(u===0) u=Math.random(); while(v===0) v=Math.random(); return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v); }
 function clamp(v,min,max){ return Math.max(min, Math.min(max, v)); }
 
 function initFoodClusters(){
@@ -115,43 +109,31 @@ function initFoodClusters(){
       vx: randRange(-1,1) * CLUSTER_CONF.driftSpeed,
       vy: randRange(-1,1) * CLUSTER_CONF.driftSpeed,
       rateMult: randRange(0.6, 1.4),
-      acc: 0 // Spawn-Akkumulator
+      acc: 0
     });
   }
 }
 function updateFoodClusters(dt){
   if(FOOD_CLUSTERS.length===0) initFoodClusters();
-
-  // Gesamt-Spawnrate (pro Sekunde) aus UI foodRate
   const totalPerSec = (WORLD.foodRate / 60);
   const basePerCluster = totalPerSec / FOOD_CLUSTERS.length;
 
   for(const c of FOOD_CLUSTERS){
-    // Driften
     const angJitter = (Math.random()*2-1) * CLUSTER_CONF.jitter * dt;
     const ang = Math.atan2(c.vy, c.vx) + angJitter;
     const sp = CLUSTER_CONF.driftSpeed;
     c.vx = Math.cos(ang) * sp;
     c.vy = Math.sin(ang) * sp;
-
-    c.x += c.vx * dt;
-    c.y += c.vy * dt;
-
-    // sanft an Rändern reflektieren
+    c.x += c.vx * dt; c.y += c.vy * dt;
     if(c.x < 30){ c.x=30; c.vx = Math.abs(c.vx); }
     if(c.x > WORLD.width-30){ c.x=WORLD.width-30; c.vx = -Math.abs(c.vx); }
     if(c.y < 30){ c.y=30; c.vy = Math.abs(c.vy); }
     if(c.y > WORLD.height-30){ c.y=WORLD.height-30; c.vy = -Math.abs(c.vy); }
 
-    // Spawner
     const perSec = basePerCluster * c.rateMult;
     c.acc += perSec * dt;
-
-    // Spawn nur solange wir unter maxFood liegen
     while(c.acc >= 1 && foods.length < WORLD.maxFood){
       c.acc -= 1;
-
-      // Gauss-Offset um das Clusterzentrum
       const dx = gauss() * CLUSTER_CONF.radius * 0.5;
       const dy = gauss() * CLUSTER_CONF.radius * 0.5;
       const fx = clamp(c.x + dx, 2, WORLD.width-2);
@@ -166,7 +148,6 @@ export function setWorldSize(w,h){
   WORLD.width=Math.max(50,w|0);
   WORLD.height=Math.max(50,h|0);
   gridResize();
-  // Clusterränder berücksichtigen (zentren im Bereich halten)
   for(const c of FOOD_CLUSTERS){
     c.x = clamp(c.x, 30, WORLD.width-30);
     c.y = clamp(c.y, 30, WORLD.height-30);
@@ -211,6 +192,11 @@ function applyDerived(c){
   const d=deriveFromGenes(c.genes); c.derived=d; c.radius=d.radius;
   if(c.vx===undefined || c.vy===undefined){ const ang=Math.random()*Math.PI*2; c.vx=Math.cos(ang)*10; c.vy=Math.sin(ang)*10; }
   c.scanTimer=Math.random()*d.scanInterval; c.target=null;
+
+  // Stuck-Tracker
+  c._stuckT = 0;       // akkumulierte "stuck"-Zeit
+  c._lastX  = c.x;
+  c._lastY  = c.y;
 }
 
 // ---------- Speciation ----------
@@ -228,7 +214,7 @@ export function createCell(params={}){
     const father=parents.fatherId?cells.find(c=>c.id===parents.fatherId):null;
     if(mother){
       const sum=sumAbsDiff(params.genes,mother.genes);
-      const mx=maxAbsDiff(params.genes,mother.genes);
+      const mx =maxAbsDiff(params.genes,mother.genes);
       const cross=!!(father && mother.stammId!==father.stammId);
       const thresh=SPEC.split.sum + (cross?SPEC.split.crossBonus:0);
       if(sum>=thresh || mx>=SPEC.split.max || Math.random()<SPEC.split.randomProb){
@@ -238,24 +224,22 @@ export function createCell(params={}){
     }
   }
 
-  const sex=params.sex??(Math.random()<0.5?'m':'f'); const genes=params.genes?{...params.genes}:createGenome(); const angle=Math.random()*Math.PI*2;
+  const sex=params.sex??(Math.random()<0.5?'m':'f');
+  const genes=params.genes?{...params.genes}:createGenome();
+  const angle=Math.random()*Math.PI*2;
   const c={ id, name:params.name||`Zelle #${id}`, stammId, sex,
             x:params.x??Math.random()*WORLD.width, y:params.y??Math.random()*WORLD.height,
             vx:Math.cos(angle)*10, vy:Math.sin(angle)*10,
             genes, energy:params.energy??22, age:0, dead:false, parents,
             bornAt:performance.now()/1000, lastMateAt:-999 };
-  applyDerived(c); cells.push(c);
+  applyDerived(c);
+  cells.push(c);
   pedigree.set(c.id,{motherId:c.parents?.motherId??null, fatherId:c.parents?.fatherId??null, stammId:c.stammId});
   return c;
 }
 
 export function createFood(params = {}){
-  const f = {
-    id: params.id ?? nextFoodId++,
-    x: params.x ?? Math.random()*WORLD.width,
-    y: params.y ?? Math.random()*WORLD.height,
-    value: params.value ?? 10
-  };
+  const f = { id: params.id ?? nextFoodId++, x: params.x ?? Math.random()*WORLD.width, y: params.y ?? Math.random()*WORLD.height, value: params.value ?? 10 };
   foods.push(f);
   addFoodToGrid(f);
   Events.emit(EVT.FOOD_SPAWN, {id: f.id});
@@ -265,7 +249,6 @@ export function createFood(params = {}){
 // ---------- Zähler / Export ----------
 export function getStammCounts(){ const counts={}; for(const c of cells){ if(c.dead) continue; counts[c.stammId]=(counts[c.stammId]||0)+1; } return counts; }
 export function setFounders(adamId,evaId){ foundersIds = {adam: adamId, eva: evaId}; }
-
 export function exportState(){
   return JSON.stringify({
     WORLD,nextCellId,nextFoodId,nextStammId,
@@ -273,18 +256,15 @@ export function exportState(){
       id:c.id,name:c.name,stammId:c.stammId,sex:c.sex,
       x:c.x,y:c.y,vx:c.vx,vy:c.vy,genes:c.genes,radius:c.radius,
       energy:c.energy,age:c.age,parents:c.parents,bornAt:c.bornAt,lastMateAt:c.lastMateAt
-    })),
-    foods, foundersIds
+    })), foods, foundersIds
   }, null, 2);
 }
 export function importState(json){
   const data=typeof json==='string'?JSON.parse(json):json;
   resetEntities(); Object.assign(WORLD,data.WORLD); gridResize();
   nextCellId=data.nextCellId; nextFoodId=data.nextFoodId; nextStammId=data.nextStammId;
-  for(const c of data.cells){
-    const cc={...c,dead:false}; applyDerived(cc); cells.push(cc);
-    pedigree.set(cc.id,{motherId:cc.parents?.motherId??null,fatherId:cc.parents?.fatherId??null,stammId:cc.stammId});
-  }
+  for(const c of data.cells){ const cc={...c,dead:false}; applyDerived(cc); cells.push(cc);
+    pedigree.set(cc.id,{motherId:cc.parents?.motherId??null,fatherId:cc.parents?.fatherId??null,stammId:cc.stammId}); }
   for(const f of data.foods){ foods.push({...f}); addFoodToGrid(f); }
   foundersIds=data.foundersIds||foundersIds;
 }
@@ -294,52 +274,66 @@ export function relatedness(a,b){
   if(a.id===b.id) return 1;
   const mapA=ancUp(a.id,3), mapB=ancUp(b.id,3); let best=Infinity;
   for(const [aid,da] of mapA){ if(mapB.has(aid)){ const sum=da+mapB.get(aid); if(sum<best) best=sum; } }
-  if(best===Infinity) return 0;
-  return Math.pow(0.5, best);
+  if(best===Infinity) return 0; return Math.pow(0.5,best);
 }
 function ancUp(id,depth){
   const map=new Map(); const q=[{id,d:0}];
   while(q.length){
-    const {id:cur,d}=q.shift();
-    const p=pedigree.get(cur); if(!p) continue;
+    const {id:cur,d}=q.shift(); const p=pedigree.get(cur); if(!p) continue;
     if(p.motherId && d+1<=depth){ if(!map.has(p.motherId)) map.set(p.motherId,d+1); q.push({id:p.motherId,d:d+1}); }
     if(p.fatherId && d+1<=depth){ if(!map.has(p.fatherId)) map.set(p.fatherId,d+1); q.push({id:p.fatherId,d:d+1}); }
   }
   return map;
 }
 
-// ---------- Verhalten ----------
-function chooseFoodTarget(c){
-  let best=null, bestScore=-Infinity;
-  for(const f of neighborFoods(c.x,c.y)){
-    const dx=f.x-c.x, dy=f.y-c.y; const d2=dx*dx+dy*dy;
-    if(d2 > c.derived.sense*c.derived.sense) continue;
-    const dist=Math.sqrt(Math.max(1,d2));
-    const alpha=1.5 - 0.3*((c.genes.EFF-5)/4) + 0.2*((c.genes.TEM-5)/4);
-    const score=c.derived.digestionMult * f.value / Math.pow(dist+8, alpha);
-    if(score>bestScore){ bestScore=score; best=f; }
-  }
-  if(best){ c.target={type:'food',id:best.id,x:best.x,y:best.y}; return true; }
-  return false;
+// ---------- Verhalten / Anti-Stick -----------------------------------------
+
+// Soft-Wall Parameter
+const WALL = {
+  margin: 28,        // Abstand zum Rand, in dem Abstoßung wirkt (px)
+  push: 140,         // Stärke des Push (px/s)
+  minInward: 6       // Mindest-Inwärtsgeschw. nach Kollision (px/s)
+};
+// Stuck-Detektor
+const STUCK = {
+  nearMargin: 40,    // wir betrachten nur Zellen nahe der Wand als potenziell "stuck"
+  speedMin: 8,       // wenn effektive Geschwindigkeit darunter liegt …
+  window: 2.0,       // … über diese Zeit (s) …
+  kickSpeed: 0.85    // … dann Kick mit 85% der Max-Speed Richtung Zentrum
+};
+
+function wallPush(c){
+  // Stärke je Achse 0..1 je nach Nähe zum Rand
+  const left  = clamp((WALL.margin - c.x)/WALL.margin, 0, 1);
+  const right = clamp((c.x - (WORLD.width - WALL.margin))/WALL.margin, 0, 1);
+  const top   = clamp((WALL.margin - c.y)/WALL.margin, 0, 1);
+  const bottom= clamp((c.y - (WORLD.height - WALL.margin))/WALL.margin, 0, 1);
+
+  // nach innen gerichteter Push
+  const px = (left - right) * WALL.push;
+  const py = (top  - bottom) * WALL.push;
+  return { px, py, near: (left||right||top||bottom) > 0 };
 }
-function chooseMateTarget(c,alive){
-  const tNow=performance.now()/1000;
-  if((tNow-(c.lastMateAt||0))<c.derived.mateCooldown) return false;
-  if(c.energy<c.derived.mateEnergyThreshold) return false;
-  let best=null, bestD2=Infinity;
-  for(const o of neighborCells(c.x,c.y)){
-    if(o===c||o.dead) continue;
-    if(o.sex===c.sex) continue;
-    if((tNow-(o.lastMateAt||0))<(o.derived?.mateCooldown??6)) continue;
-    if(o.energy<(o.derived?.mateEnergyThreshold??14)) continue;
-    const dx=o.x-c.x, dy=o.y-c.y; const d2=dx*dx+dy*dy;
-    if(d2>c.derived.sense*c.derived.sense) continue;
-    if(d2<bestD2){ bestD2=d2; best=o; }
+
+function cornerKickIfNeeded(c){
+  const nearX = (c.x < WALL.margin) || (c.x > WORLD.width - WALL.margin);
+  const nearY = (c.y < WALL.margin) || (c.y > WORLD.height - WALL.margin);
+  if(nearX && nearY){
+    const cx = WORLD.width/2, cy = WORLD.height/2;
+    const ang = Math.atan2(cy - c.y, cx - c.x);
+    const sp  = c.derived.speedMax * 0.9;
+    c.vx = Math.cos(ang) * sp;
+    c.vy = Math.sin(ang) * sp;
+    // kleinen Offset, damit wir von der Ecke weg sind
+    c.x += Math.cos(ang) * 2;
+    c.y += Math.sin(ang) * 2;
+    // Reset Stuck-Zeit
+    c._stuckT = 0;
   }
-  if(best){ c.target={type:'mate',id:best.id,x:best.x,y:best.y}; return true; }
-  return false;
 }
+
 function updateCellBehavior(c, alive, dt){
+  // Ziel prüfen/aktualisieren
   if(c.target){
     if(c.target.type==='food'){
       const f=foods.find(ff=>ff.id===c.target.id);
@@ -350,6 +344,7 @@ function updateCellBehavior(c, alive, dt){
     }
   }
 
+  // Scanlogik
   c.scanTimer -= dt;
   const hungry = c.energy < 0.30*c.derived.energyCap;
   if(c.scanTimer<=0 || hungry || !c.target){
@@ -362,27 +357,105 @@ function updateCellBehavior(c, alive, dt){
     c.scanTimer = c.derived.scanInterval;
   }
 
+  // Basis-Desired
   let dVX=0, dVY=0;
   if(c.target){
     const dx=c.target.x-c.x, dy=c.target.y-c.y; const d=Math.max(1,Math.hypot(dx,dy));
     const sp=c.derived.speedMax; dVX=(dx/d)*sp; dVY=(dy/d)*sp;
-  } else {
+  }else{
     c.wanderAng=(c.wanderAng??Math.random()*Math.PI*2)+(Math.random()*2-1)*0.3*dt;
-    const sp=c.derived.speedMax*0.6;
-    dVX=Math.cos(c.wanderAng)*sp; dVY=Math.sin(c.wanderAng)*sp;
+    const sp=c.derived.speedMax*0.6; dVX=Math.cos(c.wanderAng)*sp; dVY=Math.sin(c.wanderAng)*sp;
   }
-  c.vx=0.85*c.vx+0.15*dVX; c.vy=0.85*c.vy+0.15*dVY;
 
-  c.x+=c.vx*dt; c.y+=c.vy*dt;
-  if(c.x<c.radius){ c.x=c.radius; c.vx=Math.abs(c.vx); }
-  if(c.x>WORLD.width-c.radius){ c.x=WORLD.width-c.radius; c.vx=-Math.abs(c.vx); }
-  if(c.y<c.radius){ c.y=c.radius; c.vy=Math.abs(c.vy); }
-  if(c.y>WORLD.height-c.radius){ c.y=WORLD.height-c.radius; c.vy=-Math.abs(c.vy); }
+  // Soft-Wall Push
+  const { px, py, near } = wallPush(c);
+  dVX += px;
+  dVY += py;
 
+  // Glättung
+  c.vx = 0.85*c.vx + 0.15*dVX;
+  c.vy = 0.85*c.vy + 0.15*dVY;
+
+  // Bewegung
+  c.x += c.vx * dt; c.y += c.vy * dt;
+
+  // Harte Grenzen + Mindest-Inwärtsgeschw.
+  if(c.x < c.radius){ c.x=c.radius; c.vx = Math.max(Math.abs(c.vx), WALL.minInward); }
+  if(c.x > WORLD.width - c.radius){ c.x = WORLD.width - c.radius; c.vx = -Math.max(Math.abs(c.vx), WALL.minInward); }
+  if(c.y < c.radius){ c.y=c.radius; c.vy = Math.max(Math.abs(c.vy), WALL.minInward); }
+  if(c.y > WORLD.height - c.radius){ c.y = WORLD.height - c.radius; c.vy = -Math.max(Math.abs(c.vy), WALL.minInward); }
+
+  // Corner-Kick (einmalig wenn wirklich in der Ecke)
+  cornerKickIfNeeded(c);
+
+  // Stuck-Detektor (nur nahe Wand relevant)
+  const dx = c.x - c._lastX, dy = c.y - c._lastY;
+  const disp = Math.hypot(dx, dy) / Math.max(1e-6, dt); // effektive px/s
+  if(near && disp < STUCK.speedMin){
+    c._stuckT += dt;
+    if(c._stuckT > STUCK.window){
+      // Kick Richtung Mitte
+      const cx = WORLD.width/2, cy = WORLD.height/2;
+      const ang = Math.atan2(cy - c.y, cx - c.x);
+      const sp  = c.derived.speedMax * STUCK.kickSpeed;
+      c.vx = Math.cos(ang) * sp;
+      c.vy = Math.sin(ang) * sp;
+      c._stuckT = 0;
+      // kleinen Sprung weg vom Rand, um Kollision zu lösen
+      c.x = clamp(c.x + Math.cos(ang)*3, c.radius, WORLD.width - c.radius);
+      c.y = clamp(c.y + Math.sin(ang)*3, c.radius, WORLD.height - c.radius);
+    }
+  } else {
+    // Abbau
+    c._stuckT = Math.max(0, c._stuckT - dt*0.5);
+  }
+  c._lastX = c.x; c._lastY = c.y;
+
+  // Energie
   const speed=Math.hypot(c.vx,c.vy);
   c.energy -= (c.derived.baseDrain + c.derived.moveCostPerSpeed*speed) * dt;
   c.energy = Math.min(c.energy, c.derived.energyCap);
   c.age += dt;
+}
+
+function chooseFoodTarget(c){
+  let best=null, bestScore=-Infinity;
+  for(const f of neighborFoods(c.x,c.y)){
+    const dx=f.x-c.x, dy=f.y-c.y; const d2=dx*dx+dy*dy;
+    if (d2 > c.derived.sense*c.derived.sense) continue;
+    const dist = Math.sqrt(Math.max(1,d2));
+    const alpha = 1.5 - 0.3*((c.genes.EFF-5)/4) + 0.2*((c.genes.TEM-5)/4);
+    const score = c.derived.digestionMult * f.value / Math.pow(dist+8, alpha);
+    if(score > bestScore){ bestScore = score; best = f; }
+  }
+  if(best){
+    c.target = { type:'food', id: best.id, x: best.x, y: best.y };
+    return true;
+  }
+  return false;
+}
+
+function chooseMateTarget(c, alive){
+  const tNow=performance.now()/1000;
+  if((tNow-(c.lastMateAt||0))<c.derived.mateCooldown) return false;
+  if(c.energy<c.derived.mateEnergyThreshold) return false;
+
+  let best=null, bestD2=Infinity;
+  for(const o of neighborCells(c.x,c.y)){
+    if (o===c || o.dead) continue;
+    if (o.sex === c.sex) continue;
+    if ((tNow - (o.lastMateAt||0)) < (o.derived?.mateCooldown ?? 6)) continue;
+    if (o.energy < (o.derived?.mateEnergyThreshold ?? 14)) continue;
+    const dx = o.x - c.x, dy = o.y - c.y;
+    const d2 = dx*dx + dy*dy;
+    if (d2 > c.derived.sense*c.derived.sense) continue;
+    if (d2 < bestD2){ bestD2 = d2; best = o; }
+  }
+  if(best){
+    c.target = { type:'mate', id: best.id, x: best.x, y: best.y };
+    return true;
+  }
+  return false;
 }
 
 function eatPhase(){
@@ -393,8 +466,7 @@ function eatPhase(){
       if(dx*dx+dy*dy <= (c.radius+3)*(c.radius+3)){
         c.energy = Math.min(c.derived.energyCap, c.energy + f.value*c.derived.digestionMult);
         removeFoodFromGrid(f.id);
-        const i=foods.findIndex(ff=>ff.id===f.id);
-        if(i!==-1) foods.splice(i,1);
+        const i=foods.findIndex(ff=>ff.id===f.id); if(i!==-1) foods.splice(i,1);
       }
     }
   }
@@ -405,7 +477,8 @@ function deathPhase(){
   for(const c of cells){
     if(c.dead) continue;
     if(c.energy<=0){
-      c.dead=true; lastMinuteHungerDeaths.push(now);
+      c.dead=true;
+      lastMinuteHungerDeaths.push(now);
       Events.emit(EVT.DEATH,{id:c.id,stammId:c.stammId,reason:'hunger'});
     }
   }
@@ -425,9 +498,7 @@ export function updateWorld(dt){
   worldTime += dt;
   runScheduler();
 
-  // Cluster-Logik anstelle uniformem Spawner
   updateFoodClusters(dt);
-
   const alive=cells.filter(c=>!c.dead);
   rebuildCellGrid(alive);
 
