@@ -12,7 +12,7 @@ import { evaluateMatingPairs } from './reproduction.js';
 const WORLD = {
   width: 800,
   height: 520,
-  mutationRate: 0.10,    // 0..1 (Engine liefert 0..0.10)
+  mutationRate: 0.10,    // 0..1 (Engine schreibt 0..0.10 rein)
   foodRate: 100,         // pro Minute (Engine-Regler liefert /s → *60)
   maxFood: 400
 };
@@ -25,7 +25,7 @@ export const foods = [];
 
 let foundersIds = { adam: null, eva: null };
 let foundersEverMated = false;
-const hungerDeaths = []; // Zeitstempel der letzten 60 s
+const hungerDeaths = []; // Zeitstempel für 60s-Fenster
 
 /* ---------- Navigation-Parameter ---------- */
 const NAV = {
@@ -37,21 +37,21 @@ const NAV = {
   densityK: 0.25,         // Dichtebonus (max ~ +25%)
   wallWanderBoost: 1.25,  // extra Rauschen nahe Wand
 
-  // NEU:
-  tanDamp: 0.45,          // Dämpfung der tangentialen Geschwindigkeit nahe Wand
-  escapeStay: 0.8,        // s in Randnähe, bevor Escape gesetzt wird
-  escapeHop: 90,          // px Hop-Distanz ins Feld
-  escapeHold: 1.2,        // s: Escape-Target hat Priorität
-  stuckNear: 40,          // Stuck-Check nur nahe Wand (px)
+  // zusätzlich gegen Gleiten:
+  tanDamp: 0.45,          // tangentiale Dämpfung nahe Wand
+  escapeStay: 0.8,        // s Randnähe bis Escape-Target
+  escapeHop: 90,          // px Hop ins Feld
+  escapeHold: 1.2,        // s Escape-Target Vorrang
+  stuckNear: 40,          // px für Stuck-Check
   stuckSpeedMin: 8,       // px/s
   stuckWindow: 1.5,       // s
-  edgeCooldown: 1.5       // s: nach Stuck Randziele meiden
+  edgeCooldown: 1.5       // s: Randziele nach Stuck meiden
 };
 
-/* ---------- Hilfsfunktionen ---------- */
-function clamp(v,min,max){ return Math.max(min, Math.min(max, v)); }
-function nowSec(){ return performance.now()/1000; }
-function distToWall(x,y){ return Math.min(x, WORLD.width-x, y, WORLD.height-y); }
+/* ---------- Helpers ---------- */
+const clamp = (v,min,max)=> Math.max(min, Math.min(max, v));
+const nowSec = ()=> performance.now()/1000;
+const distToWall = (x,y)=> Math.min(x, WORLD.width-x, y, WORLD.height-y);
 
 /* ---------- Spatial Grid ---------- */
 const GRID = { size:48, cols:0, rows:0, foodB:[], cellB:[] };
@@ -115,7 +115,7 @@ function runScheduler(){
 /* ---------- Food-Cluster (wandernde Hotspots) ---------- */
 const FOOD_CLUSTERS = [];
 const CLUSTER_CONF = { count: 3, driftSpeed: 20, jitter: 0.6, radius: 80 };
-function randRange(a,b){ return a + Math.random()*(b-a); }
+const randRange=(a,b)=> a + Math.random()*(b-a);
 function gauss(){ let u=0,v=0; while(u===0) u=Math.random(); while(v===0) v=Math.random(); return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v); }
 
 function initFoodClusters(){
@@ -210,16 +210,16 @@ function applyDerived(c){
   if(c.vx===undefined || c.vy===undefined){ const ang=Math.random()*Math.PI*2; c.vx=Math.cos(ang)*10; c.vy=Math.sin(ang)*10; }
   c.scanTimer=Math.random()*d.scanInterval; c.target=null;
   c._stuckT = 0; c._lastX = c.x; c._lastY = c.y;
-  c._avoidEdgeUntil = 0;           // Rand-Blacklist nach Stuck
-  c._nearWallT = 0;                // Zeit in Randnähe
-  c._escapeUntil = 0;              // Escape-Zeitfenster
-  c._escapeTarget = null;          // Wegpunkt ins Feld
+  c._avoidEdgeUntil = 0; // Rand-Blacklist nach Stuck
+  c._nearWallT = 0;      // Zeit in Randnähe
+  c._escapeUntil = 0;    // Escape-Fenster
+  c._escapeTarget = null;
 }
 
 /* ---------- Speciation (optional) ---------- */
 const SPEC={ split:{ sum:7, max:3, crossBonus:-2, randomProb:0.003 } };
 function sumAbsDiff(a,b){ return Math.abs(a.TEM-b.TEM)+Math.abs(a.GRO-b.GRO)+Math.abs(a.EFF-b.EFF)+Math.abs(a.SCH-b.SCH); }
-function maxAbsDiff(a,b){ // ← FIX: korrekt b.EFF (nicht b-EFF)
+function maxAbsDiff(a,b){
   return Math.max(
     Math.abs(a.TEM - b.TEM),
     Math.abs(a.GRO - b.GRO),
@@ -269,7 +269,7 @@ function chooseMateTarget(c, alive){
     if (o.energy < (o.derived?.mateEnergyThreshold ?? 14)) continue;
     const interior = interiorFactor(o.x, o.y);
     if(avoidEdge && interior < 0.6) continue;
-    const dist = Math.max(1, Math.hypot(o.x,c.x) + Math.hypot(o.y,c.y)); // robust
+    const dist = Math.max(1, Math.hypot(o.x-c.x, o.y-c.y));
     const score = interior / Math.pow(dist + NAV.r0, NAV.alpha);
     if(score > bestScore){ bestScore = score; best = o; }
   }
@@ -313,7 +313,7 @@ function updateCellBehavior(c, alive, dt){
     c.scanTimer = c.derived.scanInterval;
   }
 
-  // Aktives Ziel: Escape hat Vorrang
+  // aktives Ziel (Escape hat Vorrang)
   const activeTarget = (c._escapeUntil && now < c._escapeUntil && c._escapeTarget) ? c._escapeTarget : c.target;
 
   // Wunschvektor
@@ -335,7 +335,7 @@ function updateCellBehavior(c, alive, dt){
   c.vx = 0.85*c.vx + 0.15*dVX;
   c.vy = 0.85*c.vy + 0.15*dVY;
 
-  // Tangential-Dämpfung nahe Wand
+  // Tangential-Dämpfung nahe Wand (gegen „Entlang-Gleiten“)
   if(near){
     const nx = Math.sign((WORLD.width/2)  - c.x);
     const ny = Math.sign((WORLD.height/2) - c.y);
@@ -354,7 +354,7 @@ function updateCellBehavior(c, alive, dt){
   if(c.y < c.radius){ c.y=c.radius; c.vy = Math.abs(c.vy); }
   if(c.y > WORLD.height - c.radius){ c.y=WORLD.height - c.radius; c.vy = -Math.abs(c.vy); }
 
-  // Stuck: Rand + wenig Fortschritt ⇒ Randziele meiden
+  // Stuck-Detektor: Rand + wenig Fortschritt ⇒ Randziele meiden + kleiner Hop
   const dxm=c.x-(c._lastX||c.x), dym=c.y-(c._lastY||c.y);
   const effSpeed = Math.hypot(dxm,dym) / Math.max(1e-6, dt);
   const nearStuck = distToWall(c.x,c.y) < NAV.stuckNear;
@@ -364,7 +364,6 @@ function updateCellBehavior(c, alive, dt){
       c._stuckT = 0;
       c._avoidEdgeUntil = now + NAV.edgeCooldown;
       c.wanderAng = (c.wanderAng ?? 0) + (Math.random()*2-1)*0.8;
-      // zusätzlichen kleinen Hop ins Feld
       const cx=WORLD.width/2, cy=WORLD.height/2;
       const ang=Math.atan2(cy-c.y, cx-c.x);
       c._escapeTarget = {
@@ -447,6 +446,12 @@ export function cellColor(c, highlightStammId){
   const col=getStammColor(c.stammId);
   if(highlightStammId!==null && c.stammId!==highlightStammId) return { fill: col, alpha: 0.25 };
   return { fill: col, alpha: 1 };
+}
+
+/* ---------- Stämme zählen (benannter Export, wie von engine.js erwartet) --- */
+export function getStammCounts(){
+  const counts={}; for(const c of cells){ if(!c.dead) counts[c.stammId]=(counts[c.stammId]||0)+1; }
+  return counts;
 }
 
 /* init */
