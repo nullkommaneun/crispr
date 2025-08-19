@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <title>CRISPR Genetics Lab</title>
-  <link rel="stylesheet" href="./style.css" />
+  <link rel="stylesheet" href="./style.css?v=apoc3" />
 </head>
 <body>
   <!-- Fehler-Overlay (rot, oben) -->
@@ -28,8 +28,8 @@
       <span id="mutationRateVal" class="mono">10%</span>
 
       <label for="foodRate">Nahrung</label>
-      <input id="foodRate" type="range" min="0" max="200" value="60" step="5" />
-      <span id="foodRateVal" class="mono">60</span>
+      <input id="foodRate" type="range" min="0" max="240" value="90" step="5" />
+      <span id="foodRateVal" class="mono">90</span>
 
       <label for="highlightSelect">Highlight</label>
       <select id="highlightSelect">
@@ -131,36 +131,31 @@
     </form>
   </dialog>
 
-  <!-- BOOT‑WATCHDOG + robuster Modul‑Import -->
+  <!-- Boot-Watchdog (nur informative Meldung, kein „lokaler Webserver“ mehr) -->
   <script>
     (function(){
-      // Meldung nur, wenn wirklich nichts importiert werden konnte.
       window.__CRISPR_WATCHDOG__ = setTimeout(function(){
-        var ov = document.getElementById('errorOverlay');
+        const ov = document.getElementById('errorOverlay');
         if(!ov) return;
-        var msg = (location.protocol === 'file:')
-          ? '⚠️ Module wurden nicht geladen. Öffne die Seite über einen Webserver (http://…), nicht per Datei.'
-          : '⚠️ Module laden ungewöhnlich langsam oder wurden blockiert. Bitte neu laden. Falls es bleibt: Konsole prüfen.';
-        ov.textContent = msg;
+        ov.textContent = '⚠️ Module laden ungewöhnlich langsam oder wurden blockiert. Bitte neu laden. Details in der Konsole.';
         ov.classList.add('show');
-      }, 2000);
+      }, 2500);
     })();
   </script>
 
-  <!-- ESM-Loader mit Fehlertext (zeigt z.B. 404/MIME-Probleme) -->
+  <!-- ES-Module robust importieren + echte Fehlermeldung -->
   <script type="module">
     (async () => {
       try{
-        await import('./engine.js');
+        await import('./engine.js?v=apoc3');
         clearTimeout(window.__CRISPR_WATCHDOG__);
       }catch(err){
         clearTimeout(window.__CRISPR_WATCHDOG__);
         const ov = document.getElementById('errorOverlay');
         if(ov){
-          const txt = '⚠️ Module konnten nicht geladen werden: ' +
-                      (err && (err.message || String(err))) +
-                      ' — Prüfe, ob alle JS-Dateien existieren und unter demselben Pfad liegen.';
-          ov.textContent = txt;
+          ov.textContent = '⚠️ Module konnten nicht geladen werden: ' +
+            (err?.message || String(err)) +
+            ' — Prüfe Pfade/Dateinamen und MIME-Type. (GitHub Pages: Groß/Kleinschreibung!)';
           ov.classList.add('show');
         }
         console.error('[CRISPR] Modul-Importfehler', err);
@@ -168,13 +163,9 @@
     })();
   </script>
 
-  <!-- Fallback für Browser ohne Module -->
   <script nomodule>
-    var ov = document.getElementById('errorOverlay');
-    if(ov){
-      ov.textContent = '⚠️ Dieser Browser unterstützt keine ES‑Module. Bitte aktuelle Version verwenden.';
-      ov.classList.add('show');
-    }
+    const ov = document.getElementById('errorOverlay');
+    if(ov){ ov.textContent = '⚠️ Dieser Browser unterstützt keine ES‑Module.'; ov.classList.add('show'); }
   </script>
 </body>
 </html>
