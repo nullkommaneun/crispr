@@ -1,14 +1,12 @@
 // editor.js
 // CRISPR-Editor: rechts lebende Zellen + Prognose; Klick übernimmt Traits links.
-// "Übernehmen" erzeugt sofort eine neue Zelle mit neuem Stamm.
-// Advisor-Steuerung wurde hierher verlegt (Modus: Aus • Heuristik • Modell).
 
 import { createCell, newStammId, cells } from './entities.js';
 import { TRAITS, createGenome } from './genetics.js';
-import { Events, EVT } from './events.js';
+import { Events, EVT } from './event.js';
 import { predictProbability, getStatusLabel, cycleAdvisorMode, loadModelFromUrl, setEnabled, setUseModel } from './advisor.js';
 
-const current = { TEM:5, GRO:5, EFF:5, SCH:5 }; // aktuell editierte Absolutwerte
+const current = { TEM:5, GRO:5, EFF:5, SCH:5 };
 let selectedId = null;
 
 function clamp(v,min,max){ return Math.max(min, Math.min(max, v)); }
@@ -23,7 +21,6 @@ export function initEditor(){
   const modelUrl = document.getElementById('editorModelUrl');
   const btnLoad = document.getElementById('editorModelLoad');
 
-  // Stepper-Buttons: ändern Absolute (1..9)
   for(const row of document.querySelectorAll('.traitRow')){
     const trait = row.dataset.trait;
     const out = row.querySelector('.val');
@@ -59,9 +56,8 @@ export function initEditor(){
       const card = document.createElement('button');
       card.type = 'button';
       card.className = 'cellCard selectable' + (selectedId===c.id?' active':'');
-      const name = c.name;
       card.innerHTML = `
-        <span class="id">${name} <small class="mono">• Stamm ${c.stammId}</small></span>
+        <span class="id">${c.name} <small class="mono">• Stamm ${c.stammId}</small></span>
         <span class="score">${p}<small>%</small></span>`;
       card.addEventListener('click', ()=>{
         selectedId = c.id;
@@ -78,7 +74,6 @@ export function initEditor(){
   Events.on(EVT.DEATH, refreshList);
   Events.on(EVT.STATUS, refreshAdvisorUI);
 
-  // Formular-Submit => neue Zelle erzeugen (neuer Stamm), Dialog bleibt offen
   form.addEventListener('submit', (e)=>{
     e.preventDefault();
     const genome = createGenome({...current});
@@ -93,25 +88,17 @@ export function initEditor(){
     refreshList();
   });
 
-  // Advisor-Modus umschalten (Off → Heuristik → Modell → Heuristik …)
   btnToggle.addEventListener('click', async ()=>{
-    const mode = await cycleAdvisorMode(modelUrl.value.trim() || undefined);
-    // Falls nach dem Laden eines Modells weiter heuristisch gewünscht:
-    // – hier nichts weiter, Toggle regelt die Reihenfolge.
-    refreshAdvisorUI();
-    refreshList();
+    await cycleAdvisorMode(modelUrl.value.trim() || undefined);
+    refreshAdvisorUI(); refreshList();
   });
 
-  // Modell aus URL laden (erzwingt „Modell aktiv“)
   btnLoad.addEventListener('click', async ()=>{
-    const url = modelUrl.value.trim();
-    if(!url) return;
+    const url = modelUrl.value.trim(); if(!url) return;
     try{
       await loadModelFromUrl(url);
-      setEnabled(true);
-      setUseModel(true);
-      refreshAdvisorUI();
-      refreshList();
+      setEnabled(true); setUseModel(true);
+      refreshAdvisorUI(); refreshList();
       Events.emit(EVT.STATUS, { source:'editor', text:'KI‑Modell geladen' });
     }catch(err){
       Events.emit(EVT.TIP, { label:'Advisor', text:'Modell konnte nicht geladen werden.' });
@@ -119,7 +106,6 @@ export function initEditor(){
     }
   });
 
-  // Close
   closeBtn.addEventListener('click', ()=>{
     if (dlg && dlg.close) dlg.close('cancel'); else if (dlg) dlg.removeAttribute('open');
   });

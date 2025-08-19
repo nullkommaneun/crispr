@@ -1,28 +1,31 @@
 // ticker.js
-// Marquee-Ticker am unteren Rand. Zeigt sachliche Tipps & Status.
+// Marquee-Ticker unten: sachliche Tipps/Statusmeldungen.
 
-import { Events, EVT } from './events.js';
+import { Events, EVT } from './event.js';
 
-const queue = [];
+let elContent;
+
+function show(text){
+  if(!elContent) return;
+  elContent.textContent = text;
+  // CSS-Animation läuft endlos; hier nur Textwechsel.
+}
 
 export function initTicker(){
-  const content = document.getElementById('tickerContent');
-  if(!content) throw new Error('Ticker-Element fehlt.');
-  // Basistipps
-  pushTip('Tipp', 'Erhöhe die Nahrung, wenn viele Zellen verhungern.');
-  pushTip('Hinweis', 'Reduziere die Timescale, um besser zu beobachten.');
-  render(content);
+  elContent = document.getElementById('tickerContent');
+  if(!elContent) return;
 
-  Events.on(EVT.TIP, (d)=>{ pushTip(d.label || 'Tipp', d.text || ''); render(content); });
-  Events.on(EVT.STATUS, (d)=>{ pushTip('Status', d.text || ''); render(content); });
-}
+  // Starttext
+  show('Tipp: Erhöhe die Nahrung, wenn viele Zellen verhungern.');
 
-function pushTip(label, text){
-  const t = { label, text, at: new Date() };
-  queue.push(t);
-  if(queue.length > 25) queue.shift();
+  Events.on(EVT.TIP, (d)=>{
+    if(!d) return;
+    const label = d.label ? `${d.label}: ` : '';
+    show(`${label}${d.text}`);
+  });
+  Events.on(EVT.STATUS, (d)=>{
+    if(!d) return;
+    const src = d.source ? `${d.source} – ` : '';
+    show(`${src}${d.text}`);
+  });
 }
-function render(el){
-  el.innerHTML = queue.map(t => `<span class="tick"><span class="label">${t.label}:</span> ${escapeHtml(t.text)}</span>`).join('');
-}
-function escapeHtml(s){ return String(s).replace(/[<>&"]/g, m => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[m])); }

@@ -1,7 +1,7 @@
 // entities.js
 // Zellen & Nahrung, zielgerichtetes Verhalten, Energie, Scheduler, Speciation & Balancing.
 
-import { Events, EVT } from './events.js';
+import { Events, EVT } from './event.js';
 import { getStammColor, resetLegend } from './legend.js';
 import { createGenome } from './genetics.js';
 import { evaluateMatingPairs } from './reproduction.js';
@@ -10,7 +10,7 @@ const WORLD = {
   width: 800,
   height: 520,
   mutationRate: 0.10,     // 10%
-  foodRate: 100,          // pro Minute (leicht erhöht)
+  foodRate: 100,          // pro Minute
   maxFood: 400
 };
 
@@ -26,22 +26,22 @@ const lastMinuteHungerDeaths = [];
 let foundersIds = { adam: null, eva: null };
 let foundersEverMated = false;
 
-// === Speciation (Abspaltung) ================================================
+// Speciation (Abspaltung)
 const SPEC = {
   split: {
     sum: 7,           // Mindest-Summe |ΔTrait| zur Mutter
-    max: 3,           // ODER mindestens ein Trait weicht um >=3 ab
-    crossBonus: -2,   // bei Eltern aus unterschiedlichen Stämmen: Summe-Schwelle um 2 senken
-    randomProb: 0.003 // 0.3% Chance auf „Gründer-Mutation“
+    max: 3,           // oder ein Trait weicht ≥3 ab
+    crossBonus: -2,   // Eltern aus unterschiedlichen Stämmen → Summe-Schwelle -2
+    randomProb: 0.003 // 0.3% Gründer-Mutation
   }
 };
 
-// === Nothilfe (Food-Drop) ====================================================
+// Nothilfe (Food-Drop)
 let lastAidAt = -999;
 const AID_INTERVAL = 20; // s
 const AID_FOOD = 30;
 
-// --- Weltzeit & Scheduler ----------------------------------------------------
+// Weltzeit & Scheduler
 let worldTime = 0;
 const scheduled = []; // {due:number, fn:Function}
 export function schedule(fn, delaySec=0){ scheduled.push({ due: worldTime + Math.max(0, delaySec), fn }); }
@@ -56,7 +56,7 @@ function runScheduler(){
 }
 function nowSec(){ return performance.now()/1000; }
 
-// --- Welt-API ----------------------------------------------------------------
+// Welt-API
 export function setWorldSize(w,h){
   WORLD.width = Math.max(50, w|0);
   WORLD.height = Math.max(50, h|0);
@@ -85,19 +85,19 @@ export function resetEntities(){
 
 export function newStammId(){ return nextStammId++; }
 
-// --- Abgeleitete Werte aus Genen ---------------------------------------------
+// Abgeleitete Werte aus Genen
 function n(v){ return (v-5)/4; } // norm: 1..9 → [-1,1]
 function deriveFromGenes(g){
   const nTEM = n(g.TEM), nGRO = n(g.GRO), nEFF = n(g.EFF), nSCH = n(g.SCH);
-  // Balancing (robuster, längere Überlebenszeit)
+  // Balancing
   const v0   = 40;            // px/s
-  const s0   = 90;            // sensing in px (vorher 80)
+  const s0   = 90;            // sensing in px
   const baseScan = 0.30;      // s
   const baseCD   = 6.0;       // s
   const r0 = 3, kR = 1;       // px
-  const cap0 = 36;            // Energie-Kapazität (vorher 30)
-  const base0 = 0.50;         // e/s Grundumsatz (vorher 0.70)
-  const baseMove = 0.0030;    // e pro (px/s) (vorher 0.0045)
+  const cap0 = 36;            // Energie-Kapazität
+  const base0 = 0.50;         // e/s Grundumsatz
+  const baseMove = 0.0030;    // e pro (px/s)
 
   return {
     speedMax: Math.max(12, v0 * (1 + 0.35*nTEM - 0.15*nGRO)),
@@ -108,10 +108,10 @@ function deriveFromGenes(g){
     energyCap: Math.max(16, cap0 * (1 + 0.50*nGRO)),
     baseDrain: Math.max(0.08, base0 * (1 + 0.25*nGRO - 0.15*nSCH)),
     moveCostPerSpeed: Math.max(0.0012, baseMove * (1 + 0.30*nTEM + 0.50*nGRO - 0.60*nEFF)),
-    digestionMult: 1 + 0.30*nEFF, // etwas stärker
+    digestionMult: 1 + 0.30*nEFF,
     collisionMult: Math.max(0.3, 1 - 0.50*nSCH),
-    mateEnergyThreshold: Math.max(8, 12 * (1 + 0.45*nGRO - 0.25*nEFF)), // Basis 12 (vorher effektiv 14)
-    mateEnergyCost: Math.max(2,  3 * (1 + 0.20*nGRO - 0.20*nEFF)),      // geringere Kosten
+    mateEnergyThreshold: Math.max(8, 12 * (1 + 0.45*nGRO - 0.25*nEFF)),
+    mateEnergyCost: Math.max(2,  3 * (1 + 0.20*nGRO - 0.20*nEFF)),
   };
 }
 
@@ -128,19 +128,18 @@ function applyDerived(cell){
   cell.target = null; // {type:'food'|'mate', id, x,y}
 }
 
-// --- Gene-Distanzen (für Speciation) -----------------------------------------
+// Gene-Distanzen (für Speciation)
 function sumAbsDiff(a,b){ return Math.abs(a.TEM-b.TEM)+Math.abs(a.GRO-b.GRO)+Math.abs(a.EFF-b.EFF)+Math.abs(a.SCH-b.SCH); }
 function maxAbsDiff(a,b){ return Math.max(Math.abs(a.TEM-b.TEM),Math.abs(a.GRO-b.GRO),Math.abs(a.EFF-b.EFF),Math.abs(a.SCH-b.SCH)); }
 
-// --- Erzeugung ---------------------------------------------------------------
+// Erzeugung
 export function createCell(params = {}){
   const id = params.id ?? nextCellId++;
   const parents = params.parents || null;
 
-  // Stamm: vorgeben oder neu
   let stammId = params.stammId ?? newStammId();
 
-  // Optional: Speciation (Abspaltung) außer Start-/Editor-Flag noSplit
+  // Speciation (Abspaltung) – außer wenn noSplit gesetzt ist (z. B. Startbonus)
   if (!params.noSplit && parents?.motherId){
     const mother = cells.find(c=>c.id===parents.motherId);
     const father = parents.fatherId ? cells.find(c=>c.id===parents.fatherId) : null;
@@ -168,7 +167,7 @@ export function createCell(params = {}){
     vx: Math.cos(angle)*10,
     vy: Math.sin(angle)*10,
     genes,
-    energy: params.energy ?? 22, // leicht erhöht
+    energy: params.energy ?? 22,
     age: 0,
     dead: false,
     parents,
@@ -191,14 +190,14 @@ export function createFood(params = {}){
     id: params.id ?? nextFoodId++,
     x: params.x ?? Math.random()*WORLD.width,
     y: params.y ?? Math.random()*WORLD.height,
-    value: params.value ?? 10 // vorher 8
+    value: params.value ?? 10
   };
   foods.push(f);
   Events.emit(EVT.FOOD_SPAWN, {id: f.id});
   return f;
 }
 
-// --- Zähler & Export/Import --------------------------------------------------
+// Zähler & Export/Import (Export wird nicht mehr per UI benutzt, bleibt intern nutzbar)
 export function getStammCounts(){
   const counts = {};
   for(const c of cells){
@@ -242,7 +241,7 @@ export function importState(json){
   foundersIds = data.foundersIds || foundersIds;
 }
 
-// --- Verwandtschaft ----------------------------------------------------------
+// Verwandtschaft
 export function relatedness(a, b){
   if(a.id === b.id) return 1;
   const mapA = ancestorsUpTo(a.id, 3);
@@ -269,7 +268,7 @@ function ancestorsUpTo(id, depth){
   return map;
 }
 
-// --- Verhalten ---------------------------------------------------------------
+// Verhalten
 function chooseFoodTarget(c){
   let best=null, bestScore=-Infinity;
   const sense2 = c.derived.sense * c.derived.sense;
@@ -278,7 +277,6 @@ function chooseFoodTarget(c){
     const dx = f.x - c.x, dy = f.y - c.y;
     const d2 = dx*dx + dy*dy;
     if (d2 > sense2) continue;
-    // Bewertung
     const dist = Math.sqrt(Math.max(1, d2));
     const alpha = 1.5 - 0.3*((c.genes.EFF-5)/4) + 0.2*((c.genes.TEM-5)/4);
     const score = c.derived.digestionMult * (f.value) / Math.pow(dist+8, alpha);
@@ -316,7 +314,6 @@ function chooseMateTarget(c, alive){
 }
 
 function updateCellBehavior(c, alive, dt){
-  // Ziel prüfen
   if (c.target){
     if (c.target.type === 'food'){
       const f = foods.find(ff => ff.id === c.target.id);
@@ -327,14 +324,13 @@ function updateCellBehavior(c, alive, dt){
     }
   }
 
-  // Scannen (häufiger bei Hunger)
   c.scanTimer -= dt;
   const hungry = c.energy < 0.30 * c.derived.energyCap;
   if (c.scanTimer <= 0 || hungry || !c.target){
     let found = false;
     if (hungry) found = chooseFoodTarget(c);
     if (!found){
-      found = chooseFoodTarget(c); // Food priorisieren
+      found = chooseFoodTarget(c);
       if (!found && c.energy > 0.70 * c.derived.energyCap){
         found = chooseMateTarget(c, alive);
       }
@@ -355,18 +351,15 @@ function updateCellBehavior(c, alive, dt){
     desiredVX = Math.cos(c.wanderAng) * sp;
     desiredVY = Math.sin(c.wanderAng) * sp;
   }
-  // Glättung
   c.vx = 0.85*c.vx + 0.15*desiredVX;
   c.vy = 0.85*c.vy + 0.15*desiredVY;
 
-  // Bewegung + Wände
   c.x += c.vx * dt; c.y += c.vy * dt;
   if(c.x < c.radius){ c.x=c.radius; c.vx = Math.abs(c.vx); }
   if(c.x > WORLD.width - c.radius){ c.x = WORLD.width - c.radius; c.vx = -Math.abs(c.vx); }
   if(c.y < c.radius){ c.y=c.radius; c.vy = Math.abs(c.vy); }
   if(c.y > WORLD.height - c.radius){ c.y = WORLD.height - c.radius; c.vy = -Math.abs(c.vy); }
 
-  // Energie
   const speed = Math.hypot(c.vx, c.vy);
   c.energy -= (c.derived.baseDrain + c.derived.moveCostPerSpeed * speed) * dt;
   c.energy = Math.min(c.energy, c.derived.energyCap);
@@ -428,7 +421,7 @@ function foodSpawner(dt){
   }
 }
 
-// --- Hauptupdate -------------------------------------------------------------
+// Hauptupdate
 export function updateWorld(dt){
   worldTime += dt;
   runScheduler();
@@ -454,7 +447,7 @@ export function updateWorld(dt){
   }
 }
 
-// --- Darstellungshilfen ------------------------------------------------------
+// Darstellung
 export function getFoundersState(){ return { ...foundersIds, foundersEverMated }; }
 export function cellColor(c, highlightStammId){
   const col = getStammColor(c.stammId);

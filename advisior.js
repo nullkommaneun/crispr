@@ -1,15 +1,14 @@
 // advisor.js
-// KI-Berater: Heuristik; optional TensorFlow.js + Modell.
-// Modus: Aus • Heuristik • Modell. Steuerung erfolgt im Editor.
+// KI-Berater: Heuristik; optional TensorFlow.js + Modell. Modussteuerung im Editor.
 
-import { Events, EVT } from './events.js';
+import { Events, EVT } from './event.js';
 import { survivalScore } from './genetics.js';
 
 const state = {
   enabled: false,
-  libReady: false,   // tf.js Bibliothek geladen?
-  model: null,       // tf.Model (optional)
-  useModel: false,   // wenn Modell vorhanden, ob es aktiv genutzt wird
+  libReady: false,
+  model: null,
+  useModel: false,
   metrics: { births:0, deaths:0, hungerDeaths:0 },
   lastHeuristicAt: 0
 };
@@ -40,7 +39,6 @@ export function getStatusLabel(){
   return 'Berater: Heuristik aktiv';
 }
 
-/** Lädt NUR die TF.js Bibliothek (ohne Modell). */
 export async function tryLoadTF(){
   if(state.libReady) return true;
   return new Promise((resolve)=>{
@@ -55,7 +53,6 @@ export async function tryLoadTF(){
   });
 }
 
-/** Lädt ein TF.js Layers-Model (URL zeigt auf model.json). */
 export async function loadModelFromUrl(url){
   const ok = await tryLoadTF();
   if(!ok) return null;
@@ -67,7 +64,6 @@ export async function loadModelFromUrl(url){
   return state.model;
 }
 
-/** Zyklischer Moduswechsel für den Editor: Off → Heuristik → Modell (falls vorhanden) → Heuristik ... */
 export async function cycleAdvisorMode(defaultModelUrl){
   if(!state.enabled){
     setEnabled(true);
@@ -79,7 +75,6 @@ export async function cycleAdvisorMode(defaultModelUrl){
     state.useModel = !state.useModel;
     return state.useModel ? 'model' : 'heuristic';
   }
-  // Kein Modell vorhanden → versuchen zu laden, falls URL gegeben, sonst ausschalten
   if(defaultModelUrl){
     const m = await loadModelFromUrl(defaultModelUrl).catch(()=>null);
     if(m){ state.useModel = true; return 'model'; }
@@ -89,7 +84,6 @@ export async function cycleAdvisorMode(defaultModelUrl){
   return 'off';
 }
 
-/** Prognose 0..1 (TF‑Modell falls aktiv, sonst Heuristik). */
 export function predictProbability(genome){
   if(state.enabled && state.useModel && state.model && window.tf){
     const tf = window.tf;
@@ -102,13 +96,11 @@ export function predictProbability(genome){
     t.dispose?.();
     return Math.max(0, Math.min(1, p));
   }
-  // Heuristik
   return survivalScore(genome) / 100;
 }
 
 export function isModelLoaded(){ return !!state.model; }
 
-/** Periodische Heuristik-Tipps, wenn der Berater aktiv ist. */
 export function updateAdvisor(nowSec){
   if(!state.enabled) return;
   if(nowSec - state.lastHeuristicAt < 5) return;

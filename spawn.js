@@ -1,9 +1,9 @@
 // spawn.js
-// Startpopulation: Adam & Eva + 8 Kinder, die im Sekundentakt erscheinen (wechselweise Mother-Stamm).
+// Startpopulation: Adam & Eva + 8 Kinder im Sekundentakt (wechselweise).
 
 import { createCell, createFood, setFounders, newStammId, schedule } from './entities.js';
 import { createGenome } from './genetics.js';
-import { Events, EVT } from './events.js';
+import { Events, EVT } from './event.js';
 
 export function seedWorld(areaW, areaH){
   // Adam
@@ -42,10 +42,10 @@ export function seedWorld(areaW, areaH){
       x: mother.x + (Math.random()*60-30),
       y: mother.y + (Math.random()*60-30),
       genes: g,
-      stammId: mother.stammId,                                // Stammlinie = Mutter
+      stammId: mother.stammId,
       parents: {motherId: mother.id, fatherId: father.id},
       energy: 22,
-      noSplit: true                                           // Startbonus soll KEINE Abspaltung auslösen
+      noSplit: true
     });
     Events.emit(EVT.BIRTH, { id: c.id, stammId: c.stammId, parents: c.parents });
   }

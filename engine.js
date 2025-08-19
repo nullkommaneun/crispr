@@ -1,8 +1,8 @@
 // engine.js
-// Gameloop, Tick, UI-Verknüpfung, Gesamtorchestrierung (ohne Advisor-/Export-/Import-Buttons in der Toolbar).
+// Gameloop, Tick, UI-Verknüpfung, Orchestrierung.
 
 import { initErrorManager, setContextGetter, assertModule, showError } from './errorManager.js';
-import { Events, EVT } from './events.js';
+import { Events, EVT } from './event.js';
 import { Renderer } from './renderer.js';
 import { seedWorld } from './spawn.js';
 import * as Entities from './entities.js';
@@ -19,7 +19,6 @@ let fps = 0;
 let tickCount = 0;
 let highlightStammId = null; // null = Alle
 const actionLog = [];
-
 function logAction(s){ actionLog.push(s); if(actionLog.length>20) actionLog.shift(); }
 
 function setupUI(){
@@ -41,7 +40,7 @@ function setupUI(){
   // Reset
   btnReset.addEventListener('click', ()=> {
     resetWorld();
-    refreshHighlightButton(); // nach neuem Seed
+    refreshHighlightButton();
     logAction('Reset');
   });
 
@@ -134,8 +133,7 @@ function resetWorld(){
 function init(){
   initErrorManager();
   setContextGetter(()=>({
-    tick: tickCount,
-    fps,
+    tick: tickCount, fps,
     canvasW: renderer?.canvas?.width ?? 0,
     canvasH: renderer?.canvas?.height ?? 0,
     lastActions: actionLog
@@ -146,7 +144,7 @@ function init(){
 
   initTicker();
   initNarrativePanel();
-  initAdvisor();     // Advisor existiert weiterhin; Steuerung erfolgt im Editor
+  initAdvisor();     // Steuerung erfolgt im Editor
   initEditor();
 
   const canvas = document.getElementById('simCanvas');
