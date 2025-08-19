@@ -1,15 +1,21 @@
 // reproduction.js
 // Paarungsverhalten: Bei Begegnung m/f entsteht Nachwuchs.
-// Kind bekommt Gene durch Rekombination + Mutation (mit Inzucht-Malus).
+// Energie-Checks & Cooldown nutzen die aus Genen abgeleiteten Zelleigenschaften.
 
 import { Events, EVT } from './events.js';
 import { recombineGenes } from './genetics.js';
 
-const MATE_DISTANCE_FACTOR = 1.2;   // wie nah müssen sie sein (Summe Radien * Faktor)
-const MATE_COOLDOWN_SEC   = 6;      // Eltern brauchen Pause
-const ENERGY_COST         = 5;      // Energiekosten pro Elternteil
+const MATE_DISTANCE_FACTOR = 1.2;   // Distanz: Summe Radien * Faktor
 
 function now(){ return performance.now()/1000; }
+
+function eligibleForMating(c, tNow){
+  if (c.dead) return false;
+  const cd = c.derived?.mateCooldown ?? 6;
+  const thr = c.derived?.mateEnergyThreshold ?? 14;
+  if ((tNow - (c.lastMateAt || 0)) < cd) return false;
+  return c.energy >= thr;
+}
 
 /**
  * @param {Array} aliveCells - nur lebende Zellen
@@ -34,15 +40,14 @@ export function evaluateMatingPairs(aliveCells, spawnFn, { mutationRate=0.1, rel
       const rr = (a.radius + b.radius) * MATE_DISTANCE_FACTOR;
       if (dx*dx + dy*dy > rr*rr) continue;
 
-      // Cooldown
-      if((t - (a.lastMateAt||0)) < MATE_COOLDOWN_SEC) continue;
-      if((t - (b.lastMateAt||0)) < MATE_COOLDOWN_SEC) continue;
+      // Energie & Cooldown
+      if (!eligibleForMating(a, t) || !eligibleForMating(b, t)) continue;
 
-      // Mutter/Father bestimmen
+      // Mutter/Vater
       const mother = a.sex==='f' ? a : b;
       const father = a.sex==='m' ? a : b;
 
-      const rel = typeof relatednessFn === 'function' ? relatednessFn(a,b) : 0;
+      const rel   = typeof relatednessFn === 'function' ? relatednessFn(a,b) : 0;
       const genes = recombineGenes(mother.genes, father.genes, { mutationRate, inbreeding: rel });
 
       const px = (a.x + b.x)/2 + (Math.random()*12-6);
@@ -57,15 +62,17 @@ export function evaluateMatingPairs(aliveCells, spawnFn, { mutationRate=0.1, rel
       });
 
       // Eltern belasten & pausieren
+      const costA = a.derived?.mateEnergyCost ?? 4;
+      const costB = b.derived?.mateEnergyCost ?? 4;
       a.lastMateAt = b.lastMateAt = t;
-      a.energy = Math.max(0, a.energy - ENERGY_COST);
-      b.energy = Math.max(0, b.energy - ENERGY_COST);
+      a.energy = Math.max(0, a.energy - costA);
+      b.energy = Math.max(0, b.energy - costB);
 
       // Events
       Events.emit(EVT.MATE,  { aId:a.id, bId:b.id, motherId:mother.id, fatherId:father.id, relatedness: rel });
       Events.emit(EVT.BIRTH, { id: child.id, stammId: child.stammId, parents: child.parents });
 
-      // Mini-Abstoßung, damit sie nicht festkleben
+      // Leichte Abstoßung, damit sie nicht „kleben“
       const ang = Math.atan2(dy, dx), push = 10;
       a.vx +=  Math.cos(ang) * push; a.vy +=  Math.sin(ang) * push;
       b.vx += -Math.cos(ang) * push; b.vy += -Math.sin(ang) * push;
