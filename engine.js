@@ -1,262 +1,157 @@
 // engine.js
-// CRISPR Genetics Lab – App-Orchestrierung (UI, Loop, Lazy-Imports, Fehlerbanner)
+import { initErrorManager, showError, safeImport } from './errorManager.js';
+import { on, emit } from './event.js';
+import * as Entities from './entities.js';
+import { initAdvisor } from './advisor.js';
+import { mountTicker, registerFrame } from './ticker.js';
+import { initDaily } from './dnaDaily.js';
 
-import { bannerError, bannerWarn, bannerInfo, assertModule, safeImport } from './errorManager.js?v=apoc12';
+initErrorManager();
+initAdvisor();
+initDaily();
 
-// -----------------------------------------------------------------------------
-// Kleiner interner Event-Bus (kein externes events.js nötig)
-// -----------------------------------------------------------------------------
-const listeners = new Map(); // evt -> Set<fn>
-export function on(evt, fn){ if(!listeners.has(evt)) listeners.set(evt,new Set()); listeners.get(evt).add(fn); }
-export function off(evt, fn){ const s=listeners.get(evt); if(s){ s.delete(fn); if(!s.size) listeners.delete(evt);} }
-export function emit(evt, payload){ const s=listeners.get(evt); if(s){ for(const fn of s) try{ fn(payload);} catch(e){ console.error('[emit]',evt,e);} } }
-
-// -----------------------------------------------------------------------------
-// App-weit geteilte Zustände
-// -----------------------------------------------------------------------------
-const SPEED_STEPS = [1,5,10];
-const state = {
-  running: false,
-  timescaleIdx: 0,           // 0→1x, 1→5x, 2→10x
-  lastMs: 16.7,
-  fps: 0,
-  foodPerSec: 90,            // UI-Default
-  mutationPct: 0.5,          // UI-Default
-  highlight: { mode: 'all' },// {mode:'all'} | {mode:'stamm', id:number}
-  aiMode: 'off',             // 'off'|'heuristic'|'model'
-  counts: { cells: 0, staemme: 0 },
-};
-
-let $ = s => document.querySelector(s);
-
-// DOM-Refs werden nach DOMContentLoaded gesetzt
-let canvas, ctx, elPlay, elReset, elTimescale, elHlBtn, elEditor, elEnv;
-let elMut, elFood, elHlSlider;
-
-// Referenz auf Entities-API (lazy import)
-let Entities = null;
-
-// -----------------------------------------------------------------------------
-// Öffentliche Labels (Ticker u.ä.)
-// -----------------------------------------------------------------------------
-export function getStatusLabel(){
-  const spd = `${SPEED_STEPS[state.timescaleIdx]}x`;
-  const last = `${state.lastMs.toFixed(1)}ms`;
-  const mut = `${state.mutationPct.toFixed(1)}%`;
-  const food = `${Math.round(state.foodPerSec)}/s`;
-  const cells = state.counts.cells|0;
-  const st = state.counts.staemme|0;
-  const ai =
-    state.aiMode === 'model' ? 'KI Modell aktiv' :
-    state.aiMode === 'heuristic' ? 'KI Heuristik' :
-    'KI Aus';
-  return `FPS ${state.fps|0} • ${last} • Sim ${spd} • Mut ${mut} • Nahrung ${food} • Zellen ${cells} • Stämme ${st} • ${ai}`;
+// ---------- Canvas
+let canvas = document.getElementById('sim');
+if (!canvas) {
+  canvas = document.createElement('canvas');
+  canvas.id='sim';
+  document.body.appendChild(canvas);
 }
-
-// -----------------------------------------------------------------------------
-// Lazy Aktionen (Editor/Umwelt/Ticker)
-// -----------------------------------------------------------------------------
-export async function openEditor(){
-  const m = await safeImport('./editor.js', 'editor.js', ['openEditor']);
-  m.openEditor?.();
-}
-export async function openEnvPanel(){
-  const m = await safeImport('./environment/panel.js', 'environment/panel.js', ['openEnvPanel']);
-  m.openEnvPanel?.();
-}
-async function startTicker(){
-  try{
-    const m = await safeImport('./ticker.js', 'ticker.js', ['startTicker']);
-    m.startTicker?.({ getLabel:getStatusLabel, refreshMs: 5000 });
-  }catch(e){ /* Banner bereits gezeigt */ }
-}
-
-// -----------------------------------------------------------------------------
-// UI-Bindings
-// -----------------------------------------------------------------------------
-function setTimescaleLabel(){
-  if(elTimescale) elTimescale.textContent = `⚡ ${SPEED_STEPS[state.timescaleIdx]}x`;
-}
-function cycleTimescale(){
-  state.timescaleIdx = (state.timescaleIdx + 1) % SPEED_STEPS.length;
-  setTimescaleLabel();
-}
-function cycleHighlight(){
-  // 'Alle Stämme' -> 'Stamm 1' -> 'Stamm 2' -> …
-  if (!Entities || !Entities.getStammIds) { // Fallback ohne Entities
-    state.highlight = state.highlight.mode === 'all' ? {mode:'stamm', id:1} : {mode:'all'};
-  } else {
-    const ids = Entities.getStammIds(); // z.B. [1,2,3]
-    if (state.highlight.mode === 'all'){
-      state.highlight = ids.length ? {mode:'stamm', id: ids[0]} : {mode:'all'};
-    } else {
-      const idx = ids.indexOf(state.highlight.id);
-      const next = (idx + 1) % (ids.length || 1);
-      state.highlight = (ids.length && next < ids.length) ? {mode:'stamm', id: ids[next]} : {mode:'all'};
-    }
-  }
-  if (elHlBtn){
-    if (state.highlight.mode === 'all') elHlBtn.textContent = 'Alle Stämme';
-    else elHlBtn.textContent = `Stamm ${state.highlight.id}`;
-  }
-  emit('highlight:change', state.highlight);
-}
-
-function bindUI(){
-  // Canvas
-  canvas = $('#board');
-  if (!canvas){
-    // Fallback: Canvas erzeugen (falls noch nicht in HTML)
-    const host = document.querySelector('#board-host') || document.body;
-    canvas = document.createElement('canvas');
-    canvas.id = 'board';
-    canvas.style.cssText = 'display:block; width:100%; height:60vh;';
-    host.appendChild(canvas);
-  }
-  ctx = canvas.getContext('2d', { alpha: false });
-
-  // Toolbar
-  elPlay      = $('#btnPlay');
-  elReset     = $('#btnReset');
-  elTimescale = $('#btnTimescale');
-  elHlBtn     = $('#btnHighlight');
-  elEditor    = $('#btnEditor');
-  elEnv       = $('#btnEnv');
-
-  elMut       = $('#sliderMutation');
-  elFood      = $('#sliderFood');
-  elHlSlider  = $('#sliderHighlight');
-
-  // Events
-  elPlay?.addEventListener('click', togglePlay);
-  elReset?.addEventListener('click', doReset);
-  elTimescale?.addEventListener('click', () => { cycleTimescale(); emit('timescale', SPEED_STEPS[state.timescaleIdx]); });
-  elHlBtn?.addEventListener('click', cycleHighlight);
-  elEditor?.addEventListener('click', openEditor);
-  elEnv?.addEventListener('click', openEnvPanel);
-
-  elMut?.addEventListener('input', () => {
-    state.mutationPct = Number(elMut.value);
-    if (Entities?.setMutationPct) Entities.setMutationPct(state.mutationPct);
-  });
-  elFood?.addEventListener('input', () => {
-    state.foodPerSec = Number(elFood.value);
-    if (Entities?.setFoodRate) Entities.setFoodRate(state.foodPerSec);
-  });
-  elHlSlider?.addEventListener('input', () => {
-    // nur UI – reale Visualisierung handled Entities.draw ggf. selbst
-    emit('highlight:intensity', Number(elHlSlider.value));
-  });
-
-  setTimescaleLabel();
-  cycleHighlight(); // initialen Text setzen
-}
-
-// -----------------------------------------------------------------------------
-// Simulation (Loop & Resize)
-// -----------------------------------------------------------------------------
-let rafId = 0, lastT = performance.now();
+const ctx = canvas.getContext('2d', { alpha:false });
 
 function resize(){
-  const r = canvas.getBoundingClientRect();
-  const dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
-  const w = Math.max(320, Math.floor(r.width  * dpr));
-  const h = Math.max(320, Math.floor(r.height * dpr));
-  if (canvas.width !== w || canvas.height !== h){
-    canvas.width = w; canvas.height = h;
-    if (Entities?.setWorldSize) Entities.setWorldSize(w, h);
-  }
+  const w = Math.max(640, Math.floor(window.innerWidth  * 0.98));
+  const h = Math.max(420, Math.floor(window.innerHeight * 0.70));
+  canvas.width = w; canvas.height = h;
+  Entities.setWorldSize(w, h);
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ---------- State
+let running = false;
+let timescaleIdx = 0;
+const TIMES = [1,5,10];
+let perfMode = false;
+
+function getDt(tsNow){
+  const dt = (tsNow - lastTs)/1000;
+  return Math.min(dt * TIMES[timescaleIdx], 1/15); // clamp
 }
 
-function loop(now){
-  rafId = state.running ? requestAnimationFrame(loop) : 0;
-  const rawDt = Math.max(0, Math.min(100, now - lastT));
-  lastT = now;
-
-  const dt = rawDt * SPEED_STEPS[state.timescaleIdx]; // timescaled ms
-  state.lastMs = rawDt;
-
-  // FPS gleitend mitteln
-  const instFPS = rawDt > 0 ? 1000/rawDt : 0;
-  state.fps = state.fps * 0.9 + instFPS * 0.1;
-
-  // Update
-  if (Entities?.update) {
-    try { Entities.update(dt); }
-    catch(e){
-      bannerError('Simulationsfehler in Entities.update', e.message);
-      console.error(e);
-      state.running = false;
-    }
-  }
-
-  // Render
-  if (Entities?.draw && ctx) {
-    try { Entities.draw(ctx, state.highlight); }
-    catch(e){
-      bannerError('Renderfehler in Entities.draw', e.message);
-      console.error(e);
-      state.running = false;
-    }
-  }
-
-  // Metriken abrufen (freiwillig)
-  if (Entities?.getCounts){
-    const c = Entities.getCounts();
-    if (c){ state.counts.cells = c.cells|0; state.counts.staemme = c.staemme|0; }
-  }
+function clearScreen(){
+  ctx.fillStyle = '#0b0f0f';
+  ctx.fillRect(0,0,canvas.width,canvas.height);
 }
 
-function togglePlay(){
-  state.running = !state.running;
-  elPlay && (elPlay.textContent = state.running ? 'Pause' : 'Play');
-  if (state.running && !rafId) { lastT = performance.now(); rafId = requestAnimationFrame(loop); }
-}
-function doReset(){
-  try{ Entities?.reset?.(); }catch(e){ console.error(e); }
-  state.running = false;
-  elPlay && (elPlay.textContent = 'Play');
-  // optional: Neu-Spawns übernehmen, je nach Entities
+function draw(){
+  clearScreen();
+  Entities.draw(ctx);
 }
 
-// -----------------------------------------------------------------------------
-// Bootstrapping
-// -----------------------------------------------------------------------------
-async function boot(){
-  bindUI();
-  resize();
-  window.addEventListener('resize', resize, { passive:true });
+let lastTs = performance.now();
+function loop(ts){
+  if (running) {
+    const dt = getDt(ts);
+    Entities.update(dt);
+    draw();
+    registerFrame();
+  }
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
 
-  // Lazy: Ticker starten
-  startTicker();
+// ---------- Controls (IDs optional – falls nicht vorhanden, werden sie ignoriert)
+const $play      = document.getElementById('btnPlay')      || document.querySelector('[data-role="play"]');
+const $reset     = document.getElementById('btnReset')     || document.querySelector('[data-role="reset"]');
+const $time      = document.getElementById('btnTimescale') || document.querySelector('[data-role="timescale"]');
+const $mut       = document.getElementById('sliderMutation') || document.querySelector('[data-role="mutation"]');
+const $food      = document.getElementById('sliderFood')     || document.querySelector('[data-role="food"]');
+const $highlight = document.getElementById('btnHighlight')   || document.querySelector('[data-role="highlight"]');
+const $editor    = document.getElementById('btnEditor')      || document.querySelector('[data-role="editor"]');
+const $env       = document.getElementById('btnEnv')         || document.querySelector('[data-role="env"]');
+const $perf      = document.getElementById('btnPerf')        || document.querySelector('[data-role="perf"]');
 
-  // Entities laden und minimal prüfen
-  try{
-    const mod = await safeImport('./entities.js', 'entities.js');
-    // Ab hier keine named imports → keine harten Bindings, aber weiche Checks:
-    Entities = mod;
+// Play / Pause
+$play?.addEventListener('click', ()=>{
+  running = !running;
+  $play.textContent = running ? 'Pause' : 'Play';
+});
+$reset?.addEventListener('click', ()=>{
+  Entities.reset(); Entities.spawnAdamEva();
+  clearScreen(); draw();
+});
 
-    // bekannte Einstellungs-Setter nutzen, falls vorhanden
-    if (Entities.setWorldSize) Entities.setWorldSize(canvas.width, canvas.height);
-    if (Entities.setFoodRate)  Entities.setFoodRate(state.foodPerSec);
-    if (Entities.setMutationPct) Entities.setMutationPct(state.mutationPct);
+// Timescale zyklisch
+function updateTimescaleLabel(){ if ($time) $time.textContent = `⚡ ${TIMES[timescaleIdx]}x`; }
+$time?.addEventListener('click', ()=>{
+  timescaleIdx = (timescaleIdx+1) % TIMES.length;
+  updateTimescaleLabel();
+});
+updateTimescaleLabel();
 
-    // optionaler Initial-Spawn (Adam/Eva + Kinder), falls vorhanden
-    if (Entities.spawnAdamEva) {
-      try { Entities.spawnAdamEva({ childrenPerParent:4, staggerMs:1000 }); }
-      catch(e){ bannerWarn('Spawn-Init übersprungen', 'spawnAdamEva hat geworfen.'); console.warn(e); }
-    }
+// Mutation in %
+function setMutationFromUI(v){
+  const pct = Math.max(0, Math.min(0.10, v)); // 0..0.10
+  Entities.setMutationPct(pct);
+}
+if ($mut) {
+  const init = 0.005; // 0.5%
+  $mut.value = init*100; setMutationFromUI(init);
+  $mut.addEventListener('input', ()=> setMutationFromUI($mut.value/100));
+}
 
-    // Start
-    state.running = true;
-    elPlay && (elPlay.textContent = 'Pause');
-    lastT = performance.now();
-    rafId = requestAnimationFrame(loop);
+// Food /s
+function setFoodFromUI(vps){ Entities.setFoodRate(vps); }
+if ($food) {
+  $food.value = 90; setFoodFromUI(90);
+  $food.addEventListener('input', ()=> setFoodFromUI(+$food.value));
+}
 
-  }catch(e){
-    // Banner wurde bereits in safeImport gezeigt
-    console.error('[engine] boot failed', e);
+// Highlight zyklen (Alle → Stamm IDs)
+$highlight?.addEventListener('click', ()=>{
+  const ids = Entities.getStammIds();
+  if (!ids.length) { Entities.setHighlightStamm(null); $highlight.textContent='Alle Stämme'; return; }
+  let idx = ids.indexOf(currentHighlightId);
+  idx = (idx+1) % (ids.length+1); // +1 = alle
+  currentHighlightId = (idx===ids.length) ? null : ids[idx];
+  Entities.setHighlightStamm(currentHighlightId);
+  $highlight.textContent = currentHighlightId? `Stamm ${currentHighlightId}` : 'Alle Stämme';
+});
+let currentHighlightId = null;
+
+// Editor (lazy)
+$editor?.addEventListener('click', async ()=>{
+  const m = await safeImport('./editor.js', ['openEditor']);
+  m.openEditor();
+});
+
+// Umwelt (lazy)
+$env?.addEventListener('click', async ()=>{
+  const m = await safeImport('./environment/panel.js', ['openEnvPanel']);
+  m.openEnvPanel();
+});
+
+// Performance‑Modus
+function applyPerf(){
+  if (perfMode) {
+    Entities.setPerfProfile({ drawStride:2, renderScale:0.8 });
+  } else {
+    Entities.setPerfProfile({ drawStride:1, renderScale:1 });
   }
 }
+$perf?.addEventListener('click', ()=>{
+  perfMode = !perfMode; applyPerf();
+  $perf.textContent = perfMode ? 'Performance: AN' : 'Performance: AUS';
+});
+applyPerf();
 
-document.addEventListener('DOMContentLoaded', boot);
+// Start
+Entities.reset();
+Entities.spawnAdamEva();
+mountTicker();
+running = true;
+$play && ($play.textContent='Pause');
+
+// Event‑Hinweis bei Fehler
+on('error', (e)=> showError(e?.message??String(e)));

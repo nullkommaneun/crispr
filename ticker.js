@@ -1,79 +1,44 @@
 // ticker.js
-// Technischer Ticker (FPS, Last, Sim, Mutation, Nahrung/s, Zellen, Food, Stämme, KI)
-// + Tipps. Aktualisierung gedrosselt (~5 s). Exportiert getStatusLabel für andere Module.
+import { getCounts } from './entities.js';
 
-import { on, emit, EVT } from './event.js';
+let last = performance.now(), fps=60;
+let acc=0, frames=0, mounted=false;
 
-const SELECTOR_BAR  = '#techTicker'; // optional: <div id="techTicker">
-const SELECTOR_TIPS = '#techTips';   // optional: <div id="techTips">
-
-let lastStats = {
-  fps: 0,
-  last: 0,
-  sim: '1x',
-  mut: 0.5,
-  foodRate: 0,
-  cells: 0,
-  food: 0,
-  tribes: 0,
-  ai: 'Aus'
-};
-
-let barEl = null;
-let tipsEl = null;
-let lastUpdate = 0;
-const UPDATE_EVERY_MS = 5000;
-
-const clamp = (n,a=0,b=1e9)=>Math.max(a,Math.min(b,n));
-const pct   = v => `${clamp(Math.round(v), 0, 999)}%`;
-const int   = v => `${clamp(Math.round(v), 0, 99999)}`;
-
-export function getStatusLabel(s = lastStats) {
-  const fps  = s.fps ?? 0;
-  const last = s.last ?? 0;
-  const sim  = s.sim ?? '1x';
-  const mutV = Number.isFinite(s.mut) ? `${(s.mut).toFixed(1)}%` : String(s.mut ?? '0.0%');
-  const food = s.foodRate ?? s.foodPerSec ?? 0;
-  const cells = s.cells ?? 0;
-  const foods = s.food ?? 0;
-  const tribes= s.tribes ?? 0;
-  const ai    = s.ai ?? 'Aus';
-  return `FPS ${int(fps)} • Last ${pct(last)} • Sim ${sim} • Mut ${mutV} • Nahrung ${int(food)}/s • Zellen ${int(cells)} • Food ${int(foods)} • Stämme ${int(tribes)} • KI ${ai}`;
+function ensureBar(){
+  let el = document.getElementById('ticker');
+  if (!el) {
+    el = document.createElement('div');
+    el.id='ticker';
+    Object.assign(el.style, {
+      position:'fixed', bottom:'0', left:'0', right:'0',
+      padding:'6px 10px', font:'12px/1.4 system-ui, sans-serif',
+      color:'#ddd', background:'rgba(10,10,10,0.8)', zIndex:9998
+    });
+    document.body.appendChild(el);
+  }
+  return el;
 }
 
-function tryUpdateBar(nowMs = performance.now()){
-  if (!barEl) return;
-  if (nowMs - lastUpdate < UPDATE_EVERY_MS) return;
-  lastUpdate = nowMs;
-  barEl.textContent = getStatusLabel();
+export function mountTicker(){
+  mounted = true;
+  tick();
+  setInterval(()=>refresh(), 5000); // nur alle 5s auditieren
 }
 
-function showTip(text){
-  if (!tipsEl || !text) return;
-  tipsEl.textContent = text;
+export function unmountTicker(){ mounted=false; }
+
+export function registerFrame(){
+  const now = performance.now();
+  const dt = (now-last)/1000; last=now;
+  acc += dt; frames++;
+  if (acc>=1) { fps = Math.round(frames/acc); acc=0; frames=0; }
 }
 
-export function setStats(partial){
-  if (!partial || typeof partial !== 'object') return;
-  lastStats = { ...lastStats, ...partial };
-  tryUpdateBar();
+function refresh(){
+  if (!mounted) return;
+  const el = ensureBar();
+  const c = getCounts();
+  el.textContent = `FPS ${fps} • Zellen ${c.cells} • Food ${c.food} • Stämme ${c.stämme}`;
 }
 
-export function initTicker(){
-  barEl  = document.querySelector(SELECTOR_BAR);
-  tipsEl = document.querySelector(SELECTOR_TIPS);
-
-  on(EVT.STATUS, ({ stats, tip, status }) => {
-    if (stats) setStats(stats);
-    if (tip)   showTip(String(tip));
-    if (status && typeof status === 'string') showTip(status);
-  });
-
-  on(EVT.TICK, () => tryUpdateBar());
-  on(EVT.TIMESCALE_CHANGED, ({ label }) => setStats({ sim: label || '1x' }));
-  on(EVT.ADVISOR_MODE_CHANGED, ({ modeLabel }) => setStats({ ai: modeLabel || 'Aus' }));
-
-  tryUpdateBar(0);
-}
-
-export default { initTicker, setStats, getStatusLabel };
+function tick(){ if (mounted) requestAnimationFrame(tick); }
