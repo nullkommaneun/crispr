@@ -1,153 +1,82 @@
-<!doctype html>
-<html lang="de">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>CRISPR Genetics Lab</title>
-  <link rel="stylesheet" href="./style.css" />
-</head>
-<body>
-  <!-- Fehler-Overlay -->
-  <div id="errorOverlay" class="hidden" role="alert" aria-live="assertive"></div>
+<!-- … Kopf & Toolbar unverändert … -->
 
-<body class="skin-apoc">
-
-  <!-- Toolbar -->
-  <header class="toolbar" id="toolbar">
-    <div class="toolbar-row">
-      <button id="btnPlayPause">▶️ Play</button>
-      <button id="btnReset">🔄 Reset</button>
-
-      <label>Timescale</label>
-      <button id="btnSpeedCycle">⚡ 1×</button>
-
-      <label for="mutationRate">Mutation</label>
-      <input id="mutationRate" type="range" min="0" max="10" value="0.5" step="0.1" />
-      <span id="mutationRateVal" class="mono">0.5 %</span>
-
-      <label for="foodRate">Nahrung (pro Sekunde)</label>
-      <input id="foodRate" type="range" min="0" max="360" value="90" step="1" />
-      <span id="foodRateVal" class="mono">90 /s</span>
-
-      <label>Highlight</label>
-      <button id="btnHighlightCycle">Alle Stämme</button>
-
-      <button id="btnEditor">🧬 Editor</button>
-    </div>
-  </header>
-
-  <!-- Canvas -->
-  <main id="main">
-    <canvas id="simCanvas" width="800" height="520"></canvas>
-  </main>
-
-  <!-- DNA Daily (Narrative) -->
-  <section id="narrativeSection" aria-label="Boulevard-Schlagzeilen">
-    <header class="paperHead">
-      <span class="paperTitle">DNA Daily</span>
-      <span class="paperSub">Breaking News aus dem Labor</span>
+<!-- Editor-Modal -->
+<dialog id="editorModal" aria-labelledby="editorTitle">
+  <form method="dialog" id="editorForm">
+    <header class="modalHeader">
+      <h2 id="editorTitle">CRISPR-Editor</h2>
+      <button id="editorClose" value="cancel" title="Schließen">✖</button>
     </header>
-    <div id="narrativePanel" class="scrollbox" tabindex="0" aria-live="polite"></div>
-  </section>
 
-  <!-- Ticker -->
-  <footer id="ticker" aria-live="polite">
-    <div id="tickerInner"><div id="tickerContent"></div></div>
-  </footer>
+    <div class="modalBody">
+      <section class="editorLeft">
+        <h3>Traits anpassen</h3>
 
-  <!-- Editor-Modal -->
-  <dialog id="editorModal" aria-labelledby="editorTitle">
-    <form method="dialog" id="editorForm">
-      <header class="modalHeader">
-        <h2 id="editorTitle">CRISPR-Editor</h2>
-        <button id="editorClose" value="cancel" title="Schließen">✖</button>
-      </header>
-
-      <div class="modalBody">
-        <section class="editorLeft">
-          <h3>Traits anpassen</h3>
-          <div class="traitRow" data-trait="TEM"><label>TEM – Tempo</label><div class="stepper"><button type="button" class="dec">-1</button><output class="val">5</output><button type="button" class="inc">+1</button></div></div>
-          <div class="traitRow" data-trait="GRO"><label>GRÖ – Größe</label><div class="stepper"><button type="button" class="dec">-1</button><output class="val">5</output><button type="button" class="inc">+1</button></div></div>
-          <div class="traitRow" data-trait="EFF"><label>EFF – Effizienz</label><div class="stepper"><button type="button" class="dec">-1</button><output class="val">5</output><button type="button" class="inc">+1</button></div></div>
-          <div class="traitRow" data-trait="SCH"><label>SCH – Schutz</label><div class="stepper"><button type="button" class="dec">-1</button><output class="val">5</output><button type="button" class="inc">+1</button></div></div>
-          <div class="editorActions"><button id="editorApply" class="primary" type="submit" value="ok">Übernehmen</button></div>
-          <p class="hint mono">Neue Zellen aus dem Editor starten immer als <strong>neuer Stamm</strong>.</p>
-        </section>
-
-        <section class="editorRight">
-          <h3>Lebende Zellen • Prognose</h3>
-          <div id="editorCellList" class="cellList"></div>
-          <div class="advisorBox">
-            <div class="advisorHeader"><strong>KI-Advisor:</strong> <span id="editorAdvisorStatus">Aus</span></div>
-            <div class="advisorCtrls">
-              <button type="button" id="editorAdvisorToggle">Modus: Umschalten</button>
-              <input type="text" id="editorModelUrl" placeholder="models/model.json" value="models/model.json" />
-              <button type="button" id="editorModelLoad">Modell laden</button>
-            </div>
-            <small id="editorAdvisorNote">Modi: Aus • Heuristik • Modell (TensorFlow.js)</small>
+        <div class="traitRow" data-trait="TEM">
+          <label>TEM – Tempo</label>
+          <div class="stepper">
+            <button type="button" class="dec">-1</button>
+            <output class="val">5</output>
+            <button type="button" class="inc">+1</button>
           </div>
-        </section>
-      </div>
-    </form>
-  </dialog>
+        </div>
+        <div class="traitRow" data-trait="GRO">
+          <label>GRÖ – Größe</label>
+          <div class="stepper">
+            <button type="button" class="dec">-1</button>
+            <output class="val">5</output>
+            <button type="button" class="inc">+1</button>
+          </div>
+        </div>
+        <div class="traitRow" data-trait="EFF">
+          <label>EFF – Effizienz</label>
+          <div class="stepper">
+            <button type="button" class="dec">-1</button>
+            <output class="val">5</output>
+            <button type="button" class="inc">+1</button>
+          </div>
+        </div>
+        <div class="traitRow" data-trait="SCH">
+          <label>SCH – Schutz</label>
+          <div class="stepper">
+            <button type="button" class="dec">-1</button>
+            <output class="val">5</output>
+            <button type="button" class="inc">+1</button>
+          </div>
+        </div>
+        <!-- NEU: MET -->
+        <div class="traitRow" data-trait="MET">
+          <label>MET – Stoffwechsel</label>
+          <div class="stepper">
+            <button type="button" class="dec">-1</button>
+            <output class="val">5</output>
+            <button type="button" class="inc">+1</button>
+          </div>
+        </div>
 
-  <!-- Booter: lädt Module nacheinander und meldet EXAKT, welche Datei scheitert -->
-  <script type="module">
-    const ov = document.getElementById('errorOverlay');
-    const show = (msg)=>{ if(ov){ ov.textContent=msg; ov.classList.add('show'); } };
+        <div class="editorActions">
+          <button id="editorApply" class="primary" type="submit" value="ok">Übernehmen</button>
+        </div>
+        <p class="hint mono">Neue Zellen aus dem Editor starten immer als <strong>neuer Stamm</strong>.</p>
+      </section>
 
-    async function safeImport(spec){
-      try {
-        return await import(spec);
-      } catch (e) {
-        try {
-          // Diagnose: gibt es die Datei? Stimmt der MIME-Type?
-          const url = spec.replace(/\?.*$/, '');
-          const res = await fetch(url, { cache: 'no-store' });
-          const ct  = (res.headers.get('content-type') || '').toLowerCase();
-          if (!res.ok) {
-            show(`⚠️ Import fehlgeschlagen: ${url} — HTTP ${res.status} ${res.statusText}`);
-          } else if (!/javascript|ecmascript/.test(ct)) {
-            show(`⚠️ Import fehlgeschlagen: ${url} — MIME "${ct}" (vermutlich 404-HTML).`);
-          } else {
-            show(`⚠️ Import fehlgeschlagen: ${url} — ${e?.message || e}`);
-          }
-        } catch (e2) {
-          show(`⚠️ Import fehlgeschlagen: ${spec} — Netzwerk/Fetch-Problem.`);
-        }
-        console.error('[Boot import error]', spec, e);
-        throw e;
-      }
-    }
+      <section class="editorRight">
+        <h3>Lebende Zellen • Prognose</h3>
+        <div id="editorCellList" class="cellList"></div>
 
-    (async () => {
-      try {
-        // 1) Fehler-Manager früh
-        await safeImport('./errorManager.js');
-
-        // 2) Basismodule (exakte Reihenfolge; KEINE Querystrings → keine Cache-Verwirrung)
-        await safeImport('./event.js');
-        await safeImport('./genetics.js');
-        await safeImport('./entities.js');
-        await safeImport('./reproduction.js');
-        await safeImport('./renderer.js');
-        await safeImport('./ticker.js');
-        await safeImport('./advisor.js');
-        await safeImport('./editor.js');
-        await safeImport('./narrative/panel.js');
-        await safeImport('./spawn.js');
-
-        // 3) Engine zuletzt
-        await safeImport('./engine.js');
-      } catch (err) {
-        // safeImport hat bereits den konkreten Dateinamen angezeigt
-      }
-    })();
-  </script>
-
-  <script nomodule>
-    const ov = document.getElementById('errorOverlay');
-    if(ov){ ov.textContent = '⚠️ Dieser Browser unterstützt keine ES-Module.'; ov.classList.add('show'); }
-  </script>
-</body>
-</html>
+        <div class="advisorBox">
+          <div class="advisorHeader">
+            <strong>KI-Advisor:</strong>
+            <span id="editorAdvisorStatus">Aus</span>
+          </div>
+          <div class="advisorCtrls">
+            <button type="button" id="editorAdvisorToggle" title="Modus umschalten">Modus: Umschalten</button>
+            <input type="text" id="editorModelUrl" placeholder="models/model.json" value="models/model.json" />
+            <button type="button" id="editorModelLoad" title="TensorFlow.js Modell laden">Modell laden</button>
+          </div>
+          <small id="editorAdvisorNote">Modi: Aus • Heuristik • Modell (TensorFlow.js)</small>
+        </div>
+      </section>
+    </div>
+  </form>
+</dialog>
