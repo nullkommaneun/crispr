@@ -1,121 +1,100 @@
-// ticker.js – Technischer Marquee-Ticker (nur Technik, KEINE Spiel-Ereignisse)
-//
-// - keine EVT.TIP-Verarbeitung mehr
-// - sammelt FPS (gleitendes Mittel), liest Statuswerte (Timescale, Mutation, Nahrung/s)
-// - aktualisiert Text alle ~5 s
-// - konstante Scrolling-Geschwindigkeit, nahtloser Loop
+// ticker.js
+// Technischer Ticker (FPS, Last, Sim, Mutation, Nahrung/s, Zellen, Food, Stämme, KI)
+// + Tipps. Aktualisierung gedrosselt (~5 s). Exportiert getStatusLabel für andere Module.
 
-import { on, off, emit, once, EVT } from './event.js';
-import * as Entities from './entities.js';
-import { getStatusLabel } from './advisor.js';
+import { on, emit, EVT } from './event.js';
 
-let elInner, elContent;
+const SELECTOR_BAR = '#techTicker';     // <div id="techTicker">…</div> (optional)
+const SELECTOR_TIPS = '#techTips';      // <div id="techTips">…</div>  (optional)
 
-const REFRESH_MS     = 5000;
-const SPEED_PX_SEC   = 60;
-const FPS_WINDOW_SEC = 5;
-
-const state = {
-  fpsSamples: [],
-  metrics: {
-    ts: 1,            // Timescale
-    mutPct: 0.5,      // Mutation in %
-    foodPerSec: 90    // Nahrung/s
-  }
+let lastStats = {
+  fps: 0,            // gemittelt
+  last: 0,           // Auslastung in %
+  sim: '1x',         // Timescale-Label
+  mut: 0.5,          // Mutation in %
+  foodRate: 0,       // Nahrung / s
+  cells: 0,
+  food: 0,
+  tribes: 0,
+  ai: 'Aus'          // 'Aus' | 'Heuristik' | 'Modell aktiv'
 };
 
-// ---------- Sammeln: NUR TICK & STATUS -------------------------------------
+let barEl = null;
+let tipsEl = null;
 
-Events.on(EVT.TICK, (d)=>{
-  if(!d?.fps) return;
-  const t = performance.now()/1000;
-  state.fpsSamples.push([t, d.fps]);
-  while (state.fpsSamples.length && t - state.fpsSamples[0][0] > FPS_WINDOW_SEC) {
-    state.fpsSamples.shift();
-  }
-});
+let lastUpdate = 0;
+const UPDATE_EVERY_MS = 5000;
 
-// Statuswerte: unterstützen alte & neue Keys
-Events.on(EVT.STATUS, (d)=>{
-  if(!d) return;
-  switch (d.key) {
-    case 'timescale':         state.metrics.ts        = Number(d.value) || 1; break;
-    case 'mutationRatePct':   state.metrics.mutPct    = Number(d.value) || state.metrics.mutPct; break;
-    case 'mutationRate':      state.metrics.mutPct    = Math.round((Number(d.value)||0)*1000)/10; break; // falls Prozent nicht direkt kommt
-    case 'foodRatePerSec':    state.metrics.foodPerSec= Number(d.value) || state.metrics.foodPerSec; break;
-    default: break; // andere Status-Texte ignorieren
-  }
-});
+// --- Hilfen -----------------------------------------------------------------
 
-// KEIN Events.on(EVT.TIP, ...) mehr – Spielereignisse werden explizit ignoriert.
+function clamp(n, a, b){ return Math.max(a, Math.min(b, n)); }
+function pct(v){ return `${clamp(Math.round(v), 0, 999)}%`; }
+function int(v){ return `${clamp(Math.round(v), 0, 99999)}`; }
 
-// ---------- Metriken aufbereiten -------------------------------------------
+/**
+ * Liefert einen kompakten Status-String. Wird auch von engine.js importiert.
+ * @param {object} s – optional; wenn nicht gegeben, werden die letzten Werte benutzt
+ */
+export function getStatusLabel(s = lastStats) {
+  const fps  = s.fps ?? 0;
+  const last = s.last ?? 0;
+  const sim  = s.sim ?? '1x';
+  // mut kann Zahl (0.5) oder schon % sein; auf 1 Nachkommastelle runden
+  const mutV = Number.isFinite(s.mut) ? `${(s.mut).toFixed(1)}%` : String(s.mut ?? '0.0%');
+  const foodRate = s.foodRate ?? s.foodPerSec ?? 0;
+  const cells = s.cells ?? 0;
+  const food  = s.food ?? 0;
+  const tribes = s.tribes ?? 0;
+  const ai = s.ai ?? 'Aus';
 
-function getMetrics(){
-  // FPS-Mittel
-  let fps = 0;
-  if(state.fpsSamples.length){
-    fps = state.fpsSamples.reduce((a,[,v])=>a+v,0)/state.fpsSamples.length;
-  }
-  fps = Math.max(1, Math.min(240, fps));
-  const frameMs = 1000 / fps;
-  const loadPct = Math.min(300, Math.round((frameMs / 16.7) * 100));
-
-  const cells = (Entities.cells || []).filter(c=>!c.dead).length;
-  const foods = (Entities.foods || []).length;
-  const stamm = Object.keys(Entities.getStammCounts?.() || {}).length;
-
-  let ki = getStatusLabel?.() || 'Berater: Aus';
-  ki = ki.replace(/^Berater:\s*/,''); // "Aus" | "Heuristik aktiv" | "Modell aktiv"
-
-  const ts  = state.metrics.ts || 1;
-  const mut = (state.metrics.mutPct ?? 0).toFixed((state.metrics.mutPct%1)?1:0);
-  const foodPerSec = Math.round(state.metrics.foodPerSec ?? ((Entities.getWorldConfig?.().foodRate||0)/60));
-
-  return { fps:Math.round(fps), frameMs:frameMs.toFixed(1), load:loadPct,
-           cells, foods, stamm, ts, mut, foodPerSec, ki };
+  return `FPS ${int(fps)} • Last ${pct(last)} • Sim ${sim} • Mut ${mutV} • Nahrung ${int(foodRate)}/s • Zellen ${int(cells)} • Food ${int(food)} • Stämme ${int(tribes)} • KI ${ai}`;
 }
 
-function metricsLine(){
-  const m = getMetrics();
-  const parts = [
-    `FPS ${m.fps}`, `${m.frameMs}ms`, `Last ${m.load}%`,
-    `Sim ${m.ts}×`, `Mut ${m.mut}%`, `Nahrung ${m.foodPerSec}/s`,
-    `Zellen ${m.cells}`, `Food ${m.foods}`, `Stämme ${m.stamm}`,
-    `KI ${m.ki}`
-  ];
-  return parts.join('  •  ');
+/** Interne Aktualisierung der DOM-Balken (gedrosselt). */
+function tryUpdateBar(nowMs = performance.now()) {
+  if (!barEl) return;
+  if (nowMs - lastUpdate < UPDATE_EVERY_MS) return;
+  lastUpdate = nowMs;
+  barEl.textContent = getStatusLabel();
 }
 
-// ---------- Anzeige (nahtloser Marquee) ------------------------------------
-
-function applyMarqueeSpeed(){
-  const chunk = elContent.querySelector('.chunk');
-  if(!chunk) return;
-  const w = chunk.offsetWidth; // px
-  const seconds = Math.max(12, w / SPEED_PX_SEC);
-  elContent.style.setProperty('--marquee-dur', `${seconds}s`);
-  elContent.style.animation = 'none'; void elContent.offsetWidth; elContent.style.animation = '';
+/** Tipps rotieren als einzelner, sachlicher Hinweis. */
+function showTip(text) {
+  if (!tipsEl || !text) return;
+  tipsEl.textContent = text;
 }
 
-function setTrackText(text){
-  const safe = escapeHtml(text);
-  elContent.innerHTML = `<span class="chunk">${safe}</span><span class="gap">  </span><span class="chunk">${safe}</span>`;
-  applyMarqueeSpeed();
+// --- Öffentliche API ---------------------------------------------------------
+
+/** Von außen neue Stats einspielen; wird auch via EVT.STATUS genutzt. */
+export function setStats(partial) {
+  if (!partial || typeof partial !== 'object') return;
+  lastStats = { ...lastStats, ...partial };
+  tryUpdateBar();
 }
 
-function escapeHtml(s){
-  return String(s).replace(/[<>&"]/g, m => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[m]));
+/** Initialisierung – UI-Elemente auflösen + Event-Hooks setzen. */
+export function initTicker() {
+  barEl  = document.querySelector(SELECTOR_BAR);
+  tipsEl = document.querySelector(SELECTOR_TIPS);
+
+  // Status-Updates aus dem Spiel entgegennehmen
+  on(EVT.STATUS, ({ stats, tip, status }) => {
+    if (stats) setStats(stats);
+    if (tip)   showTip(String(tip));
+    if (status && typeof status === 'string') showTip(status);
+  });
+
+  // Auf TICK nur leicht gedrosselt den Balken aktualisieren (ruckelfrei)
+  on(EVT.TICK, () => tryUpdateBar());
+
+  // Bei Timescale-/Advisor-Änderungen sofort spiegeln
+  on(EVT.TIMESCALE_CHANGED, ({ label }) => setStats({ sim: label || '1x' }));
+  on(EVT.ADVISOR_MODE_CHANGED, ({ modeLabel }) => setStats({ ai: modeLabel || 'Aus' }));
+
+  // Erstausgabe
+  tryUpdateBar(0);
 }
 
-// ---------- Public ----------------------------------------------------------
-
-export function initTicker(){
-  elInner   = document.getElementById('tickerInner');
-  elContent = document.getElementById('tickerContent');
-  if(!elInner || !elContent) return;
-
-  setTrackText(metricsLine());
-  setInterval(()=> setTrackText(metricsLine()), REFRESH_MS);
-  window.addEventListener('resize', () => applyMarqueeSpeed(), { passive:true });
-}
+// Default-Export (optional, falls irgendwo default importiert wird)
+export default { initTicker, setStats, getStatusLabel };
