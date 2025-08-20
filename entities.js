@@ -204,7 +204,7 @@ function relatednessLocal(a,b){
     return set;
   };
   const A=ancUp(a.id,3), B=ancUp(b.id,3);
-  for(const id of A){ if(B.has(id)) return 0.25; } // grobe Obergrenze (Cousin)
+  for(const id of A){ if(B.has(id)) return 0.25; } // grob Cousin
   return 0;
 }
 
@@ -226,8 +226,8 @@ function chooseMateTarget(c, alive){
     const dist=Math.max(1, Math.sqrt(d2));
     const prox=1/(dist+8);
     const fit=(survivalScore(o.genes)/100);
-    const rel=relatednessLocal(c,o);                 // 0..0.25
-    const compat=Math.max(0.2, 1-0.8*rel*4);         // 0..1
+    const rel=relatednessLocal(c,o);
+    const compat=Math.max(0.2, 1-0.8*rel*4);
     const cross=(o.stammId!==c.stammId)?1.15:1.0;
 
     const score = prox * fit * compat * cross;
@@ -251,7 +251,7 @@ function updateCellBehavior(c, alive, dt){
     }
   }
 
-  // Hunger-Drive (MET/EFF), Food hat Priorität
+  // Hunger entscheidet über Priorität
   const d=c.derived;
   const hunger = 1/(1+Math.exp(-d.hungerSteep * ((d.hungerTarget*d.energyCap - c.energy)/d.energyCap)));
   const wantsFood = hunger > 0.5;
@@ -335,7 +335,6 @@ export function updateWorld(dt){
   for(const c of alive) updateCellBehavior(c, alive, dt);
   eatPhase();
 
-  // Repro: nutzt optional die Neighbor-Query (Grid)
   evaluateMatingPairs(alive, (p)=>createCell(p), {
     mutationRate: WORLD.mutationRate,
     relatednessFn: (a,b)=>relatednessLocal(a,b),
@@ -348,13 +347,6 @@ export function updateWorld(dt){
     const kids=cells.filter(x=>x.parents?.motherId===foundersIds.eva);
     foundersEverMated = kids.some(k=>k.parents?.fatherId===foundersIds.adam);
   }
-}
-
-/* ===== Darstellung ===== */
-export function cellColor(c, highlightStammId){
-  const col=getStammColor(c.stammId);
-  if(highlightStammId!==null && c.stammId!==highlightStammId) return { fill:col, alpha:0.25 };
-  return { fill:col, alpha:1 };
 }
 
 /* ===== init ===== */
