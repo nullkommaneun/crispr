@@ -1,16 +1,15 @@
 // event.js
-// Einheitlicher, robuster Event-Bus für das ganze Spiel.
-// Bietet benannte Exporte (on, off, emit, once, EVT) + Default-Export.
+// Einheitlicher Event-Bus: nur benannte Exporte (on, off, emit, once, EVT).
 
 const _listeners = new Map(); // Map<string, Set<Function>>
 
-function _getSet(type) {
+function _get(type) {
   let set = _listeners.get(type);
   if (!set) { set = new Set(); _listeners.set(type, set); }
   return set;
 }
 
-/** Einheitliche Event-Namen – einmalig an zentraler Stelle. */
+/** Einheitliche Event-Namen – zentral definiert. */
 export const EVT = Object.freeze({
   INIT: 'init',
   TICK: 'tick',
@@ -40,7 +39,7 @@ export const EVT = Object.freeze({
 
 /** Listener registrieren. Rückgabe: Unsubscribe-Funktion. */
 export function on(type, handler) {
-  const set = _getSet(type);
+  const set = _get(type);
   set.add(handler);
   return () => off(type, handler);
 }
@@ -55,7 +54,6 @@ export function off(type, handler) {
 export function emit(type, detail = {}) {
   const set = _listeners.get(type);
   if (!set || set.size === 0) return 0;
-  // Kopie erzeugen, damit Entfernen während Iteration nicht stört
   for (const fn of Array.from(set)) {
     try { fn(detail); }
     catch (e) { console.error(`[event] handler for "${type}" failed:`, e); }
@@ -70,6 +68,4 @@ export function once(type) {
   });
 }
 
-// Optionaler Default-Export: erlaubt Imports als Objekt.
-const Events = { on, off, emit, once, EVT };
-export default Events;
+// KEIN Default-Export, KEIN "Events"-Objekt.
