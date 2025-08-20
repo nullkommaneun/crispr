@@ -23,7 +23,16 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font:14px/1
   background:linear-gradient(180deg,#0f151b,#0b0f12);
   border-bottom:1px solid #0f1a22
 }
-.controls{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+
+/* Controls & Gruppen */
+.controls{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+.group{
+  display:flex; align-items:center; gap:8px;
+  padding-right:12px; margin-right:4px; border-right:1px solid #253340;
+}
+.group:last-child{ border-right:none; padding-right:0; }
+.group-title{ color:#8aa0b3; font-size:12px; margin-right:2px }
+
 .controls label{display:flex;gap:6px;align-items:center;color:var(--muted)}
 .controls input[type=range]{width:120px}
 button{
@@ -56,12 +65,12 @@ button:hover{background:#1a2a35}
   background:var(--panel);
   border:1px solid #22303a;border-radius:10px;
   display:flex; flex-direction:column;
-  overflow:hidden; /* Header bleibt sichtbar; Body scrollt */
+  overflow:hidden;
   box-shadow:0 10px 30px rgba(0,0,0,.35)
 }
 .panel.hidden{display:none}
 
-/* Panel-Header mit Close-X */
+/* Panel-Header mit Close */
 .panel-header{
   position:sticky; top:0; z-index:1;
   display:flex; align-items:center; justify-content:space-between;
@@ -77,11 +86,8 @@ button:hover{background:#1a2a35}
 }
 .closeX:hover{background:#1a2a35}
 
-/* Inhalt des Panels scrollt */
-.panel-body{
-  overflow:auto;
-  padding:12px;
-}
+/* Panel-Body */
+.panel-body{ overflow:auto; padding:12px; }
 
 .panel .muted{color:var(--muted)}
 .panel .row{display:flex;align-items:center;justify-content:space-between;margin:6px 0}
@@ -103,5 +109,5 @@ button:hover{background:#1a2a35}
 .cellItem .name{font-weight:600}
 .cellItem .meta{color:#8fa2b5;font-size:12px}
 
-/* Ticker */
+/* Ticker (rechts) */
 #ticker{color:#9fb6c9;font-size:12px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}

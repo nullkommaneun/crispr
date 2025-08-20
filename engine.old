@@ -5,14 +5,11 @@ import { step as foodStep, setSpawnRate } from "./food.js";
 import { draw, setPerfMode as rendererPerf } from "./renderer.js";
 import { openEditor } from "./editor.js";
 import { openEnvPanel, getEnvState } from "./environment.js";
-import { initTicker, setPerfMode as tickerPerf, pushFrame, setSpeedIndicator } from "./ticker.js";
+import { initTicker, setPerfMode as tickerPerf, pushFrame } from "./ticker.js";
 
 let running = false;
 let timescale = 1;
 let perfMode = false;
-
-const SPEED_STEPS = [1,5,10,50];
-let speedIdx = 0;
 
 let lastTime = 0, acc = 0;
 const fixedDt = 1 / 60; // fixed update step (s)
@@ -23,11 +20,13 @@ function resizeCanvas() {
   const canvas = document.getElementById("world");
   const topbar = document.getElementById("topbar");
 
+  // Dynamische Topbar-Höhe an CSS-Var weiterreichen (für mobilen Zeilenumbruch)
   if (topbar) {
     const h = topbar.offsetHeight || 56;
     document.documentElement.style.setProperty("--topbar-h", h + "px");
   }
 
+  // Interne Canvas-Auflösung an sichtbare Größe koppeln (sharp rendering)
   const rect = canvas.getBoundingClientRect();
   canvas.width = Math.round(rect.width);
   canvas.height = Math.round(rect.height);
@@ -42,6 +41,9 @@ function bindUI() {
   document.getElementById("btnEditor").onclick = openEditor;
   document.getElementById("btnEnv").onclick = openEnvPanel;
 
+  const ts = document.getElementById("timescale");
+  ts.oninput = () => setTimescale(parseFloat(ts.value));
+
   const mu = document.getElementById("mutation");
   mu.oninput = () => setMutationRate(parseFloat(mu.value));
 
@@ -51,31 +53,17 @@ function bindUI() {
   const pm = document.getElementById("perfmode");
   pm.oninput = () => setPerfMode(pm.checked);
 
-  const sp = document.getElementById("btnSpeed");
-  sp.onclick = () => { cycleSpeed(); };
-
-  // Defaults
+  // Defaultwerte an Module übergeben
+  setTimescale(parseFloat(ts.value));
   setMutationRate(parseFloat(mu.value));
   setSpawnRate(parseFloat(fr.value));
   setPerfMode(pm.checked);
-  setTimescale(SPEED_STEPS[speedIdx]);
-  updateSpeedButton();
 }
 
-function updateSpeedButton(){
-  const sp = document.getElementById("btnSpeed");
-  sp.textContent = `Tempo ×${SPEED_STEPS[speedIdx]}`;
-}
-
-function cycleSpeed(){
-  speedIdx = (speedIdx + 1) % SPEED_STEPS.length;
-  setTimescale(SPEED_STEPS[speedIdx]);
-  updateSpeedButton();
-}
-
-/** Fixed-Update Zyklus */
+/** Fixed-Update Zyklus für alle Simulationssysteme */
 function update(dt) {
   const env = getEnvState();
+  // entities.step dynamisch importieren (vermeidet harte Zyklen)
   return import("./entities.js").then(({ step: entitiesStep }) => {
     entitiesStep(dt, env, simTime);
     reproductionStep(dt);
@@ -83,18 +71,18 @@ function update(dt) {
   });
 }
 
-/** Render-Loop */
+/** Render-Loop (fixed update + draw) */
 function frame(now) {
   if (!running) return;
   now /= 1000;
 
   if (!lastTime) lastTime = now;
-  let delta = Math.min(0.1, now - lastTime);
+  let delta = Math.min(0.1, now - lastTime); // clamp, falls Tab geweckt
   lastTime = now;
   acc += delta * timescale;
 
   let steps = 0;
-  const maxSteps = 8;
+  const maxSteps = 8; // safety, um Spiral-of-death zu vermeiden
   const promises = [];
 
   while (acc >= fixedDt && steps < maxSteps) {
@@ -106,6 +94,7 @@ function frame(now) {
 
   Promise.all(promises).then(() => {
     draw();
+    // dtSim = fixedDt; fps = 1/delta (Display-FPS, nicht Sim-FPS)
     pushFrame(fixedDt, 1 / delta);
     requestAnimationFrame(frame);
   });
@@ -122,22 +111,27 @@ export function boot() {
 
   initTicker();
   bindUI();
+
+  // Initiales Draw
   draw();
 }
 
 export function start() {
-  if (!running) { running = true; lastTime = 0; requestAnimationFrame(frame); }
+  if (!running) {
+    running = true; lastTime = 0;
+    requestAnimationFrame(frame);
+  }
 }
 export function pause() { running = false; }
 export function reset() {
-  running = false;
+  running = false; // stoppen
+  // Food-Cluster neu aufsetzen & Startpopulation wiederherstellen
   import("./food.js").then(m => m.spawnClusters());
   import("./entities.js").then(m => { m.createAdamAndEve(); });
   draw();
 }
 export function setTimescale(x) {
-  timescale = Math.max(0.1, Math.min(50, x));
-  setSpeedIndicator(timescale);
+  timescale = Math.max(0.1, Math.min(8, x));
 }
 export function setPerfMode(on) {
   perfMode = !!on;
