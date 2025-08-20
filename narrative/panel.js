@@ -1,6 +1,9 @@
 // narrative/panel.js
-// DNA Daily – Boulevard-Schlagzeilen als fortlaufende Mini-Story,
-// mit Themen-Cooldowns, Dedupe und variantenreichen Phrasen.
+// DNA Daily – Boulevard-Schlagzeilen als fortlaufende Mini-Story
+// • sensible, niedrigere Schwellen
+// • dedupliziert & mit Cooldowns je Thema
+// • Erst-Ereignisse (erste Paarung/Geburt/Tod)
+// • Heartbeat (nach längerer Stille kurzer Situationssatz)
 
 import { Events, EVT } from '../event.js';
 import * as Entities from '../entities.js';
@@ -8,10 +11,9 @@ import { survivalScore } from '../genetics.js';
 
 let panel;
 
-// ===== Utilities ============================================================
+// ===== Utils ==============================================================
 const now  = () => performance.now()/1000;
 const pick = (arr)=> arr[(Math.random()*arr.length)|0];
-const join = (parts)=> parts.filter(Boolean).join(' ');
 
 function headline(html){
   const div = document.createElement('div');
@@ -20,7 +22,7 @@ function headline(html){
   return div;
 }
 
-function post(topic, html, cooldownSec = 45){
+function post(topic, html, cooldownSec = 40){
   if(!panel) return;
   if(!story.cooldown(topic, cooldownSec)) return;
   if(story.lastText === html) return;
@@ -28,7 +30,6 @@ function post(topic, html, cooldownSec = 45){
   panel.prepend(headline(html));
 }
 
-// Himmelsrichtung anhand Koordinate
 function quadrant(x, y, w, h){
   const hor = x < w*0.33 ? 'West' : x > w*0.67 ? 'Ost' : 'Mitte';
   const ver = y < h*0.33 ? 'Nord' : y > h*0.67 ? 'Süd' : 'Zentral';
@@ -36,48 +37,71 @@ function quadrant(x, y, w, h){
   return ver + '-' + hor;
 }
 
-// ===== Story-Manager / State ===============================================
+// ===== Konfiguration (Schwellen & Cooldowns) ==============================
+const CFG = {
+  // Cooldowns (Sekunden)
+  cd: {
+    small: 25,  // kurze Dinge
+    med:   50,  // Standard
+    big:   90,  // große Meilensteine
+  },
+  // Hungersnot-Stufen: Todesfälle / 60s
+  famine: { s1: 6, s2: 12, s3: 20, recBelow: 3 },
+  // Überbevölkerung (lebende Zellen)
+  overpop: { s1: 120, s2: 180, easeBelow: 100 },
+  // Goldenes Zeitalter / Crash
+  golden: { births30: 8, deaths30: 2, growth10: 5 },
+  crash:  { deaths30Factor: 1.4, drop30: 0.9 },
+  // Speziation / Drift / Rausch / Flaschenhals / Dominanz
+  speciation: { deltaStamm60: 2 }, // +2 in 60s
+  drift:      { move: 40, every: 15 },
+  frenzy:     { births15: 5 },
+  bottle:     { alive: 16 },
+  domin:      { share: 0.55 }
+};
+
+// ===== Story-State ========================================================
 const story = {
   lastTopicAt: new Map(), // topic -> ts
   extinct: new Set(),
   foundersShown: false,
   famineStage: 0, overpopStage: 0,
   lastText: '',
+  lastPostAt: 0,
+
   // Fenster
   births: [], deaths: [], aliveHist: [], stammHist: [],
   foodCentroid: {x: null, y: null, t: 0},
 
+  // Erst-Ereignisse
+  firstMate: false, firstBirth: false, firstDeath: false,
+
   cooldown(topic, sec){
     const t = now(); const last = this.lastTopicAt.get(topic) || 0;
     if (t - last < sec) return false;
-    this.lastTopicAt.set(topic, t); return true;
+    this.lastTopicAt.set(topic, t); this.lastPostAt = t;
+    return true;
   }
 };
 
-// ===== Phrase-Bausteine =====================================================
-const P = {
-  icons: {
-    fire:  ['🔥','🔥','⚠️'],
-    over:  ['🐝','🧪','🧨'],
-    love:  ['❤️','💕'],
-    mut:   ['🧬','🧪'],
-    skull: ['⚰️','🪦'],
-    rise:  ['🌱','🌿','🌼'],
-    drift: ['🌪️','💨'],
-    boom:  ['💞','✨']
-  },
-  words: {
-    crisis:   ['Hungersnot','Versorgungskrise','Nahrungsengpass'],
-    relax:    ['Entspannung','Erholung','Stabilisierung'],
-    lab:      ['im Labor','im Testfeld','im Habitat'],
-    burst:    ['Welle','Schub','Flut'],
-    drift:    ['driften','wandern','verlagern sich'],
-    frenzy:   ['Rausch','Fieber','Hochphase'],
-    domin:    ['Beherrscht die Fläche','dominant','führt deutlich']
-  }
+// ===== Phrasen ============================================================
+const PH = {
+  fire:  ['🔥','🔥','⚠️'],
+  over:  ['🐝','🧨'],
+  love:  ['❤️','💕'],
+  mut:   ['🧬','🧪'],
+  skull: ['⚰️','🪦'],
+  rise:  ['🌱','🌿'],
+  drift: ['🌪️','💨'],
+  boom:  ['💞','✨'],
+  crisis:   ['Hungersnot','Versorgungskrise','Nahrungsengpass'],
+  relax:    ['Entspannung','Erholung','Stabilisierung'],
+  lab:      ['im Labor','im Testfeld','im Habitat'],
+  burst:    ['Welle','Schub','Flut'],
+  driftV:   ['driften','wandern','verlagern sich'],
 };
 
-// ===== Init / Reset =========================================================
+// ===== Init / Reset =======================================================
 export function initNarrativePanel(){
   panel = document.getElementById('narrativePanel');
   if(!panel) return;
@@ -87,7 +111,9 @@ export function initNarrativePanel(){
     story.extinct.clear();
     story.foundersShown = false;
     story.famineStage = 0; story.overpopStage = 0;
-    story.lastText = '';
+    story.lastText = ''; story.lastPostAt = 0;
+    story.firstMate = story.firstBirth = story.firstDeath = false;
+
     story.births.length = 0; story.deaths.length = 0;
     story.aliveHist.length = 0; story.stammHist.length = 0;
     story.foodCentroid = {x: null, y: null, t: 0};
@@ -97,20 +123,28 @@ export function initNarrativePanel(){
   Events.on(EVT.RESET, resetState);
   resetState();
 
-  // ===== Ereignis-Listener ==================================================
+  // === Listener ===========================================================
 
-  // Paarung → Inzest-Arc
   Events.on(EVT.MATE, (d)=>{
     if(!d) return;
-    if((d.relatedness ?? 0) >= 0.25 && story.cooldown('scandal', 60)){
-      post('scandal', `${pick(P.icons.mut)}📰 Skandal! Nah verwandte Zellen erwischt – Ethikrat ${pick(['warnt','ist alarmiert','schlägt an die Glocke'])}.`, 60);
+    if(!story.firstMate && story.cooldown('first-mate', CFG.cd.med)){
+      story.firstMate = true;
+      post('first-mate', `${pick(PH.boom)} Erste Paarung bestätigt – die Evolution legt los.`, CFG.cd.med);
+    }
+    if((d.relatedness ?? 0) >= 0.25 && story.cooldown('scandal', CFG.cd.med)){
+      post('scandal', `${pick(PH.mut)}📰 Skandal! Nah verwandte Zellen erwischt – Ethikrat warnt.`, CFG.cd.med);
     }
   });
 
-  // Geburt → Mutation-Arc, Birth-Statistik
   Events.on(EVT.BIRTH, (d)=>{
     const t = now(); story.births.push(t);
     while(story.births.length && t - story.births[0] > 60) story.births.shift();
+
+    if(!story.firstBirth && story.cooldown('first-birth', CFG.cd.small)){
+      story.firstBirth = true;
+      post('first-birth', `${pick(PH.rise)} Erster Nachwuchs – ein zartes Signal der Zukunft.`, CFG.cd.small);
+    }
+
     if(!d?.parents) return;
     const child  = Entities.cells.find(c=>c.id===d.id);
     const mom    = Entities.cells.find(c=>c.id===d.parents.motherId);
@@ -119,66 +153,63 @@ export function initNarrativePanel(){
 
     const pAvg = Math.round((survivalScore(mom.genes) + survivalScore(dad.genes))/2);
     const cVal = survivalScore(child.genes);
-
-    if (cVal >= pAvg + 14 && story.cooldown('mut-good', 45)){
-      post('mut-good', `${pick(P.icons.mut)} Mutation-Durchbruch! Neue Linie ${pick(['übertrifft die Eltern','zeigt ungeahnte Stärke','setzt neue Maßstäbe'])}.`, 45);
-    } else if (cVal <= pAvg - 16 && story.cooldown('mut-bad', 60)){
-      post('mut-bad', `${pick(P.icons.mut)} Mutation mit Nebenwirkungen – Nachwuchs ${pick(['schwächelt','kommt nicht in Fahrt','ist deutlich unterlegen'])}.`, 60);
+    if (cVal >= pAvg + 12 && story.cooldown('mut-good', CFG.cd.small)){
+      post('mut-good', `${pick(PH.mut)} Mutation-Durchbruch! Neue Linie ${pick(['übertrifft die Eltern','zeigt ungeahnte Stärke'])}.`, CFG.cd.small);
+    } else if (cVal <= pAvg - 14 && story.cooldown('mut-bad', CFG.cd.med)){
+      post('mut-bad', `${pick(PH.mut)} Mutation mit Nebenwirkung – Nachwuchs deutlich schwächer.`, CFG.cd.med);
     }
 
-    // Founders-Love einmalig
     onFoundersLove();
   });
 
-  // Tod → Hungersnot/Extinktion + Statistik
   Events.on(EVT.DEATH, (d)=>{
     const t = now(); story.deaths.push(t);
     while(story.deaths.length && t - story.deaths[0] > 60) story.deaths.shift();
 
+    if(!story.firstDeath && story.cooldown('first-death', CFG.cd.small)){
+      story.firstDeath = true;
+      post('first-death', `🕯️ Erste Verluste ${pick(PH.lab)} – harte Bedingungen formen die Selektion.`, CFG.cd.small);
+    }
+
     if(d?.stammId){
       const cnt = (Entities.getStammCounts?.() || {})[d.stammId] || 0;
-      if(cnt === 0 && !story.extinct.has(d.stammId) && story.cooldown('extinct-'+d.stammId, 120)){
+      if(cnt === 0 && !story.extinct.has(d.stammId) && story.cooldown('extinct-'+d.stammId, CFG.cd.big)){
         story.extinct.add(d.stammId);
-        post('extinct-'+d.stammId, `${pick(P.icons.skull)} Drama! Stamm ${d.stammId} erlischt vollständig.`, 120);
+        post('extinct-'+d.stammId, `${pick(PH.skull)} Drama! Stamm ${d.stammId} erlischt vollständig.`, CFG.cd.big);
       }
     }
   });
 
-  // Krisen
   Events.on(EVT.HUNGER_CRISIS, (d)=>{
-    const n = d?.inLastMinute ?? 12;
-    const level = n > 25 ? 3 : n > 15 ? 2 : 1;
-    if (level > story.famineStage && story.cooldown('famine-lvl'+level, 60)){
+    const n = d?.inLastMinute ?? CFG.famine.s1;
+    const level = n >= CFG.famine.s3 ? 3 : n >= CFG.famine.s2 ? 2 : n >= CFG.famine.s1 ? 1 : 0;
+    if (level > story.famineStage && story.cooldown('famine-lvl'+level, CFG.cd.med)){
       story.famineStage = level;
       const line = level===3
-        ? `${pick(P.icons.fire)}${pick(P.icons.fire)} Katastrophe! ${pick(['Massives Sterben','Versorgung kollabiert'])} – ${pick(P.words.lab)} im Ausnahmezustand.`
+        ? `${pick(PH.fire)}${pick(PH.fire)} Katastrophe! Versorgung kollabiert – Ausnahmezustand.`
         : level===2
-          ? `${pick(P.icons.fire)} Hungersnot! ${pick(['Rationen reichen nicht','Futterflecken reißen ab'])} – Zellen verhungern reihenweise.`
-          : `⚠️ ${pick(P.words.crisis)} kündigt sich an – ${pick(['Reserven schwinden','Futter ist rar'])}.`;
-      post('famine', line, 60);
+          ? `${pick(PH.fire)} Hungersnot! Rationen reichen nicht – Zellen verenden reihenweise.`
+          : `⚠️ ${pick(PH.crisis)} kündigt sich an – Reserven schwinden.`;
+      post('famine', line, CFG.cd.med);
     }
   });
 
   Events.on(EVT.OVERPOP, (d)=>{
-    const pop = d?.population ?? 150;
-    const level = pop > 200 ? 2 : 1;
-    if (level > story.overpopStage && story.cooldown('over-lvl'+level, 60)){
+    const pop = d?.population ?? CFG.overpop.s1;
+    const level = pop >= CFG.overpop.s2 ? 2 : pop >= CFG.overpop.s1 ? 1 : 0;
+    if (level > story.overpopStage && story.cooldown('over-lvl'+level, CFG.cd.med)){
       story.overpopStage = level;
       const line = level===2
-        ? `${pick(P.icons.over)} Schwarmalarm! Dichtestress – ${pick(['Platz wird knapp','Kollisionen häufen sich'])}.`
-        : `${pick(P.icons.over)} Überbevölkerung! Das Labor platzt aus allen Nähten.`;
-      post('overpop', line, 60);
+        ? `${pick(PH.over)} Schwarmalarm! Dichtestress – Platz wird knapp.`
+        : `${pick(PH.over)} Überbevölkerung! Das Habitat ächzt.`;
+      post('overpop', line, CFG.cd.med);
     }
   });
 
-  // TICK → Trends, neue Arcs, Ressourcen-Drift…
   Events.on(EVT.TICK, onTick);
-
-  // Initial eine freundliche Zeile – optional
-  // post('welcome', '🗞️ Willkommen im CRISPR-Labor. Die Presse schaut genau hin.', 300);
 }
 
-// ===== TICK-Loop: Trendanalyse & Zusatz-Arcs ================================
+// ===== TICK-Loop ===========================================================
 function onTick(){
   const t = now();
 
@@ -194,44 +225,46 @@ function onTick(){
   // 1) Hungersnot-Erholung
   if(story.famineStage>0){
     const deaths = story.deaths.length;
-    if (deaths < 4 && story.cooldown('famine-rec-probe', 5)){
+    if (deaths <= CFG.famine.recBelow && story.cooldown('famine-rec-probe', 8)){
       story.famineStage = 0;
-      post('famine-rec', `🌧️ ${pick(P.words.relax)}! Neue Futterflecken wandern ins Feld – Sterblichkeit sinkt.`, 90);
+      post('famine-rec', `🌧️ ${pick(PH.relax)}! Neue Futterflecken – Sterblichkeit sinkt.`, CFG.cd.med);
     }
   }
 
   // 2) Überbevölkerung entspannt sich
   if(story.overpopStage>0){
-    if (alive < 120 && story.cooldown('overpop-rec', 30)){
+    if (alive <= CFG.overpop.easeBelow && story.cooldown('overpop-rec', 20)){
       story.overpopStage = 0;
-      post('overpop-rec', '🌬️ Aufatmen! Population verteilt sich – Gleichgewicht kehrt zurück.', 90);
+      post('overpop-rec', '🌬️ Aufatmen! Population verteilt sich – Balance kehrt zurück.', CFG.cd.med);
     }
   }
 
-  // 3) Goldenes Zeitalter (viel Geburt, kaum Tod, Wachstum)
+  // 3) Goldenes Zeitalter
   const births30 = story.births.filter(ts => t - ts <= 30).length;
   const deaths30 = story.deaths.filter(ts => t - ts <= 30).length;
   const alive10ago = story.aliveHist.find(([ts]) => t - ts >= 10)?.[1] ?? alive;
   const growth10 = alive - alive10ago;
-  if (births30 >= 12 && deaths30 <= 2 && growth10 >= Math.max(8, Math.round(alive*0.05)) && story.cooldown('golden', 120)){
-    post('golden', `${pick(P.icons.rise)} Goldenes Zeitalter: ${pick(['Geburtenwelle','Aufschwung','Blütephase'])} – ${pick(['Stämme expandieren','Cluster gedeihen','Nachwuchs dominiert'])}.`, 120);
+  if (births30 >= CFG.golden.births30 && deaths30 <= CFG.golden.deaths30 && growth10 >= CFG.golden.growth10
+      && story.cooldown('golden', CFG.cd.big)){
+    post('golden', `${pick(PH.rise)} Goldenes Zeitalter: ${pick(['Geburtenwelle','Aufschwung'])} – Stämme expandieren.`, CFG.cd.big);
   }
 
-  // 4) Population-Crash (hohe Sterblichkeit + starker Rückgang)
+  // 4) Population-Crash
   const alive30ago = story.aliveHist.find(([ts]) => t - ts >= 30)?.[1] ?? alive;
-  if (deaths30 >= births30*2 && alive < alive30ago*0.9 && story.cooldown('crash', 90)){
-    post('crash', `📉 Population bricht ein: ${pick(['Zellen reißen ab','Rückgang unübersehbar'])} – ${pick(['Futter fehlt','Evolution stolpert','Kälte der Ränder'])}.`, 90);
+  if (deaths30 >= births30 * CFG.crash.deaths30Factor && alive < alive30ago * CFG.crash.drop30
+      && story.cooldown('crash', CFG.cd.med)){
+    post('crash', `📉 Population bricht ein – Rückgang unübersehbar.`, CFG.cd.med);
   }
 
-  // 5) Speziations-Welle (Stämme +3 in 60s)
+  // 5) Speziations-Welle
   if (story.stammHist.length>=2){
     const base = story.stammHist[0][1], nowC = story.stammHist[story.stammHist.length-1][1];
-    if (nowC - base >= 3 && story.cooldown('speciation', 180)){
-      post('speciation', `${pick(P.icons.mut)}🧬 Abspaltungs-${pick(P.words.burst)}! Neue Linien wagen den Sprung in die Freiheit.`, 180);
+    if (nowC - base >= CFG.speciation.deltaStamm60 && story.cooldown('speciation', CFG.cd.big)){
+      post('speciation', `${pick(PH.mut)}🧬 Abspaltungs-${pick(PH.burst)}! Neue Linien wagen den Sprung.`, CFG.cd.big);
     }
   }
 
-  // 6) Ressourcen-Drift (Food-Schwerpunkt wandert deutlich)
+  // 6) Ressourcen-Drift (Schwerpunkt der Nahrung bewegt sich deutlich)
   if (Entities.foods?.length){
     const w = Entities.getWorldConfig().width  || 800;
     const h = Entities.getWorldConfig().height || 520;
@@ -239,41 +272,48 @@ function onTick(){
     const cy = Entities.foods.reduce((a,f)=>a+f.y,0)/Entities.foods.length;
     if (story.foodCentroid.x==null){
       story.foodCentroid = {x:cx,y:cy,t:t};
-    }else if (t - story.foodCentroid.t > 20){
+    }else if (t - story.foodCentroid.t > CFG.drift.every){
       const dx = cx - story.foodCentroid.x, dy = cy - story.foodCentroid.y;
       const dist = Math.hypot(dx,dy);
-      if (dist > 60 && story.cooldown('drift', 120)){
+      if (dist > CFG.drift.move && story.cooldown('drift', CFG.cd.big)){
         const dir = quadrant(cx,cy,w,h);
-        post('drift', `${pick(P.icons.drift)} Ressourcen ${pick(P.words.drift)} ${pick(['spürbar','sichtbar'])} Richtung **${dir}**.`, 120);
+        post('drift', `${pick(PH.drift)} Ressourcen ${pick(PH.driftV)} Richtung **${dir}**.`, CFG.cd.big);
       }
       story.foodCentroid = {x:cx,y:cy,t:t};
     }
   }
 
-  // 7) Paarungsrausch (viele Geburten in kurzer Zeit)
+  // 7) Paarungsrausch
   const births15 = story.births.filter(ts => t - ts <= 15).length;
-  if (births15 >= 8 && story.cooldown('frenzy', 90)){
-    post('frenzy', `${pick(P.icons.boom)} Paarungs-${pick(P.words.frenzy)} ${pick(P.words.lab)} – ${pick(['Gene tanzen','Stämme mischen sich','Nachwuchs flutet das Feld'])}.`, 90);
+  if (births15 >= CFG.frenzy.births15 && story.cooldown('frenzy', CFG.cd.med)){
+    post('frenzy', `${pick(PH.boom)} Paarungsrausch ${pick(['im Labor','im Habitat'])} – Gene tanzen.`, CFG.cd.med);
   }
 
-  // 8) Bottleneck (sehr kleine Population)
-  if (alive > 0 && alive <= 20 && story.cooldown('bottleneck', 120)){
-    post('bottleneck', `🧊 Genetischer Flaschenhals: Nur ${alive} Zellen verbleiben – ${pick(['Zufall entscheidet','Selektion greift hart zu'])}.`, 120);
+  // 8) Bottleneck
+  if (alive > 0 && alive <= CFG.bottle.alive && story.cooldown('bottleneck', CFG.cd.big)){
+    post('bottleneck', `🧊 Genetischer Flaschenhals: Nur ${alive} Zellen verbleiben.`, CFG.cd.big);
   }
 
-  // 9) Dominanzwechsel (ein Stamm > 60%)
+  // 9) Dominanzwechsel
   const counts = Entities.getStammCounts?.() || {};
   const entries = Object.entries(counts).sort((a,b)=>b[1]-a[1]);
   if(entries.length){
     const [lead, nLead] = entries[0];
     const sum = entries.reduce((a,[,v])=>a+v,0) || 1;
-    if (nLead/sum >= 0.6 && story.cooldown('dominance-'+lead, 150)){
-      post('dominance-'+lead, `👑 Stamm ${lead} ${pick(P.words.domin)} (${nLead}/${sum}).`, 150);
+    if (nLead/sum >= CFG.domin.share && story.cooldown('dominance-'+lead, 120)){
+      post('dominance-'+lead, `👑 Stamm ${lead} dominiert (${nLead}/${sum}).`, 120);
     }
+  }
+
+  // 10) Heartbeat: Wenn 30s gar nichts kam, kurze Lagezeile
+  if (t - (story.lastPostAt||0) > 30 && story.cooldown('heartbeat', 30)){
+    const sc = Object.keys(counts).length;
+    const fr = Math.round(((Entities.getWorldConfig?.().foodRate||0)/60));
+    post('heartbeat', `🗞️ Lage: ${alive} Zellen, ${sc} Stämme, Nahrung ${fr}/s.`, 30);
   }
 }
 
-// ===== Zusatz: Founders-Love (einmalig) =====================================
+// ===== Founders-Love =======================================================
 function onFoundersLove(){
   if (story.foundersShown) return;
   const f = Entities.getFoundersState?.();
@@ -282,6 +322,6 @@ function onFoundersLove(){
   const kidsOfEva = Entities.cells.filter(x => x.parents?.motherId === f.eva);
   if (kidsOfEva.some(k => k.parents?.fatherId === f.adam)){
     story.foundersShown = true;
-    post('love', `${pick(P.icons.love)} Liebesgeschichte! Adam und Eva noch immer vereint.`, 300);
+    post('love', `${pick(PH.love)} Liebesgeschichte! Adam und Eva noch immer vereint.`, 180);
   }
 }
