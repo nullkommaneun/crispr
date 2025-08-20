@@ -339,3 +339,104 @@ body:not(.skin-apoc) #simCanvas::before,
 body:not(.skin-apoc) #simCanvas::after,
 body:not(.skin-apoc) #main::after{ display:none; }
 */
+
+/* === Umwelt-Modal – Layout & Look ======================================= */
+
+/* Dialog selbst dunkler und breiter; mobil passt er sich an */
+#envModal {
+  width: min(960px, calc(100vw - 2rem));
+  max-width: 100%;
+  padding: 0;
+  background: var(--panel-2, #0f1416);
+  color: var(--text-1, #e7f0ea);
+  border: 1px solid var(--line-2, #1d272a);
+  border-radius: 14px;
+  box-shadow: 0 20px 60px rgba(0,0,0,.6);
+}
+
+/* Modal-Kopf identisch zum Editor */
+#envModal .modalHeader {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 16px; border-bottom: 1px solid var(--line-2, #1d272a);
+  background: var(--panel-1, #0b1012);
+}
+#envModal .modalHeader h2 { margin: 0; font-size: 1.1rem; }
+
+/* Zwei Spalten auf groß, eine Spalte auf schmal */
+#envModal .modalBody {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  gap: 20px;
+  padding: 16px;
+  background: transparent; /* verhindert die „weiße Fläche“ */
+}
+
+@media (max-width: 880px){
+  #envModal .modalBody { grid-template-columns: 1fr; }
+}
+
+/* Links – die Reglerliste wirkt wie Karten */
+#envModal .editorLeft > .traitRow,
+#envModal .editorLeft > .traitRow + .traitRow {
+  margin-bottom: 10px;
+}
+#envModal .editorLeft .traitRow label {
+  display: block;
+  margin: 6px 2px;
+  opacity: .9;
+}
+
+/* Einheitlicher „Stepper“ mit Range + Zahl rechts daneben */
+#envModal .stepper {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--panel-3, #0a0f11);
+  border: 1px solid var(--line-2, #1d272a);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+#envModal .stepper input[type="range"] { flex: 1; min-width: 0; }
+#envModal .stepper .val {
+  min-width: 3.8ch;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  opacity: .85;
+}
+
+/* Checkboxzeilen ebenfalls als kleine Karten */
+#envModal .editorLeft input[type="checkbox"] {
+  transform: translateY(1px);
+  accent-color: var(--accent, #89f17f);
+}
+#envModal .editorLeft .traitRow:has(input[type="checkbox"]) {
+  background: var(--panel-3, #0a0f11);
+  border: 1px solid var(--line-2, #1d272a);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+/* Rechts – Infofeld */
+#envModal .editorRight .advisorBox {
+  background: var(--panel-3, #0a0f11);
+  border: 1px solid var(--line-2, #1d272a);
+  border-radius: 10px;
+  padding: 12px;
+}
+#envModal .editorRight .advisorHeader { margin-bottom: 8px; }
+
+/* Close-Button optisch wie im Editor */
+#envModal #envClose {
+  border: 1px solid var(--line-2, #1d272a);
+  background: var(--panel-3, #0a0f11);
+  color: var(--text-1, #e7f0ea);
+  border-radius: 10px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+#envModal #envClose:focus-visible { outline: 2px solid var(--accent, #89f17f); outline-offset: 2px; }
+
+/* Slider-Thumb/Track minimal angleichen (optional, universell) */
+#envModal input[type="range"] {
+  height: 6px;
+}
