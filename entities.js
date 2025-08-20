@@ -3,8 +3,8 @@ import { emit } from './event.js';
 let cells = [];
 let foodItems = [];
 let stamme = new Map();
-let worldWidth = 800;
-let worldHeight = 600;
+export let worldWidth = 800;
+export let worldHeight = 600;
 let nextId = 0;
 let nextStammId = 0;
 

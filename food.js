@@ -1,4 +1,4 @@
-import { getCells, addFoodItem, removeFoodItem, getFoodItems } from './entities.js';
+import { getCells, addFoodItem, removeFoodItem, getFoodItems, worldWidth, worldHeight } from './entities.js';
 import { emit } from './event.js';
 
 let hotspots = [];
