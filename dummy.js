@@ -1,4 +1,4 @@
-// dummy.js
+// dummy.js – frei konfigurierbare Dummy-Zelle
 import { getCells, createCell, worldSize } from "./entities.js";
 import { emit } from "./event.js";
 
@@ -101,7 +101,6 @@ function render(){
     button("Ziel löschen", ()=>{ if(d.dummyCfg) d.dummyCfg.manualTarget=null; }),
     " ",
     button("Neu erstellen", ()=>{
-      // markiere alte Dummy als normal (oder lass sie sterben)
       if(d){ d.isDummy=false; d.dummyCfg=null; }
       dummyId=null; ensureDummy(); render();
     }),
@@ -116,7 +115,8 @@ function render(){
   // --- Overrides
   const ovBox = document.createElement("div");
   ovBox.style.border="1px solid #22303a"; ovBox.style.borderRadius="8px"; ovBox.style.padding="8px"; ovBox.style.marginBottom="8px";
-  ovBox.append(document.createElement("div")).textContent="Overrides";
+  const ovTitle = document.createElement("div"); ovTitle.textContent = "Overrides";
+  ovBox.append(ovTitle);
 
   ovBox.append(row("Unsterblich", checkbox(d.dummyCfg.invulnerable, v=>{ d.dummyCfg.invulnerable=v; })));
   ovBox.append(row("Unendliche Energie", checkbox(d.dummyCfg.infiniteEnergy, v=>{ d.dummyCfg.infiniteEnergy=v; })));
@@ -131,7 +131,8 @@ function render(){
   const g = d.genome;
   const genomeBox = document.createElement("div");
   genomeBox.style.border="1px solid #22303a"; genomeBox.style.borderRadius="8px"; genomeBox.style.padding="8px";
-  genomeBox.append(document.createElement("div")).textContent="Genome";
+  const gTitle = document.createElement("div"); gTitle.textContent = "Genome";
+  genomeBox.append(gTitle);
 
   genomeBox.append(row("TEM", slider(1,10,1,g.TEM, v=>{ g.TEM=v; emit("cell:edited",{id:d.id}); render(); })));
   genomeBox.append(row("GRÖ", slider(1,10,1,g.GRÖ, v=>{ g.GRÖ=v; emit("cell:edited",{id:d.id}); render(); })));
