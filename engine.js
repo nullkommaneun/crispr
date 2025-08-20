@@ -1,5 +1,7 @@
 import { initErrorManager } from "./errorManager.js";
-import { applyEnvironment, setWorldSize, createAdamAndEve } from "./entities.js";
+import {
+  applyEnvironment, setWorldSize, createAdamAndEve, step as entitiesStep
+} from "./entities.js";
 import { step as reproductionStep, setMutationRate } from "./reproduction.js";
 import { step as foodStep, setSpawnRate } from "./food.js";
 import { draw, setPerfMode as rendererPerf } from "./renderer.js";
@@ -11,11 +13,11 @@ let running = false;
 let timescale = 1;
 let perfMode = false;
 
-const SPEED_STEPS = [1,5,10,50];
+const SPEED_STEPS = [1, 5, 10, 50];
 let speedIdx = 0;
 
 let lastTime = 0, acc = 0;
-const fixedDt = 1 / 60; // fixed update step (s)
+const fixedDt = 1 / 60; // fixer Simulationsschritt (s)
 let simTime = 0;
 
 /** Canvas-Größe & Topbar-Abstand aktualisieren */
@@ -52,9 +54,9 @@ function bindUI() {
   pm.oninput = () => setPerfMode(pm.checked);
 
   const sp = document.getElementById("btnSpeed");
-  sp.onclick = () => { cycleSpeed(); };
+  sp.onclick = () => cycleSpeed();
 
-  // Defaults
+  // Defaults setzen
   setMutationRate(parseFloat(mu.value));
   setSpawnRate(parseFloat(fr.value));
   setPerfMode(pm.checked);
@@ -62,53 +64,57 @@ function bindUI() {
   updateSpeedButton();
 }
 
-function updateSpeedButton(){
+function updateSpeedButton() {
   const sp = document.getElementById("btnSpeed");
-  sp.textContent = `Tempo ×${SPEED_STEPS[speedIdx]}`;
+  if (sp) sp.textContent = `Tempo ×${SPEED_STEPS[speedIdx]}`;
 }
 
-function cycleSpeed(){
+function cycleSpeed() {
   speedIdx = (speedIdx + 1) % SPEED_STEPS.length;
   setTimescale(SPEED_STEPS[speedIdx]);
   updateSpeedButton();
 }
 
-/** Fixed-Update Zyklus */
-function update(dt) {
-  const env = getEnvState();
-  return import("./entities.js").then(({ step: entitiesStep }) => {
-    entitiesStep(dt, env, simTime);
-    reproductionStep(dt);
-    foodStep(dt);
-  });
-}
-
-/** Render-Loop */
+/** Render-Loop (fixed updates + draw), ohne Promises */
 function frame(now) {
   if (!running) return;
   now /= 1000;
 
   if (!lastTime) lastTime = now;
-  let delta = Math.min(0.1, now - lastTime);
+  let delta = Math.min(0.1, now - lastTime); // falls Tab schlafend war
   lastTime = now;
+
+  // Timescale anwenden
   acc += delta * timescale;
 
-  let steps = 0;
-  const maxSteps = 8;
-  const promises = [];
+  // Wie viele fixed Steps können/ sollen wir in diesem Frame rechnen?
+  const desiredSteps = Math.floor(acc / fixedDt);
 
-  while (acc >= fixedDt && steps < maxSteps) {
-    promises.push(update(fixedDt));
-    acc -= fixedDt;
+  // Dynamisches Sicherheitslimit: erlaubt echte Beschleunigung bis ×50,
+  // verhindert aber "Spiral of death" auf schwächerer Hardware.
+  const maxSteps = Math.min(60, Math.max(8, Math.ceil(timescale * 1.2)));
+
+  const steps = Math.min(desiredSteps, maxSteps);
+  const env = getEnvState();
+
+  for (let s = 0; s < steps; s++) {
+    entitiesStep(fixedDt, env, simTime);
+    reproductionStep(fixedDt);
+    foodStep(fixedDt);
     simTime += fixedDt;
-    steps++;
+    acc -= fixedDt;
   }
 
-  Promise.all(promises).then(() => {
-    draw();
-    pushFrame(fixedDt, 1 / delta);
-    requestAnimationFrame(frame);
-  });
+  // Falls wir nicht aufholen konnten, Restakku begrenzen
+  const leftoverSteps = Math.floor(acc / fixedDt);
+  if (leftoverSteps > maxSteps) {
+    acc = fixedDt * maxSteps;
+  }
+
+  draw();
+  // Anzeige: FPS (Display-Bildrate), Sim-Schritt bleibt 1/60 s
+  pushFrame(fixedDt, 1 / delta);
+  requestAnimationFrame(frame);
 }
 
 /** Public API */
@@ -137,7 +143,7 @@ export function reset() {
 }
 export function setTimescale(x) {
   timescale = Math.max(0.1, Math.min(50, x));
-  setSpeedIndicator(timescale);
+  setSpeedIndicator(timescale); // für Ticker-Anzeige „Tempo ×…“
 }
 export function setPerfMode(on) {
   perfMode = !!on;
