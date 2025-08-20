@@ -7,7 +7,8 @@ import { step as foodStep, setSpawnRate } from "./food.js";
 import { draw, setPerfMode as rendererPerf } from "./renderer.js";
 import { openEditor } from "./editor.js";
 import { openEnvPanel, getEnvState } from "./environment.js";
-import { initTicker, setPerfMode as tickerPerf, pushFrame, setSpeedIndicator } from "./ticker.js";
+import { initTicker, setPerfMode as tickerPerf, pushFrame } from "./ticker.js";
+import { emit } from "./event.js";
 
 let running = false;
 let timescale = 1;
@@ -17,7 +18,7 @@ const SPEED_STEPS = [1, 5, 10, 50];
 let speedIdx = 0;
 
 let lastTime = 0, acc = 0;
-const fixedDt = 1 / 60;
+const fixedDt = 1 / 60; // fixer Simulationsschritt (s)
 let simTime = 0;
 
 /** Canvas-Größe & Topbar-Abstand aktualisieren */
@@ -56,10 +57,11 @@ function bindUI() {
   const sp = document.getElementById("btnSpeed");
   sp.onclick = () => cycleSpeed();
 
+  // Defaults setzen
   setMutationRate(parseFloat(mu.value));
   setSpawnRate(parseFloat(fr.value));
   setPerfMode(pm.checked);
-  setTimescale(SPEED_STEPS[speedIdx]);
+  setTimescale(SPEED_STEPS[speedIdx]); // sendet Event an Ticker
   updateSpeedButton();
 }
 
@@ -116,7 +118,9 @@ export function boot() {
   createAdamAndEve();
   applyEnvironment(getEnvState());
 
-  initTicker();
+  initTicker();            // Ticker initialisieren
+  emit("ui:speed", timescale); // Anfangstempo melden
+
   bindUI();
   draw();
 }
@@ -130,7 +134,7 @@ export function reset(){
 }
 export function setTimescale(x){
   timescale = Math.max(0.1, Math.min(50, x));
-  setSpeedIndicator(timescale);
+  emit("ui:speed", timescale); // Ticker via Event aktualisieren
 }
 export function setPerfMode(on){
   perfMode = !!on;

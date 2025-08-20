@@ -1,34 +1,36 @@
 import { getEnvState } from "./environment.js";
 import { getCells, getFoodItems } from "./entities.js";
+import { on } from "./event.js";
 
-let el, perf = false, speedLabel = 1;
+let el, perf=false, speedLabel=1;
 
 export function initTicker(){
   el = document.getElementById("ticker");
-  updateSnapshot();
+  updateSnapshot(); // first paint
   setInterval(updateSnapshot, 5000);
+
+  // Tempo vom Engine-Event beziehen
+  on("ui:speed", (x)=>{
+    speedLabel = x;
+    updateSnapshot();
+  });
 }
-export function setPerfMode(on){ perf = !!on; }
+export function setPerfMode(onBool){ perf=!!onBool; }
 
 let lastFrameTimes = [];
 export function pushFrame(dtSim, fps){
   lastFrameTimes.push({ dtSim, fps, t: performance.now() });
-  if(lastFrameTimes.length > 30) lastFrameTimes.shift();
-}
-
-export function setSpeedIndicator(x){
-  speedLabel = x;
-  updateSnapshot();
+  if(lastFrameTimes.length>30) lastFrameTimes.shift();
 }
 
 export function updateSnapshot(){
   if(!el) return;
   const cells = getCells().length;
-  const food  = getFoodItems().length;
-  const env   = getEnvState();
-  const activeEnv = Object.entries(env).filter(([_,v])=>v.enabled).map(([k])=>k).join(", ") || "aus";
+  const food = getFoodItems().length;
+  const env = getEnvState();
+  const activeEnv = Object.entries(env).filter(([_,v])=>v.enabled).map(([k])=>k).join(', ') || 'aus';
 
-  const fps   = (lastFrameTimes.at(-1)?.fps ?? 0).toFixed(0);
+  const fps = (lastFrameTimes.at(-1)?.fps ?? 0).toFixed(0);
   const avgDt = (lastFrameTimes.reduce((a,b)=>a+b.dtSim,0)/(lastFrameTimes.length||1)).toFixed(3);
 
   el.innerHTML = `
@@ -37,7 +39,7 @@ export function updateSnapshot(){
     <span>Sim-Schritt (s): <b>${avgDt}</b></span>
     <span>Zellen: <b>${cells}</b></span>
     <span>Food: <b>${food}</b></span>
-    <span>Perf-Modus: <b>${perf ? "An" : "Aus"}</b></span>
+    <span>Perf-Modus: <b>${perf?'An':'Aus'}</b></span>
     <span>Umwelt: <b>${activeEnv}</b></span>
   `;
 }

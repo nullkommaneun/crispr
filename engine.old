@@ -17,7 +17,7 @@ const SPEED_STEPS = [1, 5, 10, 50];
 let speedIdx = 0;
 
 let lastTime = 0, acc = 0;
-const fixedDt = 1 / 60; // fixer Simulationsschritt (s)
+const fixedDt = 1 / 60;
 let simTime = 0;
 
 /** Canvas-Größe & Topbar-Abstand aktualisieren */
@@ -56,7 +56,6 @@ function bindUI() {
   const sp = document.getElementById("btnSpeed");
   sp.onclick = () => cycleSpeed();
 
-  // Defaults setzen
   setMutationRate(parseFloat(mu.value));
   setSpawnRate(parseFloat(fr.value));
   setPerfMode(pm.checked);
@@ -64,12 +63,11 @@ function bindUI() {
   updateSpeedButton();
 }
 
-function updateSpeedButton() {
+function updateSpeedButton(){
   const sp = document.getElementById("btnSpeed");
   if (sp) sp.textContent = `Tempo ×${SPEED_STEPS[speedIdx]}`;
 }
-
-function cycleSpeed() {
+function cycleSpeed(){
   speedIdx = (speedIdx + 1) % SPEED_STEPS.length;
   setTimescale(SPEED_STEPS[speedIdx]);
   updateSpeedButton();
@@ -81,17 +79,12 @@ function frame(now) {
   now /= 1000;
 
   if (!lastTime) lastTime = now;
-  let delta = Math.min(0.1, now - lastTime); // falls Tab schlafend war
+  let delta = Math.min(0.1, now - lastTime);
   lastTime = now;
 
-  // Timescale anwenden
   acc += delta * timescale;
 
-  // Wie viele fixed Steps können/ sollen wir in diesem Frame rechnen?
   const desiredSteps = Math.floor(acc / fixedDt);
-
-  // Dynamisches Sicherheitslimit: erlaubt echte Beschleunigung bis ×50,
-  // verhindert aber "Spiral of death" auf schwächerer Hardware.
   const maxSteps = Math.min(60, Math.max(8, Math.ceil(timescale * 1.2)));
 
   const steps = Math.min(desiredSteps, maxSteps);
@@ -105,14 +98,11 @@ function frame(now) {
     acc -= fixedDt;
   }
 
-  // Falls wir nicht aufholen konnten, Restakku begrenzen
-  const leftoverSteps = Math.floor(acc / fixedDt);
-  if (leftoverSteps > maxSteps) {
+  if (Math.floor(acc / fixedDt) > maxSteps) {
     acc = fixedDt * maxSteps;
   }
 
   draw();
-  // Anzeige: FPS (Display-Bildrate), Sim-Schritt bleibt 1/60 s
   pushFrame(fixedDt, 1 / delta);
   requestAnimationFrame(frame);
 }
@@ -130,25 +120,21 @@ export function boot() {
   bindUI();
   draw();
 }
-
-export function start() {
-  if (!running) { running = true; lastTime = 0; requestAnimationFrame(frame); }
-}
-export function pause() { running = false; }
-export function reset() {
+export function start(){ if (!running) { running = true; lastTime = 0; requestAnimationFrame(frame); } }
+export function pause(){ running = false; }
+export function reset(){
   running = false;
   import("./food.js").then(m => m.spawnClusters());
   import("./entities.js").then(m => { m.createAdamAndEve(); });
   draw();
 }
-export function setTimescale(x) {
+export function setTimescale(x){
   timescale = Math.max(0.1, Math.min(50, x));
-  setSpeedIndicator(timescale); // für Ticker-Anzeige „Tempo ×…“
+  setSpeedIndicator(timescale);
 }
-export function setPerfMode(on) {
+export function setPerfMode(on){
   perfMode = !!on;
   rendererPerf(perfMode);
   tickerPerf(perfMode);
 }
-
 window.addEventListener("DOMContentLoaded", boot);
