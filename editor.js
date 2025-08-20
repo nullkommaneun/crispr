@@ -1,384 +1,360 @@
 // editor.js
-// Neuer CRISPR-Editor: 3-Stufen-Advisor, sortierte Zellenliste (Score), What-if Prognose & Erklär-Chips.
+// CRISPR-Editor: Modal-UI zum Anpassen von Traits + KI/Heuristik-Steuerung.
+// Bietet stabile benannte Exporte (openEditor, initEditor, …) und einen Default-Namespace "Editor".
 
-import { Advisor } from './advisor.js';
+import { on, emit, EVT } from './event.js';
 import * as Entities from './entities.js';
-import { on, emit } from './event.js';
+import {
+  Advisor,                // Namespace (aus advisor.js): enthält u.a. getAdvisorMode, scoreGenome, …
+  AdvisorMode,
+  getAdvisorMode,
+  getAdvisorModeLabel,
+  toggleAdvisorMode,
+  loadAdvisorModel,
+  scoreGenome
+} from './advisor.js';
 
+// -------------------------------------------------------------
+// Internals
+// -------------------------------------------------------------
 let modalEl = null;
-let listEl = null;
-let modeButtons = null;
-let modelUrlInput = null;
-let statusBadge = null;
-let draft = null;        // aktueller Entwurf { TEM..MET }
-let selectedCell = null; // aktuell angeklickte Zelle
-let whatIfEl = null;     // Anzeige Prognose + Delta
-let chipsWrap = null;    // Trait-Erklärungen
-let traitRows = {};      // { TEM: {dec, val, inc} ... }
+let isOpen = false;
+let currentCellId = null;
+let modelInputEl = null;
+let modeBtnEl = null;
+let cellListEl = null;
 
 const TRAITS = ['TEM','GRO','EFF','SCH','MET'];
+const DEFAULT_GENOME = { TEM:5, GRO:5, EFF:5, SCH:5, MET:5 };
 
+// Hilfsadapter: robust ggü. unterschiedlichen Entities-APIs
+const api = {
+  listCells: () =>
+    (Entities.getAllCells?.() ?? Entities.getCells?.() ?? Entities.listCells?.() ?? Entities.cells ?? []),
+  getCell: (id) => {
+    const arr = api.listCells();
+    return Array.isArray(arr) ? arr.find(c => c?.id === id) : null;
+  },
+  // optional: neues Wesen erzeugen – wenn nicht vorhanden, nur Event senden
+  createCell: (opts) => {
+    if (Entities.createCell) return Entities.createCell(opts);
+    emit(EVT.EDITOR_SPAWN_REQUEST, opts);
+    return null;
+  },
+  // Genome eines existierenden Wesens ändern (selten genutzt)
+  updateGenome: (id, g) => {
+    if (Entities.updateGenome) return Entities.updateGenome(id, g);
+    emit(EVT.EDITOR_UPDATE_REQUEST, { id, genome: g });
+  }
+};
+
+// -------------------------------------------------------------
+// UI-Erzeugung
+// -------------------------------------------------------------
 function ensureModal() {
   if (modalEl) return;
 
   modalEl = document.createElement('div');
-  modalEl.id = 'editorModal';
-  modalEl.className = 'modal';
+  modalEl.id = 'crispr-editor-modal';
+  modalEl.style.cssText = `
+    position: fixed; inset: 0; z-index: 10000;
+    display: none; align-items: center; justify-content: center;
+    background: rgba(0,0,0,.45);
+  `;
 
-  modalEl.innerHTML = `
-    <div class="modalHeader">
-      <h2>CRISPR‑Editor</h2>
-      <button class="btn btn-ghost" id="editorClose">✕</button>
-    </div>
-    <div class="modalBody editorBody">
-      <div class="editorLeft">
-        <section>
-          <h3>Traits anpassen</h3>
-          <div id="traitRows"></div>
-          <div id="whatIf" class="whatIfBox">
-            <div class="scoreLine">
-              <span>Prognose (Entwurf):</span>
-              <strong id="whatIfScore">—</strong>
-              <small id="whatIfDelta"></small>
-            </div>
-            <div id="traitChips" class="traitChips"></div>
-          </div>
-          <div class="btnRow">
-            <button class="btn btn-accent" id="applyBtn">Übernehmen</button>
-            <span class="hint">Neue Zellen aus dem Editor starten immer als <strong>neuer Stamm</strong>.</span>
-          </div>
-        </section>
-      </div>
+  const panel = document.createElement('div');
+  panel.style.cssText = `
+    width: min(920px, 92vw); max-height: 88vh; overflow: hidden;
+    background: #0f1513; color: #dfe9e7; border: 1px solid #20302a; border-radius: 12px;
+    box-shadow: 0 8px 40px rgba(0,0,0,.6);
+    display: grid; grid-template-columns: 1fr 1fr; gap: 0; 
+  `;
 
-      <div class="editorRight">
-        <section class="advisorPanel">
-          <div class="advisorHeader">
-            <div>KI‑Advisor:</div>
-            <div class="seg seg-3" id="advisorSeg">
-              <button data-mode="off">Aus</button>
-              <button data-mode="heuristic">Heuristik</button>
-              <button data-mode="model">KI‑Modell</button>
-            </div>
-          </div>
-
-          <div class="advisorStatus">
-            <span id="advisorStatusDot" class="dot dot-idle"></span>
-            <span id="advisorStatusText">Modus: —</span>
-          </div>
-
-          <div class="modelLoader">
-            <input id="modelUrl" type="text" spellcheck="false" value="${Advisor.modelName || 'models/model.json'}" />
-            <button class="btn" id="loadModelBtn">Modell laden</button>
-          </div>
-        </section>
-
-        <section>
-          <h3>Lebende Zellen • Prognose</h3>
-          <div id="cellList" class="cellList"></div>
-        </section>
-      </div>
+  // Linke Seite: Traits
+  const left = document.createElement('div');
+  left.style.cssText = 'padding:18px 18px 12px 18px; border-right:1px solid #1d2a25;';
+  left.innerHTML = `
+    <h3 style="margin:0 0 12px 0; font:600 18px system-ui">CRISPR‑Editor</h3>
+    <div id="trait-grid" style="display:grid; grid-template-columns: 1fr auto auto auto; gap:8px; align-items:center;"></div>
+    <div style="margin-top:14px; display:flex; gap:8px; align-items:center;">
+      <button id="btn-editor-apply" style="padding:8px 12px; border-radius:8px; background:#1f3d32; color:#e8fff7; border:1px solid #275041;">Übernehmen</button>
+      <span style="opacity:.8; font-size:12px">Neue Zellen aus dem Editor starten immer als <b>neuer Stamm</b>.</span>
     </div>
   `;
 
+  // Rechte Seite: Zellenliste + Advisor
+  const right = document.createElement('div');
+  right.style.cssText = 'padding:18px 18px 12px 18px;';
+  right.innerHTML = `
+    <h3 style="margin:0 0 12px 0; font:600 18px system-ui">Lebende Zellen · Prognose</h3>
+    <div id="cell-list" style="display:flex; flex-direction:column; gap:8px; height:48vh; overflow:auto;"></div>
+    <div style="margin-top:14px; padding:10px; border:1px solid #23342d; border-radius:8px; background:#0c1512;">
+      <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px;">
+        <span>KI‑Advisor:</span>
+        <button id="btn-mode" style="padding:6px 10px; border-radius:8px; background:#1f3d32; color:#e8fff7; border:1px solid #275041;"></button>
+      </div>
+      <div style="display:flex; gap:8px; align-items:center;">
+        <input id="model-url" value="models/model.json" style="flex:1; padding:8px; border-radius:8px; border:1px solid #23342d; background:#0b130f; color:#e8fff7" />
+        <button id="btn-load-model" style="padding:8px 12px; border-radius:8px; background:#233d7a; color:#fff; border:1px solid #2e4b98">Modell laden</button>
+      </div>
+      <div id="mode-sub" style="margin-top:6px; opacity:.8; font-size:12px"></div>
+    </div>
+  `;
+
+  // Close X
+  const close = document.createElement('button');
+  close.textContent = '×';
+  close.title = 'Schließen';
+  close.style.cssText = `
+    position:absolute; top:8px; right:8px; width:32px; height:32px; 
+    border-radius:8px; border:1px solid #24352e; background:#0d1714; color:#cfe9dc; font-size:18px;
+  `;
+  close.addEventListener('click', closeEditor);
+
+  panel.append(left, right);
+  modalEl.append(panel, close);
   document.body.appendChild(modalEl);
 
-  // Elemente sammeln
-  listEl = modalEl.querySelector('#cellList');
-  modelUrlInput = modalEl.querySelector('#modelUrl');
-  statusBadge = modalEl.querySelector('#advisorStatusText');
-  whatIfEl = modalEl.querySelector('#whatIf');
-  chipsWrap = modalEl.querySelector('#traitChips');
-  modeButtons = modalEl.querySelectorAll('#advisorSeg button');
+  // Cache UI-Refs
+  modelInputEl = modalEl.querySelector('#model-url');
+  modeBtnEl = modalEl.querySelector('#btn-mode');
+  cellListEl = modalEl.querySelector('#cell-list');
 
-  // Close
-  modalEl.querySelector('#editorClose').addEventListener('click', close);
+  // Trait-Grid aufbauen
+  buildTraitGrid();
 
-  // Advisor‑Mode Schalter
-  modeButtons.forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      Advisor.setMode(btn.dataset.mode);
-      updateAdvisorHeader();
-      refreshCellList(true);
-      refreshWhatIf();
-    });
+  // Buttons
+  modalEl.querySelector('#btn-editor-apply')?.addEventListener('click', onApply);
+  modeBtnEl?.addEventListener('click', () => {
+    toggleAdvisorMode();
+    refreshHeader();
+    refreshCells(); // Sortierung kann sich ändern
+  });
+  modalEl.querySelector('#btn-load-model')?.addEventListener('click', async () => {
+    const url = modelInputEl?.value?.trim() || 'models/model.json';
+    const res = await loadAdvisorModel(url);
+    if (res?.ok) {
+      // automatisch auf Modell schalten
+      toggleAdvisorMode(); // OFF -> HEUR -> MODEL (wenn geladen)
+    }
+    refreshHeader();
+    refreshCells();
   });
 
-  // Modell laden
-  modalEl.querySelector('#loadModelBtn').addEventListener('click', async ()=>{
-    const url = modelUrlInput.value.trim() || 'models/model.json';
-    await Advisor.loadModel(url);
-  });
-
-  // Traits UI bauen
-  const rowsWrap = modalEl.querySelector('#traitRows');
-  rowsWrap.innerHTML = '';
-  TRAITS.forEach(tr=>{
-    const row = document.createElement('div');
-    row.className = 'traitRow';
-    row.innerHTML = `
-      <label>${labelForTrait(tr)}</label>
-      <div class="stepper">
-        <button class="btn sm" data-act="dec">−1</button>
-        <div class="val" data-val>5</div>
-        <button class="btn sm" data-act="inc">+1</button>
-      </div>
-    `;
-    rowsWrap.appendChild(row);
-    traitRows[tr] = {
-      row,
-      dec: row.querySelector('[data-act="dec"]'),
-      inc: row.querySelector('[data-act="inc"]'),
-      val: row.querySelector('[data-val]')
-    };
-
-    traitRows[tr].dec.addEventListener('click', ()=>{ changeTrait(tr, -1); });
-    traitRows[tr].inc.addEventListener('click', ()=>{ changeTrait(tr, +1); });
-  });
-
-  // Apply
-  modalEl.querySelector('#applyBtn').addEventListener('click', ()=>applyDraft());
-
-  // Advisor Events
-  on('advisor:modeChanged', ()=>{ updateAdvisorHeader(); refreshCellList(true); refreshWhatIf(); });
-  on('advisor:status', ()=>{ updateAdvisorHeader(); });
-  on('advisor:scoresInvalidated', ()=> refreshCellList(false));
-
-  // Engine-Änderungen -> Liste in 1Hz aktualisieren
-  setInterval(()=> refreshCellList(false), 1000);
+  refreshHeader();
 }
 
-function labelForTrait(t) {
-  switch (t) {
+function buildTraitGrid() {
+  const grid = modalEl.querySelector('#trait-grid');
+  grid.innerHTML = '';
+
+  // Aktuelle Auswahl (oder Defaults)
+  const cur = currentSelectionGenome();
+
+  // Kopfzeilen
+  grid.append(labelEl('Trait'), labelEl('−'), labelEl('Wert'), labelEl('+'));
+
+  TRAITS.forEach(tr => {
+    const v = cur[tr] ?? 5;
+
+    const minus = btnSmall('−', () => adjustTrait(tr, -1));
+    const plus  = btnSmall('+', () => adjustTrait(tr, +1));
+    const val   = valueBadge(`val-${tr}`, v);
+    const name  = labelEl(trName(tr));
+
+    grid.append(name, minus, val, plus);
+  });
+}
+
+function labelEl(txt) {
+  const span = document.createElement('div');
+  span.textContent = txt;
+  span.style.cssText = 'opacity:.9; font-size:13px;';
+  return span;
+}
+
+function btnSmall(txt, onClick) {
+  const b = document.createElement('button');
+  b.textContent = txt;
+  b.style.cssText = `
+    width:36px; padding:6px 0; border-radius:8px; border:1px solid #2a3d35; 
+    background:#0c1512; color:#dff2ea;
+  `;
+  b.addEventListener('click', onClick);
+  return b;
+}
+
+function valueBadge(id, v) {
+  const b = document.createElement('div');
+  b.id = id;
+  b.textContent = String(v);
+  b.style.cssText = `
+    min-width:38px; text-align:center; padding:6px 8px; border-radius:8px;
+    background:#14201c; border:1px solid #22342c;
+  `;
+  return b;
+}
+
+function trName(key){ 
+  switch(key){
     case 'TEM': return 'TEM – Tempo';
     case 'GRO': return 'GRÖ – Größe';
     case 'EFF': return 'EFF – Effizienz';
     case 'SCH': return 'SCH – Schutz';
     case 'MET': return 'MET – Metabolismus';
-    default: return t;
+    default: return key;
   }
 }
 
-function open() {
-  ensureModal();
-  modalEl.classList.add('open');
-
-  // Default: ausgewählte Zelle = erste lebende (falls vorhanden)
-  const cells = safeLivingCells();
-  selectedCell = cells[0] || null;
-  draft = selectedCell ? { ...selectedCell.genes } : { TEM:5,GRO:5,EFF:5,SCH:5,MET:5 };
-  syncTraitUI();
-  updateAdvisorHeader();
-  refreshCellList(true);
-  refreshWhatIf();
+function currentSelectionGenome() {
+  const cell = currentCellId ? api.getCell(currentCellId) : null;
+  return cell?.genes ?? { ...DEFAULT_GENOME };
 }
 
-function close() {
-  if (!modalEl) return;
-  modalEl.classList.remove('open');
+function setTraitValue(key, v) {
+  const clamped = Math.max(1, Math.min(9, Math.round(v)));
+  const badge = modalEl.querySelector(`#val-${key}`);
+  if (badge) badge.textContent = String(clamped);
 }
 
-export function init() {
-  ensureModal();
-  close(); // nicht automatisch anzeigen
+function adjustTrait(key, delta) {
+  const cur = currentSelectionGenome();
+  const next = Math.max(1, Math.min(9, (cur[key] ?? 5) + delta));
+  setTraitValue(key, next);
 }
 
-export function isOpen() {
-  return modalEl?.classList.contains('open') || false;
-}
-
-// ---------- Trait‑Interaktionen --------------------------------------------
-
-function changeTrait(k, d) {
-  if (!draft) return;
-  draft[k] = clampInt((draft[k] ?? 5) + d, 1, 9);
-  syncTraitUI();
-  refreshWhatIf();
-}
-
-function clampInt(v, lo, hi) { return Math.min(hi, Math.max(lo, Math.round(v))); }
-
-function syncTraitUI() {
-  TRAITS.forEach(k=>{
-    traitRows[k].val.textContent = String(draft?.[k] ?? 5);
-  });
-}
-
-// ---------- What‑if‑Prognose & Erklär-Chips --------------------------------
-
-function refreshWhatIf() {
-  if (!whatIfEl || !draft) return;
-
-  const energy = selectedCell?.energy ?? 30;
-  const baseScore = selectedCell ? (Advisor.predict(selectedCell) ?? null) : null;
-  const whatIfScore = Advisor.predictTraits(draft, energy);
-
-  // Score Anzeige
-  const scoreEl = modalEl.querySelector('#whatIfScore');
-  const deltaEl = modalEl.querySelector('#whatIfDelta');
-  if (Advisor.mode === 'off') {
-    scoreEl.textContent = '—';
-    deltaEl.textContent = '';
-  } else {
-    if (whatIfScore == null) {
-      scoreEl.textContent = '—';
-      deltaEl.textContent = '';
-    } else {
-      scoreEl.textContent = `${whatIfScore}%`;
-      if (baseScore == null) {
-        deltaEl.textContent = '';
-      } else {
-        const d = whatIfScore - baseScore;
-        deltaEl.textContent = d === 0 ? '±0 pp' : (d>0?`+${d} pp`:`${d} pp`);
-      }
-    }
-  }
-
-  // Erklär-Chips
-  chipsWrap.innerHTML = '';
-  const expl = Advisor.explainTraits ? Advisor.explainTraits(draft, energy) : null;
-  if (expl && Advisor.mode !== 'off') {
-    TRAITS.forEach(k=>{
-      const d = expl[k]?.delta ?? 0;
-      const chip = document.createElement('span');
-      chip.className = 'chip ' + (d>0?'pos':(d<0?'neg':'neu'));
-      const sign = d>0?'+':(d<0?'':'±');
-      chip.textContent = `${labelShort(k)} ${sign}${Math.abs(d)} pp`;
-      chipsWrap.appendChild(chip);
-    });
+// -------------------------------------------------------------
+// Render: Zellenliste & Header
+// -------------------------------------------------------------
+function refreshHeader() {
+  const lbl = getAdvisorModeLabel?.() ?? 'Aus';
+  if (modeBtnEl) modeBtnEl.textContent = `Modus: ${lbl}`;
+  const sub = modalEl.querySelector('#mode-sub');
+  if (sub) {
+    const mode = getAdvisorMode?.() ?? AdvisorMode.OFF;
+    sub.textContent = `Modi: Aus • Heuristik • Modell (TensorFlow.js) — aktuell: ${lbl}`;
+    if (mode === AdvisorMode.OFF) sub.textContent += ' • Prognosen ausgeblendet';
   }
 }
 
-function labelShort(k){
-  return {TEM:'TEM',GRO:'GRÖ',EFF:'EFF',SCH:'SCH',MET:'MET'}[k] || k;
-}
+function refreshCells() {
+  if (!cellListEl) return;
+  cellListEl.innerHTML = '';
 
-// ---------- Zellenliste -----------------------------------------------------
+  const cells = api.listCells();
+  const mode = getAdvisorMode?.() ?? AdvisorMode.OFF;
 
-function safeLivingCells() {
-  // Versuche robuste API – falls getCells nicht existiert, fallback auf Entities.cells
-  let cells = [];
-  try {
-    cells = typeof Entities.getCells === 'function' ? Entities.getCells() : (Entities.cells || []);
-  } catch { cells = []; }
-  return cells.filter(c => c && c.alive !== false);
-}
-
-function refreshCellList(forceSort) {
-  if (!listEl) return;
-  const cells = safeLivingCells();
-
-  let rows = cells.map(c=>{
-    const score = Advisor.predict(c);
-    return {
-      id: c.id,
-      name: c.name || `Zelle #${c.id}`,
-      stamm: c.stammId ?? (c.stamm ?? '?'),
-      sex: c.sex || (Math.random()<0.5?'m':'f'), // fallback
-      energy: Math.round(c.energy ?? 0),
-      score: (Advisor.mode === 'off') ? null : (score ?? null),
-      ref: c
-    };
+  // Score berechnen (nur wenn aktiv)
+  const rows = (cells || []).map(c => {
+    const g = c?.genes ?? DEFAULT_GENOME;
+    const s = (mode === AdvisorMode.OFF) ? null : (scoreGenome?.(g) ?? null);
+    return { id: c?.id, name: c?.name ?? `Zelle #${c?.id ?? '?'}`, stamm: c?.stammId ?? c?.stamm ?? '?', score: s };
   });
 
-  if (Advisor.mode !== 'off' || forceSort) {
-    rows.sort((a,b)=>{
-      if (a.score==null && b.score==null) return (a.id||0) - (b.id||0);
-      if (a.score==null) return 1;
-      if (b.score==null) return -1;
-      if (b.score !== a.score) return b.score - a.score;
-      if (b.energy !== a.energy) return b.energy - a.energy;
-      return (a.id||0) - (b.id||0);
-    });
-  }
+  // absteigend sortieren, 'null' ans Ende
+  rows.sort((a,b) => (b.score ?? -1) - (a.score ?? -1));
 
-  // Render
-  const frag = document.createDocumentFragment();
-  rows.forEach(r=>{
-    const item = document.createElement('button');
-    item.className = 'cellRow';
-    item.innerHTML = `
-      <span class="cellName">${r.name}</span>
-      <span class="muted">• Stamm ${r.stamm}</span>
-      <span class="sex">${r.sex==='f'?'♀':'♂'}</span>
-      <span class="score">${r.score==null?'—':(r.score+'%')}</span>
+  rows.forEach(r => {
+    const line = document.createElement('button');
+    line.style.cssText = `
+      width:100%; text-align:left; padding:10px; border-radius:10px;
+      background:#0c1512; border:1px solid #1f2e28; color:#e6f7f1;
+      display:flex; align-items:center; justify-content:space-between; gap:12px;
     `;
-    item.addEventListener('click', ()=>{
-      selectedCell = r.ref;
-      draft = { ...(selectedCell?.genes ?? draft) };
-      syncTraitUI();
-      refreshWhatIf();
+    const left = document.createElement('div');
+    left.textContent = `${r.name}  •  Stamm ${r.stamm}`;
+    left.style.cssText = 'white-space:nowrap; overflow:hidden; text-overflow:ellipsis;';
+
+    const right = document.createElement('div');
+    right.style.cssText = 'min-width:40px; text-align:right; opacity:.9;';
+    right.textContent = (r.score == null) ? '—' : `${r.score}%`;
+
+    line.append(left, right);
+    line.addEventListener('click', () => {
+      currentCellId = r.id;
+      buildTraitGrid();
     });
-    frag.appendChild(item);
+
+    cellListEl.appendChild(line);
+  });
+}
+
+// -------------------------------------------------------------
+// Apply: neue Zelle erzeugen (neuer Stamm)
+// -------------------------------------------------------------
+function onApply() {
+  // Traitwerte aus Badges sammeln
+  const g = {};
+  TRAITS.forEach(k => {
+    const v = Number(modalEl.querySelector(`#val-${k}`)?.textContent ?? 5);
+    g[k] = Math.max(1, Math.min(9, v|0));
   });
 
-  listEl.innerHTML = '';
-  listEl.appendChild(frag);
-}
-
-// ---------- Advisor UI / Status --------------------------------------------
-
-function updateAdvisorHeader() {
-  const dot = modalEl.querySelector('#advisorStatusDot');
-  const txt = modalEl.querySelector('#advisorStatusText');
-
-  // Segmented active
-  modeButtons.forEach(b=>{
-    b.classList.toggle('active', b.dataset.mode === Advisor.mode);
+  // sofort als neue Zelle (neuer Stamm) spawnen
+  api.createCell?.({
+    name: null,                        // Engine/Entities vergibt Namen (Adam/Eva/…)
+    sex: null,                         // Engine definiert Geschlecht
+    stammId: 'new',                    // Kennzeichen für neuen Stamm (Engine legt echte ID an)
+    genes: g,
+    fromEditor: true
   });
 
-  // Status
-  let statusText = `Modus: ${Advisor.mode === 'off' ? 'Aus' : (Advisor.mode==='heuristic'?'Heuristik':'KI')}`;
-  if (Advisor.mode === 'model') {
-    if (Advisor.status === 'ready') statusText += ` • Modell: ${Advisor.modelName || 'geladen'}`;
-    else if (Advisor.status === 'loading') statusText += ` • lädt…`;
-    else if (Advisor.status === 'error') statusText += ` • Fehler`;
+  // UI Feedback
+  const btn = modalEl.querySelector('#btn-editor-apply');
+  if (btn) {
+    const old = btn.textContent;
+    btn.textContent = 'Erstellt ✓';
+    setTimeout(() => (btn.textContent = old), 900);
   }
-  txt.textContent = statusText;
 
-  dot.className = 'dot ' + (
-    Advisor.mode === 'model'
-      ? (Advisor.status === 'ready' ? 'dot-ok' : (Advisor.status === 'loading' ? 'dot-warn' : 'dot-err'))
-      : 'dot-idle'
-  );
+  // Liste aktualisieren
+  refreshCells();
 }
 
-// ---------- Apply -> neue Zelle (neuer Stamm) -------------------------------
-
-function applyDraft() {
-  if (!draft) return;
-  try {
-    const w = (Entities.getWorldSize?.().w) || 800;
-    const h = (Entities.getWorldSize?.().h) || 600;
-    const x = Math.random() * w * 0.8 + 0.1*w;
-    const y = Math.random() * h * 0.8 + 0.1*h;
-
-    const stammId =
-      (Entities.newStammId?.()) ??
-      (Entities.nextStammId?.()) ??
-      undefined; // Fallback: Entities vergibt
-
-    const sex = Math.random() < 0.512 ? 'm' : 'f';
-
-    if (typeof Entities.createCell === 'function') {
-      Entities.createCell({
-        name: 'CRISPR',
-        sex,
-        stammId,
-        x, y,
-        genes: { ...draft },
-        energy: 36
-      });
-    } else {
-      // Fallback: engine/spawn hören auf dieses Event
-      emit('editor:createCell', { x, y, sex, stammId, genes: { ...draft } });
-    }
-  } catch (e) {
-    console.error(e);
-    emit('error', { where: 'editor.apply', error: String(e) });
+// -------------------------------------------------------------
+// Public API
+// -------------------------------------------------------------
+export function initEditor() {
+  ensureModal();
+  // Falls es in deiner Toolbar einen „Editor“-Button gibt, hier anbinden:
+  const trigger = document.getElementById('btn-editor') || document.querySelector('[data-open="editor"]');
+  if (trigger && !trigger.dataset.bound) {
+    trigger.addEventListener('click', toggleEditor);
+    trigger.dataset.bound = '1';
   }
+
+  // Bei Änderungen aus der Simulation (Zellgeburt/Tod) Liste aktualisieren
+  on(EVT.ENTITIES_CHANGED, () => {
+    if (isOpen) refreshCells();
+  });
+
+  refreshHeader();
 }
 
-// ---------- Exporte ---------------------------------------------------------
+export function openEditor() {
+  ensureModal();
+  isOpen = true;
+  modalEl.style.display = 'flex';
+  // Standard: aktuelle Zellen anzeigen
+  refreshHeader();
+  refreshCells();
+  buildTraitGrid();
+  emit(EVT.UI_EDITOR_OPENED, {});
+}
 
-export const Editor = { init, open, close, isOpen };
+export function closeEditor() {
+  if (!modalEl) return;
+  isOpen = false;
+  modalEl.style.display = 'none';
+  emit(EVT.UI_EDITOR_CLOSED, {});
+}
+
+export function toggleEditor() {
+  if (isOpen) closeEditor(); else openEditor();
+}
+
+export function isEditorOpen() { return !!isOpen; }
+
+// Default-Namespace (komfortabel für Default-Importe)
+const Editor = { initEditor, openEditor, closeEditor, toggleEditor, isEditorOpen };
 export default Editor;
