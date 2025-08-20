@@ -46,7 +46,15 @@ export function createCell(opts={}){
   if(!stammMeta.has(stammId)){
     stammMeta.set(stammId, { id: stammId, color: pickColorByStamm(stammId) });
   }
-  const baseEnergyMax = CONFIG.cell.energyMax * (1 + 0.08 * (((opts.genome?.GRÖ) ?? 5) - 5));
+  const g = opts.genome || {
+    TEM: (opts.TEM ?? (2+ (Math.random()*7|0))),
+    GRÖ: (opts.GRÖ ?? (2+ (Math.random()*7|0))),
+    EFF: (opts.EFF ?? (2+ (Math.random()*7|0))),
+    SCH: (opts.SCH ?? (2+ (Math.random()*7|0))),
+    MET: (opts.MET ?? (2+ (Math.random()*7|0))),
+  };
+  const energyMaxFromGenome = CONFIG.cell.energyMax * (1 + 0.08 * (g.GRÖ - 5));
+
   const cell = {
     id,
     name: opts.name || `Z${id}`,
@@ -55,19 +63,13 @@ export function createCell(opts={}){
     color: stammMeta.get(stammId).color,
     pos: opts.pos || { x: rnd(60, W-60), y: rnd(60, H-60) },
     vel: { x: 0, y: 0 },
-    energy: Math.min(baseEnergyMax, opts.energy ?? rnd(60, baseEnergyMax)),
+    energy: Math.min(energyMaxFromGenome, opts.energy ?? rnd(60, energyMaxFromGenome)),
     age: 0,
     cooldown: 0,
-    genome: opts.genome || {
-      TEM: (opts.TEM ?? (2+ (Math.random()*7|0))),
-      GRÖ: (opts.GRÖ ?? (2+ (Math.random()*7|0))),
-      EFF: (opts.EFF ?? (2+ (Math.random()*7|0))),
-      SCH: (opts.SCH ?? (2+ (Math.random()*7|0))),
-      MET: (opts.MET ?? (2+ (Math.random()*7|0))),
-    },
+    genome: g,
     // Wander-Noise (OU-Prozess)
     wander: { vx: 0, vy: 0 },
-    // Paarungs-Lock
+    // Paarungs-Lock (Zielpartner, Restzeit)
     mateLockId: null,
     mateLockT: 0
   };
@@ -84,19 +86,48 @@ export function killCell(id){
   }
 }
 
+/**
+ * Startpopulation mit Courtship-Assist:
+ * - Spawn näher aneinander (def. ~18% des kleineren Weltmaßes als Lücke)
+ * - Hohe Startenergie (~85% Kapazität)
+ * - Gegenseitiger Mate-Lock für ein paar Sekunden (CONFIG.physics.mateLockSec * 3)
+ */
 export function createAdamAndEve(){
   cells.length=0;
   stammMeta = new Map();
   nextCellId=1;
-  const A=createCell({ name: "Adam", sex:"M", stammId: 1, genome:{TEM:6,GRÖ:5,EFF:6,SCH:5,MET:5}, pos:{x:W*0.35,y:H*0.5} });
-  const E=createCell({ name: "Eva",  sex:"F", stammId: 2, genome:{TEM:5,GRÖ:5,EFF:7,SCH:6,MET:4}, pos:{x:W*0.65,y:H*0.5} });
+
+  const cx = W*0.5, cy = H*0.5;
+  const gap = Math.min(W, H) * 0.18;               // näher zusammen
+  const lockSecs = Math.max(3, (CONFIG.physics?.mateLockSec ?? 1.5) * 3);
+
+  const gA = { TEM:6, GRÖ:5, EFF:6, SCH:5, MET:5 };
+  const gE = { TEM:5, GRÖ:5, EFF:7, SCH:6, MET:4 };
+  const capA = CONFIG.cell.energyMax * (1 + 0.08*(gA.GRÖ-5));
+  const capE = CONFIG.cell.energyMax * (1 + 0.08*(gE.GRÖ-5));
+
+  const A=createCell({
+    name:"Adam", sex:"M", stammId:1,
+    genome:gA, pos:{ x: cx - gap, y: cy },
+    energy: capA * 0.85
+  });
+  const E=createCell({
+    name:"Eva",  sex:"F", stammId:2,
+    genome:gE, pos:{ x: cx + gap, y: cy },
+    energy: capE * 0.85
+  });
+
+  // gegenseitiger Start-Lock -> sie laufen sicher zusammen
+  A.mateLockId = E.id; E.mateLockId = A.id;
+  A.mateLockT  = lockSecs; E.mateLockT  = lockSecs;
+
   return [A,E];
 }
 
 /** Environment application (Placeholder, Live-Lesen in step()) */
 export function applyEnvironment(env){ /* no-op */ }
 
-/* ===== Kern: natürliches Bewegungsmodell mit Priority-Blending ===== */
+/* ===== Kern: natürliches Bewegungsmodell mit Prioritäten ===== */
 function senseRadii(c){
   const g=c.genome;
   const senseFood = CONFIG.cell.senseFood * (0.7 + 0.1*g.EFF);
@@ -130,7 +161,7 @@ function steerSeparation(c, neighbors, sepR, ignoreId=null){
   let fx=0, fy=0, n=0;
   for(const o of neighbors){
     if(o===c) continue;
-    if(ignoreId && o.id===ignoreId) continue;
+    if(ignoreId && o.id===ignoreId) continue; // <<— Partner wird NICHT weggedrückt
     const dx = c.pos.x - o.pos.x, dy = c.pos.y - o.pos.y;
     const d2 = dx*dx + dy*dy;
     if(d2 > sepR*sepR || d2===0) continue;
@@ -176,7 +207,6 @@ function steerWallAvoid(c){
   return [fx, fy];
 }
 function updateWander(c, dt){
-  // Ornstein–Uhlenbeck: dv = theta*(mu-v)*dt + sigma*sqrt(dt)*N(0,1)
   const th = CONFIG.physics.wanderTheta;
   const sg = CONFIG.physics.wanderSigma;
   const gauss = ()=> {
@@ -241,7 +271,7 @@ function addWithBudget(state, vx, vy, weight){
   return state;
 }
 
-/** Hauptschritt: kraftbasierte, natürliche Bewegung mit Prioritäten */
+/** Hauptschritt */
 export function step(dt, env, t=0){
   const neighbors = cells; // kleine N: kein Spatial Grid
 
@@ -252,14 +282,14 @@ export function step(dt, env, t=0){
     if(c.mateLockT > 0) c.mateLockT -= dt;
 
     const g = c.genome;
-    const { senseFood, senseMate, sep, ali, coh } = senseRadii(c);
+    let { senseFood, senseMate, sep, ali, coh } = senseRadii(c);
     const { maxSpeed, maxForce } = speedAndForce(c);
 
     // Motivation (0..1)
     const cap = energyCapacity(c);
     const eRatio = clamp(c.energy / cap, 0, 1);
     const wantFood = Math.pow(1 - eRatio, 1.3);                         // hungrig → höher
-    const wantMate = (c.cooldown<=0 && eRatio>0.35) ? (0.4*(1 - wantFood)) : 0;
+    let   wantMate = (c.cooldown<=0 && eRatio>0.35) ? (0.4*(1 - wantFood)) : 0;
     const dEdge = Math.min(c.pos.x, W-c.pos.x, c.pos.y, H-c.pos.y);
     const wantAvoid = clamp(
       (env.acid.enabled  ? clamp(1 - dEdge/env.acid.range, 0, 1) : 0) +
@@ -268,29 +298,25 @@ export function step(dt, env, t=0){
       (env.nano.enabled  ? 0.3 : 0), 0, 1
     );
 
-    // Ziele
-    const foodTarget = wantFood > 0.05 ? nearestFoodCenter(c, senseFood) : null;
-
-    // Paarungs-Lock (kein Springen zwischen Kandidaten)
+    // >>> Courtship-Prio: Aktiver Lock erzwingt Partnersuche, auch wenn Hunger höher wäre
     let mateTarget = null;
-    if(wantMate > 0.05){
-      if(c.mateLockId && c.mateLockT > 0){
-        mateTarget = neighbors.find(o=>o.id===c.mateLockId) || null;
-        if(!mateTarget) { c.mateLockId=null; c.mateLockT=0; }
+    if(c.mateLockId && c.mateLockT > 0){
+      mateTarget = neighbors.find(o=>o.id===c.mateLockId) || null;
+      if(mateTarget){
+        wantMate = Math.max(wantMate, 0.9); // starker Fokus
+        // erweitere Mate-Sense leicht, falls sie sich verfehlt haben
+        senseMate *= 1.4;
+      }else{
+        c.mateLockId = null; c.mateLockT = 0;
       }
-      if(!mateTarget){
-        const choice = chooseMate(c, senseMate, neighbors);
-        if(choice){
-          mateTarget = choice;
-          c.mateLockId = choice.id;
-          c.mateLockT = CONFIG.physics.mateLockSec;
-        }
-      }
-    }else{
-      c.mateLockId = null; c.mateLockT = 0;
+    } else if (wantMate > 0.05){
+      mateTarget = chooseMate(c, senseMate, neighbors);
     }
 
-    // Seek/Arrive-Vektoren vorbereiten
+    // Nahrung
+    const foodTarget = wantFood > 0.05 ? nearestFoodCenter(c, senseFood) : null;
+
+    // Seek/Arrive-Vektoren
     const slowR = Math.max(CONFIG.physics.slowRadius, CONFIG.cell.pairDistance*3);
     const foodStop = CONFIG.food.itemRadius + radiusOf(c) + 2;
     const mateStop = CONFIG.cell.pairDistance * 0.9;
@@ -303,10 +329,9 @@ export function step(dt, env, t=0){
       fMate = steerSeekArrive(c, {x:mateTarget.pos.x, y:mateTarget.pos.y}, maxSpeed*0.9, mateStop, slowR);
     }
 
-    // Flocking (Zählungen für adaptive Gewichte)
+    // Flocking
     let nSep=0, nAli=0, nCoh=0;
     let fSep=[0,0], fAli=[0,0], fCoh=[0,0];
-
     if(CONFIG.physics.enableSep){
       const r = steerSeparation(c, neighbors, sep, mateTarget?.id || null);
       fSep = [r[0], r[1]]; nSep = r[2];
@@ -323,7 +348,8 @@ export function step(dt, env, t=0){
     // Rand-Vermeidung
     const fAvoid = steerWallAvoid(c);
 
-    // Wander
+    // Wander (gedrosselt bei Ziel)
+    const hasTarget = !!(foodTarget || mateTarget);
     let fWander=[0,0];
     if(CONFIG.physics.enableWander){
       fWander = updateWander(c, dt);
@@ -336,12 +362,12 @@ export function step(dt, env, t=0){
     st = addWithBudget(st, fAvoid[0], fAvoid[1],
       CONFIG.physics.wAvoid * (0.6 + 0.7*wantAvoid) * (0.9 + 0.03*g.SCH));
 
-    // 2) Hauptziel: Food ODER Mate zuerst (größeres „Want“ bekommt Vorrang)
+    // 2) Hauptziel: Food ODER Mate zuerst
     const wFood = CONFIG.physics.wFood * (0.7 + 0.5*wantFood) * (0.8 + 0.05*g.EFF);
     const wMate = CONFIG.physics.wMate * (0.8 + 0.4*wantMate);
     const secondaryScale = CONFIG.physics.secondaryGoalScale;
 
-    const foodFirst = (wantFood >= wantMate);
+    const foodFirst = (wantFood > wantMate);
     if(foodFirst){
       if(foodTarget) st = addWithBudget(st, fFood[0], fFood[1], wFood);
       if(mateTarget) st = addWithBudget(st, fMate[0], fMate[1], wMate * secondaryScale);
@@ -350,17 +376,16 @@ export function step(dt, env, t=0){
       if(foodTarget) st = addWithBudget(st, fFood[0], fFood[1], wFood * secondaryScale);
     }
 
-    // 3) Separation (kein Druck gegen gewählten Partner)
+    // 3) Separation (Partner ignoriert)
     if(CONFIG.physics.enableSep){
       st = addWithBudget(st, fSep[0], fSep[1], CONFIG.physics.wSep);
     }
 
-    // 4) Cohesion & 5) Alignment – adaptiv nach Nachbarn
+    // 4) Cohesion & 5) Alignment – adaptiv
     const nFlock = Math.max(nAli, nCoh);
     let flockFac = 1.0;
-    if(nFlock < 3) flockFac = 0.45;         // dünnes Feld → drosseln
-    else if(nFlock > 8) flockFac = 1.25;    // dichter Schwarm → pushen
-
+    if(nFlock < 3) flockFac = 0.45;
+    else if(nFlock > 8) flockFac = 1.25;
     if(CONFIG.physics.enableCoh){
       st = addWithBudget(st, fCoh[0], fCoh[1], CONFIG.physics.wCoh * flockFac);
     }
@@ -368,14 +393,14 @@ export function step(dt, env, t=0){
       st = addWithBudget(st, fAli[0], fAli[1], CONFIG.physics.wAli * flockFac);
     }
 
-    // 6) Wander (stark drosseln, wenn Ziel existiert)
-    const hasTarget = !!(foodTarget || mateTarget);
-    const wanderScale = CONFIG.physics.wWander * (hasTarget ? CONFIG.physics.wanderWhenTarget : 1.0) * (1 - 0.5*wantAvoid);
+    // 6) Wander – stark drosseln, wenn Ziel existiert & bei hoher Avoid
+    const wanderScaleBase = CONFIG.physics.wWander * (hasTarget ? CONFIG.physics.wanderWhenTarget : 1.0);
+    const wanderScale = wanderScaleBase * (1 - 0.5*wantAvoid);
     if(CONFIG.physics.enableWander){
       st = addWithBudget(st, fWander[0], fWander[1], wanderScale);
     }
 
-    // Rest: evtl. numerische Sicherheit
+    // Restlimit
     [st.fx, st.fy] = limitVec(st.fx, st.fy, maxForce);
 
     // Integration
@@ -406,7 +431,7 @@ export function step(dt, env, t=0){
     /* ===== Energiehaushalt & Umwelt ===== */
     const sp = len(c.vel.x, c.vel.y);
     const baseDrain = CONFIG.cell.baseMetabolic * (0.6 + 0.1*g.MET) * dt;
-    const moveDrain = 0.0009 * sp * sp * dt;         // ~v^2 → realistischere Kosten
+    const moveDrain = 0.0009 * sp * sp * dt;         // ~v^2
     c.energy -= baseDrain + moveDrain;
 
     // Umgebungsschaden
