@@ -1,7 +1,8 @@
 // entities.js – Welt, Zellen, Nahrung, Verhalten
 // Spatial Grid + Scheduler + wandernde Food-Cluster
 // Natürliche Navigation: Wall-aware Scoring, Dichtebonus, Reflexion,
-// leichtes Rand-Rauschen, Tangential-Dämpfung & Escape-Waypoint
+// Rand-Rauschen, Tangential-Dämpfung & Escape, Arrive-Bremsen,
+// Anti-Repeat, Ziel-Zeitlimit und Forage-Hop nach dem Fressen.
 
 import { Events, EVT } from './event.js';
 import { getStammColor, resetLegend } from './legend.js';
@@ -20,12 +21,10 @@ const WORLD = {
 };
 
 export function getWorldConfig(){ return { ...WORLD }; }
-
 export function setWorldSize(w, h){
   WORLD.width  = Math.max(50, w | 0);
   WORLD.height = Math.max(50, h | 0);
   gridResize();
-  // Clusterzentren innerhalb sicherer Ränder halten
   for (const c of FOOD_CLUSTERS){
     c.x = clamp(c.x, NAV.margin, WORLD.width  - NAV.margin);
     c.y = clamp(c.y, NAV.margin, WORLD.height - NAV.margin);
@@ -70,8 +69,15 @@ const NAV = {
   escapeHold: 1.2,        // s Escape-Target Vorrang
   stuckNear: 40,          // px für Stuck-Check
   stuckSpeedMin: 8,       // px/s
-  stuckWindow: 1.5,       // s bis Edge-Cooldown
-  edgeCooldown: 1.5       // s Randziele nach Stuck meiden
+  stuckWindow: 1.5,       // s
+  edgeCooldown: 1.5,      // s Randziele nach Stuck meiden
+
+  // NEU: Ziel-/Arrive-Parameter
+  arriveR: 6,             // Ankunftsradius (px)
+  slowR:  36,             // ab hier sanft abbremsen
+  targetTimeout: [0.8, 1.2], // s: Ziel verwerfen, wenn kein Fortschritt (min..max random)
+  idleKickAfter: 0.7,     // s ohne Ziel & langsam → tumble
+  idleSpeed: 2.0          // px/s Schwelle für Idle
 };
 
 /* =========================================================
@@ -244,12 +250,15 @@ export function createCell(params = {}){
     vx: Math.cos(ang)*10, vy: Math.sin(ang)*10,
     genes, energy: params.energy ?? 22, age: 0, dead: false, parents,
     bornAt: nowSec(), lastMateAt: -999,
-    // Laufzeitfelder:
+    // Laufzeitfelder (Anti-Loop/Progress/Forage):
     scanTimer: 0, _stuckT: 0, _lastX: 0, _lastY: 0,
-    _avoidEdgeUntil: 0, _nearWallT: 0, _escapeUntil: 0, _escapeTarget: null
+    _avoidEdgeUntil: 0, _nearWallT: 0, _escapeUntil: 0, _escapeTarget: null,
+    _targetSetAt: 0, _prevDist: null, _targetId: null, _lastBadTargetId: null,
+    _forageUntil: 0, _forageTarget: null
   };
   const d = deriveFromGenes(c.genes); c.derived = d; c.radius = d.radius;
-  c.scanTimer = Math.random()*d.scanInterval;
+  c.scanTimer   = Math.random()*d.scanInterval;
+  c._targetSetAt = nowSec();
 
   cells.push(c);
   return c;
@@ -300,11 +309,12 @@ function densityBoostAt(x,y){
 }
 
 function chooseFoodTarget(c){
-  const now = nowSec();
-  const avoidEdge = now < (c._avoidEdgeUntil || 0);
+  const tNow = nowSec();
+  const avoidEdge = tNow < (c._avoidEdgeUntil || 0);
   let best=null, bestScore=-Infinity;
 
   for (const f of neighborFoods(c.x,c.y)){
+    if (c._lastBadTargetId && f.id === c._lastBadTargetId && tNow - (c._targetSetAt||0) < 2.0) continue; // Anti-Repeat kurz
     const dx=f.x-c.x, dy=f.y-c.y; const d2=dx*dx+dy*dy;
     if (d2 > c.derived.sense*c.derived.sense) continue;
 
@@ -318,20 +328,27 @@ function chooseFoodTarget(c){
     const score = interior * density * c.derived.digestionMult * (f.value / distTerm);
     if (score > bestScore){ bestScore = score; best = f; }
   }
-  if (best){ c.target = { type:'food', id: best.id, x: best.x, y: best.y }; return true; }
+
+  if (best){
+    c.target = { type:'food', id: best.id, x: best.x, y: best.y };
+    c._targetId   = best.id;
+    c._targetSetAt= tNow;
+    c._prevDist   = Math.hypot(best.x - c.x, best.y - c.y);
+    return true;
+  }
   return false;
 }
 
 function chooseMateTarget(c, alive){
-  const now = nowSec();
-  const avoidEdge = now < (c._avoidEdgeUntil || 0);
-  if ((now - (c.lastMateAt || 0)) < c.derived.mateCooldown) return false;
+  const tNow = nowSec();
+  const avoidEdge = tNow < (c._avoidEdgeUntil || 0);
+  if ((tNow - (c.lastMateAt || 0)) < c.derived.mateCooldown) return false;
   if (c.energy < c.derived.mateEnergyThreshold) return false;
 
   let best=null, bestScore=-Infinity;
   for (const o of neighborCells(c.x,c.y)){
     if (o===c || o.dead || o.sex===c.sex) continue;
-    if ((now - (o.lastMateAt || 0)) < (o.derived?.mateCooldown ?? 6)) continue;
+    if ((tNow - (o.lastMateAt || 0)) < (o.derived?.mateCooldown ?? 6)) continue;
     if (o.energy < (o.derived?.mateEnergyThreshold ?? 14)) continue;
 
     const interior = interiorFactor(o.x, o.y);
@@ -341,7 +358,14 @@ function chooseMateTarget(c, alive){
     const score = interior / Math.pow(dist + NAV.r0, NAV.alpha);
     if (score > bestScore){ bestScore = score; best = o; }
   }
-  if (best){ c.target = { type:'mate', id: best.id, x: best.x, y: best.y }; return true; }
+
+  if (best){
+    c.target = { type:'mate', id: best.id, x: best.x, y: best.y };
+    c._targetId   = best.id;
+    c._targetSetAt= tNow;
+    c._prevDist   = Math.hypot(best.x - c.x, best.y - c.y);
+    return true;
+  }
   return false;
 }
 
@@ -361,18 +385,39 @@ function updateCellBehavior(c, alive, dt){
   }
 
   // Zeit in Randnähe & ggf. Escape-Ziel
-  const near = distToWall(c.x,c.y) < NAV.margin;
-  c._nearWallT = Math.max(0, (c._nearWallT || 0) + (near ? dt : -dt));
+  const nearWallZone = distToWall(c.x,c.y) < NAV.margin;
+  c._nearWallT = Math.max(0, (c._nearWallT || 0) + (nearWallZone ? dt : -dt));
 
-  const now = nowSec();
-  if (near && c._nearWallT > NAV.escapeStay && now > (c._escapeUntil || 0)){
+  const tNow = nowSec();
+  if (nearWallZone && c._nearWallT > NAV.escapeStay && tNow > (c._escapeUntil || 0)){
     const cx = WORLD.width/2, cy = WORLD.height/2;
     const ang = Math.atan2(cy - c.y, cx - c.x);
     const tx  = clamp(c.x + Math.cos(ang) * NAV.escapeHop, NAV.margin, WORLD.width  - NAV.margin);
     const ty  = clamp(c.y + Math.sin(ang) * NAV.escapeHop, NAV.margin, WORLD.height - NAV.margin);
     c._escapeTarget = { x: tx, y: ty };
-    c._escapeUntil  = now + NAV.escapeHold;
+    c._escapeUntil  = tNow + NAV.escapeHold;
   }
+
+  // Ziel-Zeitlimit/Progressprüfung (gegen festgefahrene Ziele)
+  if (c.target){
+    const dist = Math.hypot(c.target.x - c.x, c.target.y - c.y);
+    const age  = tNow - (c._targetSetAt || tNow);
+    const [tMin, tMax] = NAV.targetTimeout;
+    if (c._prevDist != null && dist > c._prevDist - 1.0 && age > tMin){
+      // kein Fortschritt → Ziel verwerfen (Anti-Repeat)
+      c._lastBadTargetId = c._targetId;
+      c.target = null; c._targetId = null; c._prevDist = null;
+    } else if (age > tMax){
+      c.target = null; c._targetId = null; c._prevDist = null;
+    } else {
+      c._prevDist = dist;
+    }
+  }
+
+  // Forage-Hop: kurzer Wegpunkt nach dem Fressen (solange aktiv, vorrangig)
+  const activeForage = c._forageUntil && tNow < c._forageUntil && c._forageTarget;
+  const activeEscape = c._escapeUntil && tNow < c._escapeUntil && c._escapeTarget;
+  const activeTarget = activeForage ? c._forageTarget : (activeEscape ? c._escapeTarget : c.target);
 
   // Scans
   c.scanTimer -= dt;
@@ -380,23 +425,43 @@ function updateCellBehavior(c, alive, dt){
   if (c.scanTimer <= 0 || hungry || !c.target){
     let found=false;
     if (hungry) found = chooseFoodTarget(c);
-    if (!found){ found = chooseFoodTarget(c); if (!found && c.energy > 0.70*c.derived.energyCap) found = chooseMateTarget(c, alive); }
+    if (!found){
+      found = chooseFoodTarget(c);
+      if (!found && c.energy > 0.70*c.derived.energyCap) found = chooseMateTarget(c, alive);
+    }
     c.scanTimer = c.derived.scanInterval;
   }
 
-  // aktives Ziel (Escape vorrangig)
-  const activeTarget = (c._escapeUntil && now < c._escapeUntil && c._escapeTarget)
-    ? c._escapeTarget : c.target;
-
-  // Wunschvektor
+  // Wunschvektor (Arrive mit Abbremsen)
   let dVX=0, dVY=0;
   if (activeTarget){
     const dx = activeTarget.x - c.x, dy = activeTarget.y - c.y;
     const d  = Math.max(1, Math.hypot(dx,dy));
-    const sp = c.derived.speedMax;
-    dVX = (dx/d)*sp; dVY = (dy/d)*sp;
+    const spMax = c.derived.speedMax;
+    // innerhalb slowR sanft verlangsamen, mind. 40% damit es nicht stehen bleibt
+    const slow = clamp((d - NAV.arriveR) / Math.max(1, NAV.slowR - NAV.arriveR), 0, 1);
+    const sp   = spMax * (0.4 + 0.6*slow);
+    dVX = (dx/d) * sp; dVY = (dy/d) * sp;
+    // Bei Ankunft: Ziel leeren
+    if (d <= NAV.arriveR){
+      if (activeForage){ c._forageUntil = 0; c._forageTarget = null; }
+      else if (activeEscape){ c._escapeUntil = 0; c._escapeTarget = null; }
+      else { c.target = null; c._targetId = null; c._prevDist = null; }
+    }
   }else{
-    const base = 0.3 * (near ? NAV.wallWanderBoost : 1);
+    // Idle-Drift: ohne Ziel und langsam → kleiner tumble
+    const effSpeed = Math.hypot(c.vx,c.vy);
+    const idleTooLong = (c._idleSince && (tNow - c._idleSince) > NAV.idleKickAfter);
+    if (effSpeed < NAV.idleSpeed){
+      c._idleSince = c._idleSince || tNow;
+      if (idleTooLong){
+        c.wanderAng = (c.wanderAng ?? Math.random()*Math.PI*2) + (Math.random()*2-1)*0.7;
+        c._idleSince = tNow; // reset
+      }
+    } else {
+      c._idleSince = null;
+    }
+    const base = 0.3 * (nearWallZone ? NAV.wallWanderBoost : 1);
     c.wanderAng = (c.wanderAng ?? Math.random()*Math.PI*2) + (Math.random()*2-1)*base*dt;
     const sp = c.derived.speedMax * 0.6;
     dVX = Math.cos(c.wanderAng)*sp; dVY = Math.sin(c.wanderAng)*sp;
@@ -407,7 +472,7 @@ function updateCellBehavior(c, alive, dt){
   c.vy = 0.85*c.vy + 0.15*dVY;
 
   // Tangential-Dämpfung nahe Wand
-  if (near){
+  if (nearWallZone){
     const nx = Math.sign((WORLD.width/2)  - c.x);
     const ny = Math.sign((WORLD.height/2) - c.y);
     const nlen = Math.hypot(nx,ny) || 1;
@@ -433,7 +498,7 @@ function updateCellBehavior(c, alive, dt){
     c._stuckT = (c._stuckT || 0) + dt;
     if (c._stuckT > NAV.stuckWindow){
       c._stuckT = 0;
-      c._avoidEdgeUntil = now + NAV.edgeCooldown;
+      c._avoidEdgeUntil = tNow + NAV.edgeCooldown;
       c.wanderAng = (c.wanderAng ?? 0) + (Math.random()*2-1)*0.8;
       const cx = WORLD.width/2, cy = WORLD.height/2;
       const ang = Math.atan2(cy - c.y, cx - c.x);
@@ -441,7 +506,7 @@ function updateCellBehavior(c, alive, dt){
         x: clamp(c.x + Math.cos(ang)*NAV.escapeHop*0.6, NAV.margin, WORLD.width  - NAV.margin),
         y: clamp(c.y + Math.sin(ang)*NAV.escapeHop*0.6, NAV.margin, WORLD.height - NAV.margin)
       };
-      c._escapeUntil = now + NAV.escapeHold;
+      c._escapeUntil = tNow + NAV.escapeHold;
     }
   } else {
     c._stuckT = Math.max(0, (c._stuckT || 0) - dt*0.5);
@@ -464,7 +529,17 @@ function eatPhase(){
     for (const f of [...neighborFoods(c.x,c.y)]){
       const dx=c.x-f.x, dy=c.y-f.y;
       if (dx*dx + dy*dy <= (c.radius+3)*(c.radius+3)){
+        // Energie aufladen
         c.energy = Math.min(c.derived.energyCap, c.energy + f.value*c.derived.digestionMult);
+        // Forage-Hop (einmal kurz weg von der Fressstelle)
+        const ang = Math.random()*Math.PI*2;
+        const hop = 30 + Math.random()*30; // 30..60 px
+        c._forageTarget = {
+          x: clamp(c.x + Math.cos(ang)*hop, NAV.margin, WORLD.width  - NAV.margin),
+          y: clamp(c.y + Math.sin(ang)*hop, NAV.margin, WORLD.height - NAV.margin)
+        };
+        c._forageUntil = nowSec() + 0.9; // ~1 s
+        // Food entfernen
         removeFoodFromGrid(f.id);
         const i = foods.findIndex(ff => ff.id === f.id); if (i !== -1) foods.splice(i,1);
       }
@@ -472,15 +547,15 @@ function eatPhase(){
   }
 }
 function deathPhase(){
-  const now = nowSec();
+  const t = nowSec();
   for (const c of cells){
     if (c.dead) continue;
     if (c.energy <= 0){
-      c.dead = true; hungerDeaths.push(now);
+      c.dead = true; hungerDeaths.push(t);
       Events.emit(EVT.DEATH, { id:c.id, stammId:c.stammId, reason:'hunger' });
     }
   }
-  while (hungerDeaths.length && now - hungerDeaths[0] > 60) hungerDeaths.shift();
+  while (hungerDeaths.length && t - hungerDeaths[0] > 60) hungerDeaths.shift();
 }
 function crisisCheck(){
   if (hungerDeaths.length > 10) Events.emit(EVT.HUNGER_CRISIS, { inLastMinute:hungerDeaths.length });
@@ -524,6 +599,7 @@ export function updateWorld(dt){
    ========================================================= */
 export function relatedness(a, b){
   if (a.id === b.id) return 1;
+  // Elternketten bis Tiefe 3 sammeln
   const ancUp = (id, depth)=>{
     const map = new Map(); const q=[{id,d:0}];
     while(q.length){
@@ -531,8 +607,8 @@ export function relatedness(a, b){
       const p = cells.find(x => x.id === cur);
       if (!p?.parents) continue;
       const m = p.parents.motherId, f = p.parents.fatherId;
-      if (m && d+1<=depth && !map.has(m)){ map.set(m, d+1); q.push({id:m, d:d+1}); }
-      if (f && d+1<=depth && !map.has(f)){ map.set(f, d+1); q.push({id:f, d:d+1}); }
+      if (m && d+1 <= depth && !map.has(m)){ map.set(m, d+1); q.push({ id:m, d:d+1 }); }
+      if (f && d+1 <= depth && !map.has(f)){ map.set(f, d+1); q.push({ id:f, d:d+1 }); }
     }
     return map;
   };
