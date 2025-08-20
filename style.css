@@ -1,0 +1,65 @@
+:root{
+  --bg:#0b0f12;
+  --panel:#131a20;
+  --ink:#cfe7ff;
+  --muted:#8aa0b3;
+  --accent:#2ee56a; /* Matrix-Grün für Nahrung */
+  --warn:#ff6b6b;
+  --grid:#1a222a;
+  --brand:#27c7ff;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font:14px/1.4 system-ui,Segoe UI,Roboto,Helvetica,Arial}
+#topbar{
+  position:sticky;top:0;z-index:10;display:flex;align-items:center;justify-content:space-between;
+  padding:8px 10px;background:linear-gradient(180deg,#0f151b,#0b0f12);
+  border-bottom:1px solid #0f1a22
+}
+.controls{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.controls label{display:flex;gap:6px;align-items:center;color:var(--muted)}
+.controls input[type=range]{width:120px}
+button{
+  background:#15222c;border:1px solid #2a3c4a;color:#d8f0ff;border-radius:6px;padding:6px 10px;cursor:pointer
+}
+button:hover{background:#1a2a35}
+.sep{width:1px;height:22px;background:#253340;margin:0 4px}
+
+#worldWrap{display:flex;justify-content:center;align-items:center;padding:6px}
+#world{
+  width:100%;max-width:1200px;aspect-ratio:16/10;background:
+    linear-gradient(0deg, rgba(20,30,36,.85),rgba(12,16,20,.85)),
+    repeating-linear-gradient(0deg, transparent, transparent 30px, rgba(255,255,255,.03) 31px),
+    repeating-linear-gradient(90deg, transparent, transparent 30px, rgba(255,255,255,.03) 31px);
+  border:1px solid #17222c;border-radius:8px;display:block
+}
+
+/* Panels */
+.panel{
+  position:fixed;top:64px;right:16px;bottom:16px;width:360px;background:var(--panel);
+  border:1px solid #22303a;border-radius:10px;padding:12px;overflow:auto;box-shadow:0 10px 30px rgba(0,0,0,.35)
+}
+.panel.hidden{display:none}
+.panel h2{margin:0 0 8px 0;font-size:16px}
+.panel .muted{color:var(--muted)}
+.panel .row{display:flex;align-items:center;justify-content:space-between;margin:6px 0}
+.panel .row input[type=range]{width:150px}
+.badge{display:inline-block;padding:2px 6px;border-radius:999px;background:#18242d;border:1px solid #274050;color:#bde1ff;font-size:12px}
+
+/* DNA Daily */
+.story{border-left:3px solid #274f2f;padding:6px 8px;margin:8px 0;background:#0f151a;border-radius:6px}
+.story .time{color:#89a; font-size:12px}
+
+/* Error overlay */
+#errorOverlay{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center}
+#errorOverlay.hidden{display:none}
+.errorCard{width:min(680px,90vw);background:#151b22;border:1px solid #2f3d48;border-radius:10px;padding:16px}
+#errorText{white-space:pre-wrap;color:#ffb3b3}
+
+/* Simple lists */
+.list{display:flex;flex-direction:column;gap:8px}
+.cellItem{padding:8px;border:1px solid #253542;border-radius:8px;background:#0d1419}
+.cellItem .name{font-weight:600}
+.cellItem .meta{color:#8fa2b5;font-size:12px}
+
+/* Ticker */
+#ticker{color:#9fb6c9;font-size:12px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
