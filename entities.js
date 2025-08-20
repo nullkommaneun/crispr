@@ -71,7 +71,9 @@ export function createCell(opts={}){
     wander: { vx: 0, vy: 0 },
     // Paarungs-Lock (Zielpartner, Restzeit)
     mateLockId: null,
-    mateLockT: 0
+    mateLockT: 0,
+    // NEU: Kurzzeit-Fütterungsfokus
+    feedLockT: 0
   };
   cells.push(cell);
   return cell;
@@ -87,10 +89,7 @@ export function killCell(id){
 }
 
 /**
- * Startpopulation mit Courtship-Assist:
- * - Spawn näher aneinander (def. ~18% des kleineren Weltmaßes als Lücke)
- * - Hohe Startenergie (~85% Kapazität)
- * - Gegenseitiger Mate-Lock für ein paar Sekunden (CONFIG.physics.mateLockSec * 3)
+ * Startpopulation mit Courtship-Assist.
  */
 export function createAdamAndEve(){
   cells.length=0;
@@ -98,7 +97,7 @@ export function createAdamAndEve(){
   nextCellId=1;
 
   const cx = W*0.5, cy = H*0.5;
-  const gap = Math.min(W, H) * 0.18;               // näher zusammen
+  const gap = Math.min(W, H) * 0.18;
   const lockSecs = Math.max(3, (CONFIG.physics?.mateLockSec ?? 1.5) * 3);
 
   const gA = { TEM:6, GRÖ:5, EFF:6, SCH:5, MET:5 };
@@ -116,8 +115,6 @@ export function createAdamAndEve(){
     genome:gE, pos:{ x: cx + gap, y: cy },
     energy: capE * 0.85
   });
-
-  // gegenseitiger Start-Lock -> sie laufen sicher zusammen
   A.mateLockId = E.id; E.mateLockId = A.id;
   A.mateLockT  = lockSecs; E.mateLockT  = lockSecs;
 
@@ -150,9 +147,9 @@ function radiusOf(c){ return CONFIG.cell.radius * (0.7 + 0.1*(c.genome.GRÖ)); }
 function steerSeekArrive(c, target, maxSpeed, stopR, slowR){
   const dx=target.x - c.pos.x, dy=target.y - c.pos.y;
   const d=len(dx,dy);
-  if(d < stopR) return [0,0]; // am Ziel
+  if(d < stopR) return [0,0];
   let sp = maxSpeed;
-  if(d < slowR) sp = maxSpeed * (d/slowR); // „Arrive“: weich abbremsen
+  if(d < slowR) sp = maxSpeed * (d/slowR);
   const [ux,uy] = norm(dx,dy);
   const desiredX = ux * sp, desiredY = uy * sp;
   return [desiredX - c.vel.x, desiredY - c.vel.y];
@@ -161,7 +158,7 @@ function steerSeparation(c, neighbors, sepR, ignoreId=null){
   let fx=0, fy=0, n=0;
   for(const o of neighbors){
     if(o===c) continue;
-    if(ignoreId && o.id===ignoreId) continue; // <<— Partner wird NICHT weggedrückt
+    if(ignoreId && o.id===ignoreId) continue;
     const dx = c.pos.x - o.pos.x, dy = c.pos.y - o.pos.y;
     const d2 = dx*dx + dy*dy;
     if(d2 > sepR*sepR || d2===0) continue;
@@ -248,7 +245,6 @@ function chooseMate(c, sense, cells){
     const d2=dx*dx+dy*dy;
     if(d2 > sense*sense) continue;
 
-    // Komplement-Score: Nähe + Gene
     const distScore = -Math.sqrt(d2);
     const geneScore = (o.genome.EFF*0.8 + (10-o.genome.MET)*0.7 + o.genome.SCH*0.2 + o.genome.TEM*0.2);
     const total = distScore*0.05 + geneScore;
@@ -257,7 +253,7 @@ function chooseMate(c, sense, cells){
   return best;
 }
 
-/* Priority-Blending Helfer: addiert Vektoren mit Restbudget */
+/* Priority-Blending Helfer */
 function addWithBudget(state, vx, vy, weight){
   if(weight<=0) return state;
   const rx = vx*weight, ry = vy*weight;
@@ -273,23 +269,24 @@ function addWithBudget(state, vx, vy, weight){
 
 /** Hauptschritt */
 export function step(dt, env, t=0){
-  const neighbors = cells; // kleine N: kein Spatial Grid
+  const neighbors = cells;
 
   for(let i=cells.length-1;i>=0;i--){
     const c = cells[i];
     c.age += dt;
     c.cooldown = Math.max(0, c.cooldown - dt);
     if(c.mateLockT > 0) c.mateLockT -= dt;
+    if(c.feedLockT > 0) c.feedLockT -= dt;
 
     const g = c.genome;
     let { senseFood, senseMate, sep, ali, coh } = senseRadii(c);
     const { maxSpeed, maxForce } = speedAndForce(c);
 
-    // Motivation (0..1)
+    // Motivation
     const cap = energyCapacity(c);
     const eRatio = clamp(c.energy / cap, 0, 1);
-    const wantFood = Math.pow(1 - eRatio, 1.3);                         // hungrig → höher
-    let   wantMate = (c.cooldown<=0 && eRatio>0.35) ? (0.4*(1 - wantFood)) : 0;
+    const wantFood0 = Math.pow(1 - eRatio, 1.3);
+    let   wantMate  = (c.cooldown<=0 && eRatio>0.35) ? (0.4*(1 - wantFood0)) : 0;
     const dEdge = Math.min(c.pos.x, W-c.pos.x, c.pos.y, H-c.pos.y);
     const wantAvoid = clamp(
       (env.acid.enabled  ? clamp(1 - dEdge/env.acid.range, 0, 1) : 0) +
@@ -298,13 +295,32 @@ export function step(dt, env, t=0){
       (env.nano.enabled  ? 0.3 : 0), 0, 1
     );
 
-    // >>> Courtship-Prio: Aktiver Lock erzwingt Partnersuche, auch wenn Hunger höher wäre
+    // Feeding-Lock: nahe Food ⇒ Fokus
+    let nearestFood = null, nearestD2 = Infinity;
+    const eatRBase = CONFIG.food.itemRadius + radiusOf(c) + 0.5;
+    const eatRLock = eatRBase * 1.6; // Lock, wenn „sehr nahe“
+    for(const f of foodItems){
+      const dx=f.x - c.pos.x, dy=f.y - c.pos.y;
+      const d2=dx*dx+dy*dy;
+      if(d2 < nearestD2){ nearestD2 = d2; nearestFood = f; }
+    }
+    const isNearFood = nearestFood && nearestD2 < (eatRLock*eatRLock);
+    let wantFood = wantFood0;
+    if(isNearFood && eRatio < 0.95){
+      c.feedLockT = Math.max(c.feedLockT, 0.8); // 0.8 s am Food bleiben
+      wantFood = Math.max(wantFood, 0.9);
+      // bei aktivem Feed-Lock: Mate stark drosseln
+      wantMate *= 0.15;
+      // Senses für Food etwas erhöhen, damit sie „kleben“
+      senseFood *= 1.2;
+    }
+
+    // Courtship-Prio
     let mateTarget = null;
     if(c.mateLockId && c.mateLockT > 0){
       mateTarget = neighbors.find(o=>o.id===c.mateLockId) || null;
       if(mateTarget){
-        wantMate = Math.max(wantMate, 0.9); // starker Fokus
-        // erweitere Mate-Sense leicht, falls sie sich verfehlt haben
+        wantMate = Math.max(wantMate, 0.9);
         senseMate *= 1.4;
       }else{
         c.mateLockId = null; c.mateLockT = 0;
@@ -313,10 +329,12 @@ export function step(dt, env, t=0){
       mateTarget = chooseMate(c, senseMate, neighbors);
     }
 
-    // Nahrung
-    const foodTarget = wantFood > 0.05 ? nearestFoodCenter(c, senseFood) : null;
+    // Ziele
+    const foodTarget = (nearestFood && c.feedLockT>0)
+      ? { x: nearestFood.x, y: nearestFood.y }
+      : (wantFood > 0.05 ? nearestFoodCenter(c, senseFood) : null);
 
-    // Seek/Arrive-Vektoren
+    // Seek/Arrive
     const slowR = Math.max(CONFIG.physics.slowRadius, CONFIG.cell.pairDistance*3);
     const foodStop = CONFIG.food.itemRadius + radiusOf(c) + 2;
     const mateStop = CONFIG.cell.pairDistance * 0.9;
@@ -348,7 +366,7 @@ export function step(dt, env, t=0){
     // Rand-Vermeidung
     const fAvoid = steerWallAvoid(c);
 
-    // Wander (gedrosselt bei Ziel)
+    // Wander (gedrosselt bei Ziel/Feed-Lock)
     const hasTarget = !!(foodTarget || mateTarget);
     let fWander=[0,0];
     if(CONFIG.physics.enableWander){
@@ -358,16 +376,20 @@ export function step(dt, env, t=0){
     /* ===== Priority-Blending mit Restbudget ===== */
     let st = { fx:0, fy:0, rem: maxForce };
 
-    // 1) Avoid (höchste Priorität)
+    // 1) Avoid
     st = addWithBudget(st, fAvoid[0], fAvoid[1],
       CONFIG.physics.wAvoid * (0.6 + 0.7*wantAvoid) * (0.9 + 0.03*g.SCH));
 
-    // 2) Hauptziel: Food ODER Mate zuerst
-    const wFood = CONFIG.physics.wFood * (0.7 + 0.5*wantFood) * (0.8 + 0.05*g.EFF);
-    const wMate = CONFIG.physics.wMate * (0.8 + 0.4*wantMate);
+    // Hunger-bedingte Drosselung anderer Kräfte
+    const hungerFac = (wantFood > 0.6) ? 0.35 : 1.0;      // stark hungrig → drossele Nicht-Food
+    const flockFacBase = (wantFood > 0.6) ? 0.35 : 1.0;   // Flocking runter wenn hungrig
+
+    // 2) Hauptziel (Food bevorzugt bei Hunger)
+    const wFood = CONFIG.physics.wFood * (0.7 + 0.5*wantFood) * (0.85 + 0.05*g.EFF) * (c.feedLockT>0 ? 1.35 : 1.0);
+    const wMate = CONFIG.physics.wMate * (0.8 + 0.4*wantMate) * (c.feedLockT>0 ? 0.25 : 1.0) * hungerFac;
     const secondaryScale = CONFIG.physics.secondaryGoalScale;
 
-    const foodFirst = (wantFood > wantMate);
+    const foodFirst = (wantFood >= wantMate);
     if(foodFirst){
       if(foodTarget) st = addWithBudget(st, fFood[0], fFood[1], wFood);
       if(mateTarget) st = addWithBudget(st, fMate[0], fMate[1], wMate * secondaryScale);
@@ -376,16 +398,18 @@ export function step(dt, env, t=0){
       if(foodTarget) st = addWithBudget(st, fFood[0], fFood[1], wFood * secondaryScale);
     }
 
-    // 3) Separation (Partner ignoriert)
+    // 3) Separation
     if(CONFIG.physics.enableSep){
-      st = addWithBudget(st, fSep[0], fSep[1], CONFIG.physics.wSep);
+      st = addWithBudget(st, fSep[0], fSep[1], CONFIG.physics.wSep * flockFacBase);
     }
 
-    // 4) Cohesion & 5) Alignment – adaptiv
+    // 4/5) Cohesion & Alignment – adaptiv nach Nachbarn, zusätzlich Hunger-Drossel
     const nFlock = Math.max(nAli, nCoh);
     let flockFac = 1.0;
     if(nFlock < 3) flockFac = 0.45;
     else if(nFlock > 8) flockFac = 1.25;
+    flockFac *= flockFacBase;
+
     if(CONFIG.physics.enableCoh){
       st = addWithBudget(st, fCoh[0], fCoh[1], CONFIG.physics.wCoh * flockFac);
     }
@@ -393,24 +417,24 @@ export function step(dt, env, t=0){
       st = addWithBudget(st, fAli[0], fAli[1], CONFIG.physics.wAli * flockFac);
     }
 
-    // 6) Wander – stark drosseln, wenn Ziel existiert & bei hoher Avoid
+    // 6) Wander – sehr stark drosseln bei Feed-Lock/Ziel/Hazard
     const wanderScaleBase = CONFIG.physics.wWander * (hasTarget ? CONFIG.physics.wanderWhenTarget : 1.0);
-    const wanderScale = wanderScaleBase * (1 - 0.5*wantAvoid);
+    const wanderScale = wanderScaleBase * (1 - 0.6*wantAvoid) * (c.feedLockT>0 ? 0.1 : 1.0) * hungerFac;
     if(CONFIG.physics.enableWander){
       st = addWithBudget(st, fWander[0], fWander[1], wanderScale);
     }
 
-    // Restlimit
+    // Limit & Integration
     [st.fx, st.fy] = limitVec(st.fx, st.fy, maxForce);
-
-    // Integration
     c.vel.x += st.fx * dt;
     c.vel.y += st.fy * dt;
     [c.vel.x, c.vel.y] = limitVec(c.vel.x, c.vel.y, maxSpeed);
 
     c.pos.x = clamp(c.pos.x + c.vel.x * dt, 0, W);
     c.pos.y = clamp(c.pos.y + c.vel.y * dt, 0, H);
-    c.vel.x *= 0.985; c.vel.y *= 0.985; // leichte Zähigkeit
+    // etwas höhere Dämpfung, wenn Feed-Lock aktiv (ruhiger am Food stehen)
+    const damp = (c.feedLockT>0) ? 0.975 : 0.985;
+    c.vel.x *= damp; c.vel.y *= damp;
 
     /* ===== Essen in Reichweite ===== */
     const eatR = CONFIG.food.itemRadius + radiusOf(c) + 0.5;
@@ -431,7 +455,7 @@ export function step(dt, env, t=0){
     /* ===== Energiehaushalt & Umwelt ===== */
     const sp = len(c.vel.x, c.vel.y);
     const baseDrain = CONFIG.cell.baseMetabolic * (0.6 + 0.1*g.MET) * dt;
-    const moveDrain = 0.0009 * sp * sp * dt;         // ~v^2
+    const moveDrain = (CONFIG.physics.moveCostK ?? 0.0006) * sp * sp * dt;
     c.energy -= baseDrain + moveDrain;
 
     // Umgebungsschaden
@@ -442,12 +466,10 @@ export function step(dt, env, t=0){
     if(env.acid.enabled && distEdge < env.acid.range){ dmg += env.acid.dps * dt; }
     if(env.barb.enabled && distEdge < env.barb.range){ dmg += env.barb.dps * dt; }
     if(env.nano.enabled){ dmg += env.nano.dps * dt; }
-
-    // Schild durch SCH
-    dmg *= (1 - 0.06 * (g.SCH-5));
+    dmg *= (1 - 0.06 * (g.SCH-5)); // Schild
     c.energy -= Math.max(0, dmg);
 
-    // Zaunimpuls (periodisch)
+    // Zaunimpuls
     if(env.fence.enabled && distEdge < env.fence.range){
       const phase = (t % env.fence.period);
       if(phase < dt){

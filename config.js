@@ -3,59 +3,69 @@ export const CONFIG = {
 
   cell: {
     baseSpeed: 35,            // px/s bei TEM=5
-    baseMetabolic: 0.8,       // energy/s bei MET=5 (Leerlauf)
+    baseMetabolic: 0.6,       // ↓ vorher 0.8 → weniger Grundverbrauch
     radius: 7,                // bei GRÖ=5
-    senseFood: 90,            // bei EFF=5
+    senseFood: 110,           // ↑ bessere Foodsuche (skaliert mit EFF)
     senseMate: 120,
     energyMax: 120,
-    eatPerSecond: 30,         // Menge/s wenn im Food
-    pairDistance: 16,         // Annäherung für Reproduktion
+    eatPerSecond: 34,         // ↑ etwas schnelleres Fressen
+    pairDistance: 16,
     energyCostPair: 30,
-    cooldown: 8,              // s
-    ageMax: 600               // s
+    cooldown: 8,
+    ageMax: 600
   },
 
   physics: {
-    // Limits (werden mit TEM skaliert)
-    maxForceBase: 140,        // px/s^2 bei TEM=5
+    // Limits (skaliert mit TEM)
+    maxForceBase: 140,
     slowRadius: 120,
     stopRadius: 16,
     wallAvoidRadius: 48,
+
     // Nachbarschaft
     separationRadius: 28,
     alignmentRadius: 72,
     cohesionRadius: 80,
+
     // Gewichte
-    wFood: 1.20,
-    wMate: 0.95,
-    wAvoid: 1.15,
-    wSep:  1.10,
-    wAli:  0.35,
-    wCoh:  0.25,
-    wWander: 0.22,
-    secondaryGoalScale: 0.6,
+    wFood: 1.30,              // ↑ Food bevorzugen
+    wMate: 0.90,
+    wAvoid: 1.10,
+    wSep:  1.00,
+    wAli:  0.30,
+    wCoh:  0.22,
+    wWander: 0.18,            // ↓ weniger „Zittern“
+
+    // Sekundärziel (wenn Food vs. Mate)
+    secondaryGoalScale: 0.5,
+
     // Wander-Noise
     wanderTheta: 1.6,
     wanderSigma: 0.45,
-    wanderWhenTarget: 0.2,
+    wanderWhenTarget: 0.15,   // ↓ bei aktivem Ziel
+
     // Schalter
     enableSep: true,
     enableAli: true,
     enableCoh: true,
     enableWander: true,
+
     // Paarungs-Lock
-    mateLockSec: 1.5
+    mateLockSec: 1.5,
+
+    // Bewegungs-Energiekosten
+    moveCostK: 0.0006,        // ↓ vorher 0.0009
   },
 
   food: {
     itemEnergy: 18,
     itemRadius: 4,
     clusterCount: 5,
-    clusterDrift: 20,           // px/s
-    clusterSigma: 55,           // Gauß-Streuung (px)
-    wallBiasRadius: 160,        // Distanz ab der Spawn nahe Wand stark gedämpft wird
-    maxItems: 180,              // Cap
-    baseSpawnRate: 6            // Default Nahrung/s (UI-Slider überschreibt)
+    clusterDrift: 20,
+    clusterSigma: 55,
+    wallBiasRadius: 160,
+    maxItems: 180,
+    baseSpawnRate: 6
   },
 
   envDefaults: {
