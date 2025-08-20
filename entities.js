@@ -159,7 +159,7 @@ function steerSeekArrive(c, target, maxSpeed, stopR, slowR){
   return [ux*sp - c.vel.x, uy*sp - c.vel.y];
 }
 function steerWallAvoid(c){
-  const r = CONFIG.physics.wallAvoidRadius + radiusOf(c);
+  const r = (CONFIG.physics.wallAvoidRadius ?? 48) + radiusOf(c);
   let fx=0, fy=0;
   const l = c.pos.x;            if(l < r) fx += (r - l)/r;
   const rgt = W - c.pos.x;      if(rgt < r) fx -= (r - rgt)/r;
@@ -219,20 +219,30 @@ export function step(dt, env, t=0){
 
     const g = c.genome;
     const maxSpeed = CONFIG.cell.baseSpeed * (0.7 + 0.08*g.TEM);
-    const maxForce = CONFIG.physics.maxForceBase * (0.7 + 0.08*g.TEM);
+    const maxForce = (CONFIG.physics.maxForceBase ?? 140) * (0.7 + 0.08*g.TEM);
 
     const senseFood = CONFIG.cell.senseFood * (0.7 + 0.1*g.EFF);
     const senseMate = CONFIG.cell.senseMate * (0.7 + 0.08*g.EFF);
 
     const food = nearestFoodCenter(c, senseFood);
     const mate = chooseMate(c, senseMate, neighbors);
+
     const dEdge = Math.min(c.pos.x, W-c.pos.x, c.pos.y, H-c.pos.y);
     const hazard = (
-      (env.acid.enabled  ? clamp(1 - dEdge/env.acid.range, 0, 1) : 0) +
-      (env.barb.enabled  ? clamp(1 - dEdge/env.barb.range, 0, 1) : 0) +
-      (env.fence.enabled ? clamp(1 - dEdge/env.fence.range,0,1) : 0) +
-      (env.nano.enabled  ? 0.3 : 0)
+      (env.acid?.enabled  ? clamp(1 - dEdge/Math.max(env.acid.range,1), 0, 1) : 0) +
+      (env.barb?.enabled  ? clamp(1 - dEdge/Math.max(env.barb.range,1), 0, 1) : 0) +
+      (env.fence?.enabled ? clamp(1 - dEdge/Math.max(env.fence.range,1),0,1) : 0) +
+      (env.nano?.enabled  ? 0.3 : 0)
     );
+
+    // einfache Nachbardichte (Radius ~60px)
+    let neigh=0;
+    for(const o of neighbors){
+      if(o===c) continue;
+      const dx=o.pos.x-c.pos.x, dy=o.pos.y-c.pos.y;
+      if(dx*dx+dy*dy < 60*60) neigh++;
+    }
+
     const ctx = {
       env,
       food: food ? {x:food.x,y:food.y}:null,
@@ -240,7 +250,7 @@ export function step(dt, env, t=0){
       mate: mate?.cell ?? null,
       mateDist: mate?.d ?? null,
       hazard,
-      neighCount: 0,
+      neighCount: neigh,
       worldMin: Math.min(W,H)
     };
 
@@ -265,7 +275,7 @@ export function step(dt, env, t=0){
     }
     ({fx,fy,rem} = addBudget(fx,fy,rem, fOpt[0],fOpt[1], 1.0));
 
-    // Mini-Separation
+    // Mini-Separation (kleines Budget)
     const fSep = quickSeparation(c, neighbors, 22);
     ({fx,fy,rem} = addBudget(fx,fy,rem, fSep[0],fSep[1], 0.35));
 
@@ -298,14 +308,14 @@ export function step(dt, env, t=0){
     c.energy -= baseDrain + moveDrain;
 
     let dmg = 0;
-    if(env.acid.enabled && dEdge < env.acid.range){ dmg += env.acid.dps * dt; }
-    if(env.barb.enabled && dEdge < env.barb.range){ dmg += env.barb.dps * dt; }
-    if(env.nano.enabled){ dmg += env.nano.dps * dt; }
+    if(env.acid?.enabled && dEdge < env.acid.range){ dmg += env.acid.dps * dt; }
+    if(env.barb?.enabled && dEdge < env.barb.range){ dmg += env.barb.dps * dt; }
+    if(env.nano?.enabled){ dmg += env.nano.dps * dt; }
     dmg *= (1 - 0.06*(g.SCH-5));
     c.energy -= Math.max(0, dmg);
 
     // Zaunimpuls
-    if(env.fence.enabled && dEdge < env.fence.range){
+    if(env.fence?.enabled && dEdge < env.fence.range){
       const phase = (t % env.fence.period);
       if(phase < dt){
         const fxz = (c.pos.x === dEdge) ? 1 : ((W - c.pos.x) === dEdge ? -1 : 0);

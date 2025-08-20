@@ -11,7 +11,7 @@ import { openEnvPanel, getEnvState } from "./environment.js";
 import { initTicker, setPerfMode as tickerPerf, pushFrame } from "./ticker.js";
 import { emit, on } from "./event.js";
 import { openDummyPanel, handleCanvasClickForDummy } from "./dummy.js";
-import { initDrives } from "./drives.js";
+import { initDrives, getTraceText } from "./drives.js";  // << neu
 
 let running = false;
 let timescale = 1;
@@ -33,7 +33,6 @@ function resizeCanvas() {
     const h = topbar.offsetHeight || 56;
     document.documentElement.style.setProperty("--topbar-h", h + "px");
   }
-
   const rect = canvas.getBoundingClientRect();
   canvas.width = Math.round(rect.width);
   canvas.height = Math.round(rect.height);
@@ -48,6 +47,17 @@ function bindUI() {
   document.getElementById("btnEditor").onclick = ()=>{ breadcrumb("ui:btn","Editor"); openEditor(); };
   document.getElementById("btnEnv").onclick = ()=>{ breadcrumb("ui:btn","Umwelt"); openEnvPanel(); };
   document.getElementById("btnDummy").onclick = ()=>{ breadcrumb("ui:btn","Dummy"); openDummyPanel(); };
+
+  // << Diagnose-Knopf
+  const diag = document.getElementById("btnDiag");
+  if(diag){
+    diag.onclick = async ()=>{
+      const txt = getTraceText(28);
+      try{ await navigator.clipboard.writeText(txt); }catch{}
+      // Minimal-Feedback
+      console.log("DRIVES TRACE COPIED\n"+txt);
+    };
+  }
 
   const mu = document.getElementById("mutation");
   mu.oninput = ()=>{ setMutationRate(parseFloat(mu.value)); breadcrumb("ui:slider","mutation:"+mu.value); };
@@ -130,8 +140,7 @@ export function boot() {
   resizeCanvas();
   window.addEventListener("resize", resizeCanvas);
 
-  // NEU: Drives initialisieren (Events abonnieren, Persistenz laden)
-  initDrives();
+  initDrives(); // << neu
 
   createAdamAndEve();
   applyEnvironment(getEnvState());
