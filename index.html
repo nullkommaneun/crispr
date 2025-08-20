@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <title>CRISPR Genetics Lab</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <div id="topbar">
+    <div class="controls">
+      <button id="btnStart">Start</button>
+      <button id="btnPause">Pause</button>
+      <button id="btnReset">Reset</button>
+      <span class="sep"></span>
+      <label>Timescale
+        <input id="timescale" type="range" min="0.25" max="4" step="0.25" value="1">
+      </label>
+      <label>Mutation %
+        <input id="mutation" type="range" min="0" max="30" step="1" value="5">
+      </label>
+      <label>Nahrung/s
+        <input id="foodrate" type="range" min="0" max="40" step="1" value="12">
+      </label>
+      <label title="Performance-Modus: Grafik & Nebenrechnungen reduziert">
+        <input id="perfmode" type="checkbox"> Perf‑Mode
+      </label>
+      <span class="sep"></span>
+      <button id="btnEditor">CRISPR‑Editor</button>
+      <button id="btnEnv">Umwelt</button>
+      <button id="btnDaily">DNA Daily</button>
+    </div>
+    <div id="ticker"></div>
+  </div>
+
+  <div id="worldWrap">
+    <canvas id="world" width="1024" height="640"></canvas>
+  </div>
+
+  <!-- Panels -->
+  <div id="editorPanel" class="panel hidden"></div>
+  <div id="envPanel" class="panel hidden"></div>
+  <div id="dailyPanel" class="panel hidden"></div>
+
+  <!-- Error overlay -->
+  <div id="errorOverlay" class="hidden">
+    <div class="errorCard">
+      <h3>Fehler</h3>
+      <pre id="errorText"></pre>
+      <button id="errorClose">Schließen</button>
+    </div>
+  </div>
+
+  <script type="module" src="./engine.js"></script>
+</body>
+</html>
