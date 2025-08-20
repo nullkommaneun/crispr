@@ -11,6 +11,7 @@ import { openEnvPanel, getEnvState } from "./environment.js";
 import { initTicker, setPerfMode as tickerPerf, pushFrame } from "./ticker.js";
 import { emit, on } from "./event.js";
 import { openDummyPanel, handleCanvasClickForDummy } from "./dummy.js";
+import { initDrives } from "./drives.js";
 
 let running = false;
 let timescale = 1;
@@ -20,39 +21,8 @@ const SPEED_STEPS = [1, 5, 10, 50];
 let speedIdx = 0;
 
 let lastTime = 0, acc = 0;
-const fixedDt = 1 / 60; // fixer Simulationsschritt (s)
+const fixedDt = 1 / 60;
 let simTime = 0;
-
-/** kompakter Snapshot für Crash Capsule */
-function snapshot(){
-  // kleine Hilfsfunktionen
-  const round = (n)=> Math.abs(n)<1e-6?0:Math.round(n*100)/100;
-  const cells = getCells();
-  const foods = getFoodItems();
-
-  // Zellen: nur Top 50, stark verdichtet
-  const cellsMini = cells.slice(0,50).map(c=>({
-    id:c.id, n:c.name, s:c.sex, st:c.stammId,
-    p:[round(c.pos.x), round(c.pos.y)],
-    v:[round(c.vel.x), round(c.vel.y)],
-    e:round(c.energy), a:round(c.age), cd:round(c.cooldown),
-    g:c.genome, d: !!c.isDummy
-  }));
-
-  // Food: nur Top 120
-  const foodMini = foods.slice(0,120).map(f=>({x:round(f.x), y:round(f.y), a:round(f.amount)}));
-
-  return {
-    ts: Date.now(),
-    simTime: round(simTime),
-    timescale,
-    perfMode,
-    counts:{ cells: cells.length, food: foods.length },
-    env: getEnvState(),
-    cells: cellsMini,
-    food: foodMini
-  };
-}
 
 /** Canvas-Größe & Topbar-Abstand aktualisieren */
 function resizeCanvas() {
@@ -117,7 +87,7 @@ function cycleSpeed(){
   updateSpeedButton();
 }
 
-/** Render-Loop (fixed updates + draw), ohne Promises */
+/** Render-Loop */
 function frame(now) {
   if (!running) return;
   now /= 1000;
@@ -153,22 +123,15 @@ function frame(now) {
 
 /** Public API */
 export function boot() {
-  // Build-ID (nur zur Orientierung)
-  window.__BUILD_ID = `mdc1-${new Date().toISOString()}`;
-
-  try{
-    initErrorManager({
-      pauseOnError:true,
-      captureConsole:true,
-      snapshot,                // <- hier geben wir den Snapshot-Hook rein
-    });
-  }catch(e){}
-
+  try{ initErrorManager({ pauseOnError:true, captureConsole:true }); }catch(e){}
   on("error:panic", ()=> pause());
   on("error:resume", ()=> start());
 
   resizeCanvas();
   window.addEventListener("resize", resizeCanvas);
+
+  // NEU: Drives initialisieren (Events abonnieren, Persistenz laden)
+  initDrives();
 
   createAdamAndEve();
   applyEnvironment(getEnvState());
