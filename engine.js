@@ -20,6 +20,8 @@ let canvas, ctx;
 export function boot() {
     initErrorManager();
     canvas = document.getElementById('canvas');
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
     ctx = canvas.getContext('2d');
     setWorldSize(canvas.width, canvas.height);
     createAdamAndEve();
@@ -27,6 +29,11 @@ export function boot() {
     initTicker();
     initNarrative();
     setupUIEvents();
+    window.addEventListener('resize', () => {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        setWorldSize(canvas.width, canvas.height);
+    });
 }
 
 function setupUIEvents() {
@@ -72,7 +79,7 @@ export function setPerfMode(on) {
 
 function gameLoop(time) {
     if (!running) return;
-    const dt = (time - lastTime) / 1000 * timescale;
+    let dt = (time - lastTime) / 1000 * timescale;
     lastTime = time;
 
     entitiesStep(dt, getEnvState());

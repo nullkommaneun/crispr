@@ -1,18 +1,19 @@
-const listeners = {};
+const listeners = new Map();
 
 export function on(type, cb) {
-    if (!listeners[type]) listeners[type] = [];
-    listeners[type].push(cb);
+    if (!listeners.has(type)) listeners.set(type, []);
+    listeners.get(type).push(cb);
 }
 
 export function off(type, cb) {
-    if (listeners[type]) {
-        listeners[type] = listeners[type].filter(c => c !== cb);
+    if (listeners.has(type)) {
+        const cbs = listeners.get(type).filter(c => c !== cb);
+        listeners.set(type, cbs);
     }
 }
 
 export function emit(type, payload) {
-    if (listeners[type]) {
-        listeners[type].forEach(cb => cb({type, payload}));
+    if (listeners.has(type)) {
+        listeners.get(type).forEach(cb => cb(payload));
     }
 }

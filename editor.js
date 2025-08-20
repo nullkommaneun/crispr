@@ -2,7 +2,7 @@ import { setMode, getMode, sortCells } from './advisor.js';
 import { getCells } from './entities.js';
 import { on, emit } from './event.js';
 
-let editorPanel = document.getElementById('editor-panel');
+const editorPanel = document.getElementById('editor-panel');
 let advisorMode = 'off';
 
 export function openEditor() {
@@ -17,6 +17,7 @@ export function closeEditor() {
 export function setAdvisorMode(mode) {
     advisorMode = mode;
     setMode(mode);
+    updateEditorUI();
 }
 
 export function getAdvisorMode() {
@@ -25,6 +26,11 @@ export function getAdvisorMode() {
 
 function updateEditorUI() {
     const sorted = sortCells(getCells());
-    // Render list with traits editors, tooltips
-    // Example: sliders for TEM, etc.
+    editorPanel.innerHTML = '<h3>CRISPR Editor</h3>';
+    sorted.forEach(cell => {
+        const div = document.createElement('div');
+        div.innerHTML = `Cell ${cell.id}: Score ${scoreCell(cell).toFixed(2)}<br>`;
+        // Add sliders for traits, but simplified
+        editorPanel.appendChild(div);
+    });
 }

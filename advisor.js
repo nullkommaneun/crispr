@@ -1,5 +1,4 @@
 let mode = 'off';
-// Assume TensorFlow.js loaded externally or dummy
 
 export function setMode(m) {
     mode = m;
@@ -12,15 +11,14 @@ export function getMode() {
 export function scoreCell(cell) {
     if (mode === 'off') return 0;
     if (mode === 'heuristic') {
-        // Rules: e.g., low MET + high EFF -> high score
-        return cell.genome.EFF / cell.genome.MET;
+        return (cell.genome.EFF + cell.genome.SCH) / (cell.genome.MET + 1);
     }
     if (mode === 'model') {
-        // Dummy or tfjs predict
-        return Math.random();
+        return Math.random(); // Dummy
     }
+    return 0;
 }
 
 export function sortCells(cells) {
-    return cells.sort((a, b) => scoreCell(b) - scoreCell(a));
+    return [...cells].sort((a, b) => scoreCell(b) - scoreCell(a));
 }

@@ -1,9 +1,13 @@
 export function initErrorManager() {
-    window.onerror = (err) => {
-        console.error(err);
-        // Overlay error message
+    window.onerror = (msg, url, line) => {
+        console.error(`Error: ${msg} at ${url}:${line}`);
         const overlay = document.createElement('div');
-        overlay.innerText = `Error: ${err}`;
+        overlay.style.position = 'fixed';
+        overlay.style.top = '50%';
+        overlay.style.left = '50%';
+        overlay.style.background = 'red';
+        overlay.style.padding = '10px';
+        overlay.innerText = `Error: ${msg}`;
         document.body.appendChild(overlay);
     };
 }

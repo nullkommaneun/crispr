@@ -1,5 +1,4 @@
 import { emit } from './event.js';
-import { random } from './utils.js'; // Assume a utils.js for helpers
 
 let cells = [];
 let foodItems = [];
@@ -11,7 +10,9 @@ let nextStammId = 0;
 
 export function createAdamAndEve() {
     cells = [];
+    foodItems = [];
     stamme.clear();
+    nextStammId = 0;
     const adam = createCell({ pos: {x: worldWidth/4, y: worldHeight/2}, sex: 'm', stammId: nextStammId++, genome: defaultGenome() });
     const eve = createCell({ pos: {x: 3*worldWidth/4, y: worldHeight/2}, sex: 'f', stammId: adam.stammId, genome: defaultGenome() });
 }
@@ -54,28 +55,56 @@ export function getFoodItems() {
     return foodItems;
 }
 
+export function addFoodItem(item) {
+    foodItems.push(item);
+}
+
+export function removeFoodItem(index) {
+    foodItems.splice(index, 1);
+}
+
 export function step(dt, env) {
     cells.forEach(cell => {
-        // Physics and behavior based on genome
-        const speed = cell.genome.TEM * 10; // Example
-        // Hunger: seek food
-        // Social: seek partners
-        // Wall repulsion
-        // Update pos, vel, energy, age, cooldown
+        // Basic physics and behavior
+        const speed = cell.genome.TEM * 10;
+        // Simple random movement for demo
+        cell.vel.x += (Math.random() - 0.5) * 2;
+        cell.vel.y += (Math.random() - 0.5) * 2;
+        // Clamp velocity
+        const velMag = Math.hypot(cell.vel.x, cell.vel.y);
+        if (velMag > speed) {
+            cell.vel.x = (cell.vel.x / velMag) * speed;
+            cell.vel.y = (cell.vel.y / velMag) * speed;
+        }
+        cell.pos.x += cell.vel.x * dt;
+        cell.pos.y += cell.vel.y * dt;
+        // Wall bounce
+        if (cell.pos.x < 0 || cell.pos.x > worldWidth) cell.vel.x *= -1;
+        if (cell.pos.y < 0 || cell.pos.y > worldHeight) cell.vel.y *= -1;
         cell.age += dt;
-        cell.energy -= cell.genome.MET * dt; // Metabolic cost
+        cell.energy -= cell.genome.MET * dt;
         if (cell.energy <= 0) killCell(cell.id);
+        if (cell.cooldown > 0) cell.cooldown -= dt;
     });
     applyEnvironment(env);
 }
 
 export function applyEnvironment(env) {
+    const dt = 1; // Assuming dt passed or fixed
     cells.forEach(cell => {
-        // Apply damages from env: acid, barb, fence, nano
         if (env.acid.enabled && nearBorder(cell.pos, env.acid.range)) {
             cell.energy -= env.acid.dps * dt / cell.genome.SCH;
         }
-        // Similar for others
+        if (env.barb.enabled && nearBorder(cell.pos, env.barb.range)) {
+            cell.energy -= env.barb.dps * dt / cell.genome.SCH;
+        }
+        if (env.fence.enabled && nearBorder(cell.pos, env.fence.range) && Math.random() < env.fence.period * dt) {
+            cell.vel.x += (Math.random() - 0.5) * env.fence.impulse;
+            cell.vel.y += (Math.random() - 0.5) * env.fence.impulse;
+        }
+        if (env.nano.enabled) {
+            cell.energy -= env.nano.dps * dt / cell.genome.SCH;
+        }
     });
 }
 
@@ -94,6 +123,11 @@ export function getStammCounts() {
     return counts;
 }
 
+export function getStammColor(stammId) {
+    const stamm = stamme.get(stammId);
+    return stamm ? stamm.color : '#ffffff'; // Fallback white
+}
+
 function randomColor() {
-    return `#${Math.floor(Math.random()*16777215).toString(16)}`;
+    return `#${Math.floor(Math.random()*16777215).toString(16).padStart(6, '0')}`;
 }

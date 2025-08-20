@@ -1,7 +1,8 @@
 import { getEnvState } from './environment.js';
 import { on } from './event.js';
+import { getCells, getFoodItems } from './entities.js';
 
-let ticker = document.getElementById('ticker');
+const ticker = document.getElementById('ticker');
 let perfMode = false;
 let interval;
 
@@ -12,10 +13,18 @@ export function initTicker() {
 
 export function setPerfMode(on) {
     perfMode = on;
-    if (perfMode) clearInterval(interval); // Throttle more
+    if (perfMode) {
+        clearInterval(interval);
+        interval = setInterval(updateSnapshot, 10000); // Throttle
+    } else {
+        clearInterval(interval);
+        interval = setInterval(updateSnapshot, 5000);
+    }
 }
 
-export function updateSnapshot() {
-    // Calculate FPS, sim speed, mutation %, etc.
-    ticker.innerHTML = `FPS: ..., Env: ${JSON.stringify(getEnvState())}`;
+function updateSnapshot() {
+    const fps = 'N/A'; // Placeholder, calculate if needed
+    const cellCount = getCells().length;
+    const foodCount = getFoodItems().length;
+    ticker.innerHTML = `FPS: ${fps}, Cells: ${cellCount}, Food: ${foodCount}, Env: ${JSON.stringify(getEnvState())}`;
 }

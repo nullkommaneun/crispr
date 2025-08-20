@@ -1,4 +1,5 @@
 import { getEnvState } from './environment.js';
+import { getStammColor } from './entities.js';
 
 let canvas, ctx;
 let perfMode = false;
@@ -9,26 +10,34 @@ export function draw(state, env) {
         ctx = canvas.getContext('2d');
     }
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    // Draw grid
-    // Draw env overlays: acid glow, barbs, fence impulses, nano fog
+    // Draw env overlays
     if (env.acid.enabled) {
-        // Draw glow at borders
+        ctx.fillStyle = 'rgba(255,0,0,0.1)';
+        ctx.fillRect(0, 0, env.acid.range, canvas.height);
+        ctx.fillRect(canvas.width - env.acid.range, 0, env.acid.range, canvas.height);
+        ctx.fillRect(0, 0, canvas.width, env.acid.range);
+        ctx.fillRect(0, canvas.height - env.acid.range, canvas.width, env.acid.range);
     }
-    // Draw food: green hotspots/clusters
+    // Similar for other env, simplified
+    // Draw food
     state.food.forEach(f => {
         ctx.fillStyle = '#0f0';
-        ctx.fillRect(f.pos.x, f.pos.y, 5, 5);
+        ctx.fillRect(f.pos.x - 2.5, f.pos.y - 2.5, 5, 5);
     });
-    // Draw cells: colored circles
+    // Draw cells
     state.cells.forEach(c => {
-        const color = stamme.get(c.stammId).color;
+        const color = getStammColor(c.stammId);
         ctx.fillStyle = color;
         ctx.beginPath();
-        ctx.arc(c.pos.x, c.pos.y, c.genome.GRÖ * 5, 0, Math.PI*2);
+        ctx.arc(c.pos.x, c.pos.y, c.genome.GRÖ * 5, 0, Math.PI * 2);
         ctx.fill();
     });
     if (perfMode) {
-        // Simplify: no shadows, etc.
+        // No extra effects
+    } else {
+        // Add shadows if not perf
+        ctx.shadowColor = 'white';
+        ctx.shadowBlur = 5;
     }
 }
 
