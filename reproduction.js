@@ -151,7 +151,7 @@ export function evaluateMatingPairs(aliveCells, spawnFn, opts = {}){
     paired.add(a.id); paired.add(b.id);
 
     // Events
-    Events.emit(EVT.MATE,  { aId:a.id, bId:b.id, motherId:mother.id, fatherId:father.id, relatedness: rel });
-    Events.emit(EVT.BIRTH, { id: child.id, stammId: child.stammId, parents: child.parents });
+    emit(EVT.MATE,  { aId:a.id, bId:b.id, motherId:mother.id, fatherId:father.id, relatedness: rel });
+    emit(EVT.BIRTH, { id: child.id, stammId: child.stammId, parents: child.parents });
   }
 }

@@ -63,7 +63,7 @@ export function seedWorld(w, h){
       energy: 22,
       noSplit: true
     });
-    Events.emit(EVT.BIRTH, { id: c.id, stammId: c.stammId, parents: c.parents });
+    emit(EVT.BIRTH, { id: c.id, stammId: c.stammId, parents: c.parents });
   }
 
   // 8 Startkinder im Sekundentakt, alternierend Eva/Adam als Mutter
@@ -72,7 +72,7 @@ export function seedWorld(w, h){
       const mother = (k % 2 === 1) ? eva : adam;
       const father = (mother === eva) ? adam : eva;
       makeChild(mother, father);
-      Events.emit(EVT.TIP, {
+      emit(EVT.TIP, {
         label: 'Tipp',
         text: `Neues Start-Kind #${k+2} geboren (Stamm ${mother.stammId}).`
       });

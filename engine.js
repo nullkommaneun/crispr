@@ -46,7 +46,7 @@ function setupUI(){
 
   // Timescale zyklisch
   const steps=[1,5,10];
-  const applyTs=v=>{ timescale=v; btnSpeed.textContent=`⚡ ${v}×`; Events.emit(EVT.STATUS,{source:'engine',key:'timescale',value:v}); };
+  const applyTs=v=>{ timescale=v; btnSpeed.textContent=`⚡ ${v}×`; emit(EVT.STATUS,{source:'engine',key:'timescale',value:v}); };
   btnSpeed.addEventListener('click', ()=>{ const i=(steps.indexOf(timescale)+1)%steps.length; applyTs(steps[i]); });
   applyTs(1);
 
@@ -55,7 +55,7 @@ function setupUI(){
     const pct=Number(mutRange.value);
     Entities.setMutationRate(pct/100);
     mutVal.textContent = `${pct.toFixed(1).replace('.0','')} %`;
-    Events.emit(EVT.STATUS,{source:'engine',key:'mutationRatePct',value:pct});
+    emit(EVT.STATUS,{source:'engine',key:'mutationRatePct',value:pct});
   };
   mutRange.addEventListener('input', applyMut); applyMut();
 
@@ -64,7 +64,7 @@ function setupUI(){
     const perSec = Number(foodRange.value);
     Entities.setFoodRate(perSec*60);
     foodVal.textContent = `${perSec|0} /s`;
-    Events.emit(EVT.STATUS,{source:'engine',key:'foodRatePerSec',value:perSec});
+    emit(EVT.STATUS,{source:'engine',key:'foodRatePerSec',value:perSec});
   };
   foodRange.addEventListener('input', applyFood); applyFood();
 
@@ -82,10 +82,10 @@ function setupUI(){
     const ids=getOrder(); const cur=(highlightStammId===null)?'all':String(highlightStammId);
     const idx=(ids.indexOf(cur)+1)%ids.length; const next=ids[idx];
     highlightStammId=(next==='all')?null:Number(next); renderer.setHighlight(highlightStammId);
-    Events.emit(EVT.HIGHLIGHT_CHANGED,{stammId:highlightStammId}); refreshHighlightButton();
+    emit(EVT.HIGHLIGHT_CHANGED,{stammId:highlightStammId}); refreshHighlightButton();
   });
   refreshHighlightButton();
-  Events.on(EVT.BIRTH, refreshHighlightButton); Events.on(EVT.DEATH, refreshHighlightButton);
+  on(EVT.BIRTH, refreshHighlightButton); on(EVT.DEATH, refreshHighlightButton);
 
   // Canvas-Größe
   function onResize(){ const r=canvas.getBoundingClientRect(); Entities.setWorldSize(r.width, r.height); renderer.handleResize?.(); }
@@ -101,7 +101,7 @@ function resetWorld(){
   Entities.setWorldSize(rect.width, rect.height);
   seedWorld(rect.width, rect.height);
   accumulator=0;
-  Events.emit(EVT.STATUS,{source:'engine',text:'Welt zurückgesetzt'});
+  emit(EVT.STATUS,{source:'engine',text:'Welt zurückgesetzt'});
 }
 
 // ---- Init / Loop -----------------------------------------------------------
@@ -145,7 +145,7 @@ function loop(ts){
     }
     renderer.renderFrame({ cells: Entities.cells||[], foods: Entities.foods||[] });
     updateAdvisor(performance.now()/1000);
-    Events.emit(EVT.TICK, { tick: tickCount, fps });
+    emit(EVT.TICK, { tick: tickCount, fps });
   }
   requestAnimationFrame(loop);
 }

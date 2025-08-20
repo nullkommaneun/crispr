@@ -159,7 +159,7 @@ export function createCell(params = {}){
 
 export function createFood(params = {}){
   const f = { id: params.id ?? nextFoodId++, x: params.x ?? Math.random()*WORLD.width, y: params.y ?? Math.random()*WORLD.height, value: params.value ?? 10 };
-  foods.push(f); addFoodToGrid(f); Events.emit(EVT.FOOD_SPAWN,{id:f.id});
+  foods.push(f); addFoodToGrid(f); emit(EVT.FOOD_SPAWN,{id:f.id});
   return f;
 }
 
@@ -316,15 +316,15 @@ function deathPhase(){
     if(c.dead) continue;
     if(c.energy<=0){
       c.dead=true; hungerDeaths.push(t);
-      Events.emit(EVT.DEATH,{id:c.id, stammId:c.stammId, reason:'hunger'});
+      emit(EVT.DEATH,{id:c.id, stammId:c.stammId, reason:'hunger'});
     }
   }
   while(hungerDeaths.length && t-hungerDeaths[0] > 60) hungerDeaths.shift();
 }
 function crisisCheck(){
-  if(hungerDeaths.length>10) Events.emit(EVT.HUNGER_CRISIS,{inLastMinute:hungerDeaths.length});
+  if(hungerDeaths.length>10) emit(EVT.HUNGER_CRISIS,{inLastMinute:hungerDeaths.length});
   const alive=cells.filter(c=>!c.dead).length;
-  if(alive>140) Events.emit(EVT.OVERPOP,{population:alive});
+  if(alive>140) emit(EVT.OVERPOP,{population:alive});
 }
 
 /* ===== Hauptupdate ===== */

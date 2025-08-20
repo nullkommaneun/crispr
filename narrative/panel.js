@@ -120,12 +120,12 @@ export function initNarrativePanel(){
     panel.innerHTML = '';
   }
 
-  Events.on(EVT.RESET, resetState);
+  on(EVT.RESET, resetState);
   resetState();
 
   // === Listener ===========================================================
 
-  Events.on(EVT.MATE, (d)=>{
+  on(EVT.MATE, (d)=>{
     if(!d) return;
     if(!story.firstMate && story.cooldown('first-mate', CFG.cd.med)){
       story.firstMate = true;
@@ -136,7 +136,7 @@ export function initNarrativePanel(){
     }
   });
 
-  Events.on(EVT.BIRTH, (d)=>{
+  on(EVT.BIRTH, (d)=>{
     const t = now(); story.births.push(t);
     while(story.births.length && t - story.births[0] > 60) story.births.shift();
 
@@ -162,7 +162,7 @@ export function initNarrativePanel(){
     onFoundersLove();
   });
 
-  Events.on(EVT.DEATH, (d)=>{
+  on(EVT.DEATH, (d)=>{
     const t = now(); story.deaths.push(t);
     while(story.deaths.length && t - story.deaths[0] > 60) story.deaths.shift();
 
@@ -180,7 +180,7 @@ export function initNarrativePanel(){
     }
   });
 
-  Events.on(EVT.HUNGER_CRISIS, (d)=>{
+  on(EVT.HUNGER_CRISIS, (d)=>{
     const n = d?.inLastMinute ?? CFG.famine.s1;
     const level = n >= CFG.famine.s3 ? 3 : n >= CFG.famine.s2 ? 2 : n >= CFG.famine.s1 ? 1 : 0;
     if (level > story.famineStage && story.cooldown('famine-lvl'+level, CFG.cd.med)){
@@ -194,7 +194,7 @@ export function initNarrativePanel(){
     }
   });
 
-  Events.on(EVT.OVERPOP, (d)=>{
+  on(EVT.OVERPOP, (d)=>{
     const pop = d?.population ?? CFG.overpop.s1;
     const level = pop >= CFG.overpop.s2 ? 2 : pop >= CFG.overpop.s1 ? 1 : 0;
     if (level > story.overpopStage && story.cooldown('over-lvl'+level, CFG.cd.med)){
@@ -206,7 +206,7 @@ export function initNarrativePanel(){
     }
   });
 
-  Events.on(EVT.TICK, onTick);
+  on(EVT.TICK, onTick);
 }
 
 // ===== TICK-Loop ===========================================================
