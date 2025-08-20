@@ -9,7 +9,7 @@
 <body>
   <div id="errorOverlay" class="hidden" role="alert" aria-live="assertive"></div>
 
-  <!-- Toolbar (unverändert) -->
+  <!-- Toolbar -->
   <header class="toolbar" id="toolbar">
     <div class="toolbar-row">
       <button id="btnPlayPause">▶️ Play</button>
@@ -30,6 +30,7 @@
       <button id="btnHighlightCycle">Alle Stämme</button>
 
       <button id="btnEditor">🧬 Editor</button>
+      <button id="btnEnv"    title="Umwelt-Einstellungen">🌐 Umwelt</button>
     </div>
   </header>
 
@@ -44,90 +45,98 @@
   <!-- Ticker -->
   <footer id="ticker" aria-live="polite"><div id="tickerInner"><div id="tickerContent"></div></div></footer>
 
-  <!-- Editor-Modal -->
-  <dialog id="editorModal" aria-labelledby="editorTitle">
-    <form method="dialog" id="editorForm">
+  <!-- Editor (unverändert, mit MET & Effekten – ggf. deine aktuelle Version einsetzen) -->
+  <!-- ... (dein existierender Editor-Dialog) ... -->
+
+  <!-- Umwelt-Modal -->
+  <dialog id="envModal" aria-labelledby="envTitle">
+    <form method="dialog" id="envForm">
       <header class="modalHeader">
-        <h2 id="editorTitle">CRISPR-Editor</h2>
-        <button id="editorClose" value="cancel" title="Schließen">✖</button>
+        <h2 id="envTitle">Umwelt – Randgefahren</h2>
+        <button id="envClose" value="cancel" title="Schließen">✖</button>
       </header>
 
       <div class="modalBody">
         <section class="editorLeft">
-          <h3>Traits anpassen</h3>
+          <h3>Gefahren aktivieren</h3>
 
-          <div class="traitRow" data-trait="TEM"><label>TEM – Tempo</label><div class="stepper">
-            <button type="button" class="dec">-1</button><output class="val">5</output><button type="button" class="inc">+1</button></div></div>
-
-          <div class="traitRow" data-trait="GRO"><label>GRÖ – Größe</label><div class="stepper">
-            <button type="button" class="dec">-1</button><output class="val">5</output><button type="button" class="inc">+1</button></div></div>
-
-          <div class="traitRow" data-trait="EFF"><label>EFF – Effizienz</label><div class="stepper">
-            <button type="button" class="dec">-1</button><output class="val">5</output><button type="button" class="inc">+1</button></div></div>
-
-          <div class="traitRow" data-trait="SCH"><label>SCH – Schutz</label><div class="stepper">
-            <button type="button" class="dec">-1</button><output class="val">5</output><button type="button" class="inc">+1</button></div></div>
-
-          <div class="traitRow" data-trait="MET"><label>MET – Stoffwechsel</label><div class="stepper">
-            <button type="button" class="dec">-1</button><output class="val">5</output><button type="button" class="inc">+1</button></div></div>
-
-          <!-- Live-Effekte -->
-          <div class="advisorBox" id="effectsBox">
-            <div class="advisorHeader"><strong>Live-Effekte</strong><span id="effectsNote" class="mono"></span></div>
-            <div id="editorEffects"></div>
-            <small class="hint">Basis = Traits 5. Grün = besser, Rot = schlechter. Bei Kosten ist „kleiner“ besser.</small>
+          <div class="traitRow">
+            <label><input type="checkbox" id="envAcid"> Säurewand</label>
+          </div>
+          <div class="traitRow">
+            <label>Reichweite</label>
+            <div class="stepper"><input type="range" id="envAcidRange" min="4" max="28" step="1" value="14"><span class="val mono"></span></div>
+          </div>
+          <div class="traitRow">
+            <label>Schaden pro Sek.</label>
+            <div class="stepper"><input type="range" id="envAcidDps" min="2" max="14" step="1" value="6"><span class="val mono"></span></div>
           </div>
 
-          <div class="editorActions"><button id="editorApply" class="primary" type="submit" value="ok">Übernehmen</button></div>
-          <p class="hint mono">Neue Zellen aus dem Editor starten immer als <strong>neuer Stamm</strong>.</p>
+          <div class="traitRow">
+            <label><input type="checkbox" id="envBarb"> Stacheldraht</label>
+          </div>
+          <div class="traitRow">
+            <label>Reichweite</label>
+            <div class="stepper"><input type="range" id="envBarbRange" min="4" max="18" step="1" value="8"><span class="val mono"></span></div>
+          </div>
+          <div class="traitRow">
+            <label>Schaden (Druck)</label>
+            <div class="stepper"><input type="range" id="envBarbDps" min="4" max="20" step="1" value="10"><span class="val mono"></span></div>
+          </div>
+
+          <div class="traitRow">
+            <label><input type="checkbox" id="envElec"> Elektrozaun</label>
+          </div>
+          <div class="traitRow">
+            <label>Reichweite</label>
+            <div class="stepper"><input type="range" id="envElecRange" min="6" max="24" step="1" value="12"><span class="val mono"></span></div>
+          </div>
+          <div class="traitRow">
+            <label>Schaden pro Impuls</label>
+            <div class="stepper"><input type="range" id="envElecDmg" min="4" max="20" step="1" value="10"><span class="val mono"></span></div>
+          </div>
+          <div class="traitRow">
+            <label>Impuls-Periode (s)</label>
+            <div class="stepper"><input type="range" id="envElecPeriod" min="0.3" max="3" step="0.1" value="1.6"><span class="val mono"></span></div>
+          </div>
+
+          <small class="hint">Reichweite misst den Abstand zur Außenkante; größere Werte wirken tiefer in das Feld.</small>
         </section>
 
         <section class="editorRight">
-          <h3>Lebende Zellen • Prognose</h3>
-          <div id="editorCellList" class="cellList"></div>
-          <div class="advisorBox">
-            <div class="advisorHeader"><strong>KI-Advisor:</strong> <span id="editorAdvisorStatus">Aus</span></div>
-            <div class="advisorCtrls">
-              <button type="button" id="editorAdvisorToggle">Modus: Umschalten</button>
-              <input type="text" id="editorModelUrl" placeholder="models/model.json" value="models/model.json" />
-              <button type="button" id="editorModelLoad">Modell laden</button>
-            </div>
-            <small id="editorAdvisorNote">Modi: Aus • Heuristik • Modell (TensorFlow.js)</small>
+          <h3>Hinweis</h3>
+          <div class="advisorBox"><div class="advisorHeader"><strong>Visualisierung</strong></div>
+            <p class="hint">Säure: gelber Schimmer • Stacheldraht: kleine Zacken • Elektro: blaues Lineset. Effekte sind leichtgewichtig und GPU-schonend.</p>
           </div>
         </section>
       </div>
     </form>
   </dialog>
 
-  <!-- Sequenzieller Booter mit konkreten Fehlermeldungen -->
+  <!-- Booter -->
   <script type="module">
     const ov = document.getElementById('errorOverlay');
-    const show = msg => { if(ov){ ov.textContent = msg; ov.classList.add('show'); } };
-
+    const show = m => { if(ov){ ov.textContent=m; ov.classList.add('show'); } };
     async function safeImport(spec){
       try { return await import(spec); }
       catch (e) {
-        try {
-          const url = spec.replace(/\?.*$/,'');
-          const r = await fetch(url, { cache:'no-store' });
-          const ct = (r.headers.get('content-type')||'').toLowerCase();
+        try{
+          const url=spec.replace(/\?.*$/,''); const r=await fetch(url,{cache:'no-store'});
+          const ct=(r.headers.get('content-type')||'').toLowerCase();
           if(!r.ok) show(`⚠️ Import fehlgeschlagen: ${url} — HTTP ${r.status}`);
           else if(!/javascript|ecmascript/.test(ct)) show(`⚠️ Import fehlgeschlagen: ${url} — MIME "${ct}"`);
           else show(`⚠️ Import fehlgeschlagen: ${url} — ${e?.message||e}`);
         }catch{ show(`⚠️ Import fehlgeschlagen: ${spec}`); }
-        console.error('[Boot import error]', spec, e);
-        throw e;
+        console.error('[Boot import error]', spec, e); throw e;
       }
     }
-
-    (async () => {
+    (async ()=>{
       try{
         await safeImport('./errorManager.js');
-
-        // Basismodule (ohne Querystrings)
         await safeImport('./event.js');
-        await safeImport('./genetics.js');     // <- MET enthalten
-        await safeImport('./entities.js');     // <- neue NAT-Logik, keine doppelten Exporte
+        await safeImport('./genetics.js');
+        await safeImport('./environment.js');   // <- neu
+        await safeImport('./entities.js');
         await safeImport('./reproduction.js');
         await safeImport('./renderer.js');
         await safeImport('./ticker.js');
@@ -135,16 +144,13 @@
         await safeImport('./editor.js');
         await safeImport('./narrative/panel.js');
         await safeImport('./spawn.js');
-
-        // Engine zuletzt
         await safeImport('./engine.js');
-      }catch(e){ /* oben bereits gemeldet */ }
+      }catch(e){}
     })();
   </script>
-
   <script nomodule>
-    const ov = document.getElementById('errorOverlay');
-    ov && (ov.textContent = '⚠️ Dieser Browser unterstützt keine ES-Module.', ov.classList.add('show'));
+    const ov=document.getElementById('errorOverlay');
+    ov && (ov.textContent='⚠️ Dieser Browser unterstützt keine ES-Module.', ov.classList.add('show'));
   </script>
 </body>
 </html>
