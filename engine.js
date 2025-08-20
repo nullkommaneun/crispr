@@ -1,5 +1,5 @@
 import { createAdamAndEve, step as entitiesStep, getCells, getFoodItems, applyEnvironment, setWorldSize } from './entities.js';
-import { step as reproductionStep } from './reproduction.js';
+import { step as reproductionStep, setMutationRate } from './reproduction.js';
 import { step as foodStep, setSpawnRate } from './food.js';
 import { draw, setPerfMode as rendererSetPerfMode } from './renderer.js';
 import { openEditor } from './editor.js';
@@ -13,7 +13,6 @@ let running = false;
 let timescale = 1;
 let perfMode = false;
 let lastTime = 0;
-let mutationRate = 0.1;
 let foodRate = 1;
 let canvas, ctx;
 
@@ -25,7 +24,7 @@ export function boot() {
     ctx = canvas.getContext('2d');
     setWorldSize(canvas.width, canvas.height);
     createAdamAndEve();
-    applyEnvironment(getEnvState());
+    applyEnvironment(getEnvState(), 0); // Initial apply with dt=0
     initTicker();
     initNarrative();
     setupUIEvents();
@@ -44,7 +43,7 @@ function setupUIEvents() {
     document.getElementById('env-panel-btn').addEventListener('click', openEnvPanel);
     document.getElementById('perf-mode-btn').addEventListener('click', () => setPerfMode(!perfMode));
     document.getElementById('timescale-slider').addEventListener('input', (e) => setTimescale(e.target.value));
-    document.getElementById('mutation-rate-slider').addEventListener('input', (e) => mutationRate = e.target.value);
+    document.getElementById('mutation-rate-slider').addEventListener('input', (e) => setMutationRate(e.target.value));
     document.getElementById('food-rate-slider').addEventListener('input', (e) => { foodRate = e.target.value; setSpawnRate(foodRate); });
 }
 

@@ -1,4 +1,4 @@
-import { setMode, getMode, sortCells } from './advisor.js';
+import { setMode, getMode, sortCells, scoreCell } from './advisor.js';
 import { getCells } from './entities.js';
 import { on, emit } from './event.js';
 

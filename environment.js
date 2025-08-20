@@ -1,5 +1,5 @@
-import { applyEnvironment } from './entities.js';
 import { emit } from './event.js';
+import { on } from './event.js';
 
 let envState = {
     acid: { enabled: false, range: 50, dps: 1 },
@@ -14,7 +14,6 @@ export function getEnvState() {
 
 export function setEnvState(newEnv) {
     envState = { ...envState, ...newEnv };
-    applyEnvironment(envState);
     emit('env:changed', envState);
 }
 

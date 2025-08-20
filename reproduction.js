@@ -1,7 +1,11 @@
 import { getCells, createCell } from './entities.js';
 import { emit } from './event.js';
 
-let mutationRate = 0.1; // Updated from UI via engine
+export let mutationRate = 0.1;
+
+export function setMutationRate(rate) {
+    mutationRate = parseFloat(rate);
+}
 
 export function step(dt) {
     const cells = getCells();
