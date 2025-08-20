@@ -1,5 +1,7 @@
 // errorManager.js
-// Zentrale Banner & sichere Modul-Imports für die App.
+// Zentrales Fehler-/Status-Banner und sichere Modul-Imports.
+// API: bannerError, bannerWarn, bannerInfo, hideBanner, showBanner,
+//      assertModule, safeImport, guard, setBannerHost
 
 let host, box;
 
@@ -16,11 +18,11 @@ function ensureHost() {
   hideBanner();
 }
 
-function paint(type, msg, details) {
+function paint(kind, msg, details) {
   ensureHost();
   const bg =
-    type === 'error' ? '#c54a4a' :
-    type === 'warn'  ? '#ce9b2f' :
+    kind === 'error' ? '#c54a4a' :
+    kind === 'warn'  ? '#ce9b2f' :
                        '#2f6bb2';
   box.style.cssText = `
     margin:0; padding:10px 14px;
@@ -36,12 +38,12 @@ function paint(type, msg, details) {
 export function bannerError(msg, details){ paint('error', `⚠️ ${msg}`, details); }
 export function bannerWarn (msg, details){ paint('warn',  `⚠️ ${msg}`, details); }
 export function bannerInfo (msg, details){ paint('info',  `ℹ️ ${msg}`, details); }
+
 export function hideBanner(){ ensureHost(); box.style.display='none'; }
 export function showBanner(){ ensureHost(); box.style.display='block'; }
 
 /**
- * Prüft, ob ein Modul da ist und (optional) bestimmte Exporte hat.
- * Wirft mit rotem Banner, wenn etwas fehlt.
+ * Verifiziert ein dynamisch geladenes Modul und (optional) notwendige Exporte.
  */
 export function assertModule(mod, label='(unknown module)', requiredExports=[]) {
   if (!mod) {
@@ -60,7 +62,7 @@ export function assertModule(mod, label='(unknown module)', requiredExports=[]) 
 }
 
 /**
- * Dynamischer Import mit Banner‑Fehlerbehandlung + optionaler Exportprüfung.
+ * Sicheres dynamisches Importen mit Banner-Fehlerbildschirm.
  */
 export async function safeImport(path, label=path, requiredExports=[]) {
   try {
@@ -92,7 +94,7 @@ export function setBannerHost(element){
   element.appendChild(host);
 }
 
-// Bequemer Default‑Namespace (falls jemand default import nutzt)
+// Optionaler Default-Export (falls irgendwo default import benutzt wurde)
 const ErrorManager = {
   bannerError, bannerWarn, bannerInfo, hideBanner, showBanner,
   assertModule, safeImport, guard, setBannerHost
