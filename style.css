@@ -3,18 +3,18 @@
   --panel:#131a20;
   --ink:#cfe7ff;
   --muted:#8aa0b3;
-  --accent:#2ee56a; /* Matrix-Grün für Nahrung */
+  --accent:#2ee56a;
   --warn:#ff6b6b;
   --grid:#1a222a;
   --brand:#27c7ff;
-  --topbar-h: 56px; /* wird per JS dynamisch gesetzt */
+  --topbar-h: 56px; /* wird per JS gesetzt */
 }
 
 /* Base */
 *{box-sizing:border-box}
 html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font:14px/1.4 system-ui,Segoe UI,Roboto,Helvetica,Arial}
 
-/* FIXED TOPBAR ÜBER ALLEM (außer Panels/Overlays) */
+/* FIXE TOPBAR */
 #topbar{
   position:fixed; top:0; left:0; right:0;
   z-index:1000;
@@ -36,7 +36,7 @@ button:hover{background:#1a2a35}
 #worldWrap{
   display:flex;justify-content:center;align-items:center;
   padding:6px;
-  margin-top: calc(var(--topbar-h) + 8px); /* Abstand unter die fixe Topbar */
+  margin-top: calc(var(--topbar-h) + 8px);
 }
 #world{
   width:100%;max-width:1200px;aspect-ratio:16/10;background:
@@ -46,16 +46,43 @@ button:hover{background:#1a2a35}
   border:1px solid #17222c;border-radius:8px;display:block
 }
 
-/* PANELS – ÜBER ALLEM (auch über Topbar) */
+/* PANELS – über allem (auch über Topbar) */
 .panel{
   position:fixed;
-  top:12px; right:16px; bottom:16px; width:360px;
-  z-index:3000; /* > topbar */
+  top:12px; right:12px;
+  z-index:3000;
+  width: min(420px, 92vw);
+  max-height: calc(100vh - 24px);
   background:var(--panel);
-  border:1px solid #22303a;border-radius:10px;padding:12px;overflow:auto;box-shadow:0 10px 30px rgba(0,0,0,.35)
+  border:1px solid #22303a;border-radius:10px;
+  display:flex; flex-direction:column;
+  overflow:hidden; /* Header bleibt sichtbar; Body scrollt */
+  box-shadow:0 10px 30px rgba(0,0,0,.35)
 }
 .panel.hidden{display:none}
-.panel h2{margin:0 0 8px 0;font-size:16px}
+
+/* Panel-Header mit Close-X */
+.panel-header{
+  position:sticky; top:0; z-index:1;
+  display:flex; align-items:center; justify-content:space-between;
+  gap:12px; padding:10px 12px 8px 12px;
+  background:var(--panel);
+  border-bottom:1px solid #22303a;
+}
+.panel-header h2{margin:0;font-size:16px}
+.closeX{
+  width:28px; height:28px; display:grid; place-items:center;
+  border-radius:8px; border:1px solid #2a3c4a; color:#cfe7ff; background:#15222c;
+  cursor:pointer; line-height:1; font-size:18px; padding:0;
+}
+.closeX:hover{background:#1a2a35}
+
+/* Inhalt des Panels scrollt */
+.panel-body{
+  overflow:auto;
+  padding:12px;
+}
+
 .panel .muted{color:var(--muted)}
 .panel .row{display:flex;align-items:center;justify-content:space-between;margin:6px 0}
 .panel .row input[type=range]{width:150px}
@@ -67,7 +94,7 @@ button:hover{background:#1a2a35}
 
 /* Error overlay – ganz oben */
 #errorOverlay{
-  position:fixed; inset:0; z-index:4000; /* über Panels */
+  position:fixed; inset:0; z-index:4000;
   background:rgba(0,0,0,.55); display:flex; align-items:center; justify-content:center
 }
 #errorOverlay.hidden{display:none}
