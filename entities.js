@@ -69,11 +69,13 @@ export function createCell(opts={}){
     genome: g,
     // Wander-Noise (OU-Prozess)
     wander: { vx: 0, vy: 0 },
-    // Paarungs-Lock (Zielpartner, Restzeit)
+    // Paarung / Feed Locks
     mateLockId: null,
     mateLockT: 0,
-    // NEU: Kurzzeit-Fütterungsfokus
-    feedLockT: 0
+    feedLockT: 0,
+    // Dummy
+    isDummy: !!opts.isDummy,
+    dummyCfg: opts.dummyCfg || null
   };
   cells.push(cell);
   return cell;
@@ -88,9 +90,7 @@ export function killCell(id){
   }
 }
 
-/**
- * Startpopulation mit Courtship-Assist.
- */
+/** Startpopulation mit Courtship-Assist */
 export function createAdamAndEve(){
   cells.length=0;
   stammMeta = new Map();
@@ -121,10 +121,10 @@ export function createAdamAndEve(){
   return [A,E];
 }
 
-/** Environment application (Placeholder, Live-Lesen in step()) */
+/** Environment application (Placeholder) */
 export function applyEnvironment(env){ /* no-op */ }
 
-/* ===== Kern: natürliches Bewegungsmodell mit Prioritäten ===== */
+/* ===== Kernfunktionen ===== */
 function senseRadii(c){
   const g=c.genome;
   const senseFood = CONFIG.cell.senseFood * (0.7 + 0.1*g.EFF);
@@ -136,23 +136,21 @@ function senseRadii(c){
 }
 function speedAndForce(c){
   const g=c.genome;
-  const maxSpeed = CONFIG.cell.baseSpeed * (0.7 + 0.08*g.TEM);
-  const maxForce = CONFIG.physics.maxForceBase * (0.7 + 0.08*g.TEM);
+  let maxSpeed = CONFIG.cell.baseSpeed * (0.7 + 0.08*g.TEM);
+  let maxForce = CONFIG.physics.maxForceBase * (0.7 + 0.08*g.TEM);
+  // Dummy-Speed-Multiplikator
+  if(c.dummyCfg?.speedMul){ maxSpeed *= c.dummyCfg.speedMul; maxForce *= Math.max(0.5, Math.min(2.5, c.dummyCfg.speedMul)); }
   return { maxSpeed, maxForce };
 }
 function energyCapacity(c){ return CONFIG.cell.energyMax * (1 + 0.08*(c.genome.GRÖ-5)); }
 function radiusOf(c){ return CONFIG.cell.radius * (0.7 + 0.1*(c.genome.GRÖ)); }
 
-/* Steering-Primitiven */
 function steerSeekArrive(c, target, maxSpeed, stopR, slowR){
   const dx=target.x - c.pos.x, dy=target.y - c.pos.y;
-  const d=len(dx,dy);
-  if(d < stopR) return [0,0];
-  let sp = maxSpeed;
-  if(d < slowR) sp = maxSpeed * (d/slowR);
+  const d=len(dx,dy); if(d < stopR) return [0,0];
+  let sp = maxSpeed; if(d < slowR) sp = maxSpeed * (d/slowR);
   const [ux,uy] = norm(dx,dy);
-  const desiredX = ux * sp, desiredY = uy * sp;
-  return [desiredX - c.vel.x, desiredY - c.vel.y];
+  return [ux*sp - c.vel.x, uy*sp - c.vel.y];
 }
 function steerSeparation(c, neighbors, sepR, ignoreId=null){
   let fx=0, fy=0, n=0;
@@ -177,8 +175,7 @@ function steerAlignment(c, neighbors, aliR, maxSpeed){
   }
   if(n===0) return [0,0,0];
   const [ux,uy] = norm(vx/n, vy/n);
-  const desiredX = ux * maxSpeed, desiredY = uy * maxSpeed;
-  return [desiredX - c.vel.x, desiredY - c.vel.y, n];
+  return [ux*maxSpeed - c.vel.x, uy*maxSpeed - c.vel.y, n];
 }
 function steerCohesion(c, neighbors, cohR, maxSpeed){
   let sx=0, sy=0, n=0;
@@ -195,37 +192,27 @@ function steerCohesion(c, neighbors, cohR, maxSpeed){
 function steerWallAvoid(c){
   const r = CONFIG.physics.wallAvoidRadius + radiusOf(c);
   let fx=0, fy=0;
-
   const l = c.pos.x;            if(l < r) fx += (r - l)/r;
   const rgt = W - c.pos.x;      if(rgt < r) fx -= (r - rgt)/r;
   const t = c.pos.y;            if(t < r) fy += (r - t)/r;
   const b = H - c.pos.y;        if(b < r) fy -= (r - b)/r;
-
   return [fx, fy];
 }
 function updateWander(c, dt){
   const th = CONFIG.physics.wanderTheta;
   const sg = CONFIG.physics.wanderSigma;
-  const gauss = ()=> {
-    let u=0,v=0; while(u===0) u=Math.random(); while(v===0) v=Math.random();
-    return Math.sqrt(-2*Math.log(u)) * Math.cos(2*Math.PI*v);
-  };
+  const gauss = ()=>{ let u=0,v=0; while(u===0) u=Math.random(); while(v===0) v=Math.random(); return Math.sqrt(-2*Math.log(u)) * Math.cos(2*Math.PI*v); };
   c.wander.vx += th * (0 - c.wander.vx) * dt + sg * Math.sqrt(dt) * gauss();
   c.wander.vy += th * (0 - c.wander.vy) * dt + sg * Math.sqrt(dt) * gauss();
   const [ux,uy] = (len(c.vel.x, c.vel.y) > 1e-3) ? norm(c.vel.x, c.vel.y) : [0,0];
   return [ c.wander.vx + 0.2*ux, c.wander.vy + 0.2*uy ];
 }
 
-/* Nahrung & Partner-Ziele */
 function nearestFoodCenter(c, sense){
-  // Schwerpunkt der bis zu 3 nächsten Items
   let best = [];
   for(const f of foodItems){
     const dx=f.x - c.pos.x, dy=f.y - c.pos.y;
-    const d2=dx*dx+dy*dy;
-    if(d2 < sense*sense){
-      best.push({ f, d2 });
-    }
+    const d2=dx*dx+dy*dy; if(d2 < sense*sense){ best.push({ f, d2 }); }
   }
   if(best.length===0) return null;
   best.sort((a,b)=>a.d2-b.d2);
@@ -238,13 +225,9 @@ function chooseMate(c, sense, cells){
   if(c.cooldown>0) return null;
   let best=null, bestScore=-1e9;
   for(const o of cells){
-    if(o===c) continue;
-    if(o.sex===c.sex) continue;
-    if(o.cooldown>0) continue;
+    if(o===c || o.sex===c.sex || o.cooldown>0) continue;
     const dx=o.pos.x - c.pos.x, dy=o.pos.y - c.pos.y;
-    const d2=dx*dx+dy*dy;
-    if(d2 > sense*sense) continue;
-
+    const d2=dx*dx+dy*dy; if(d2 > sense*sense) continue;
     const distScore = -Math.sqrt(d2);
     const geneScore = (o.genome.EFF*0.8 + (10-o.genome.MET)*0.7 + o.genome.SCH*0.2 + o.genome.TEM*0.2);
     const total = distScore*0.05 + geneScore;
@@ -253,7 +236,6 @@ function chooseMate(c, sense, cells){
   return best;
 }
 
-/* Priority-Blending Helfer */
 function addWithBudget(state, vx, vy, weight){
   if(weight<=0) return state;
   const rx = vx*weight, ry = vy*weight;
@@ -261,9 +243,7 @@ function addWithBudget(state, vx, vy, weight){
   if(mag < 1e-6 || state.rem<=0) return state;
   const allowed = Math.min(mag, state.rem);
   const s = allowed / mag;
-  state.fx += rx * s;
-  state.fy += ry * s;
-  state.rem -= allowed;
+  state.fx += rx * s; state.fy += ry * s; state.rem -= allowed;
   return state;
 }
 
@@ -295,38 +275,41 @@ export function step(dt, env, t=0){
       (env.nano.enabled  ? 0.3 : 0), 0, 1
     );
 
-    // Feeding-Lock: nahe Food ⇒ Fokus
+    // Feeding-Lock
     let nearestFood = null, nearestD2 = Infinity;
     const eatRBase = CONFIG.food.itemRadius + radiusOf(c) + 0.5;
-    const eatRLock = eatRBase * 1.6; // Lock, wenn „sehr nahe“
+    const eatRLock = eatRBase * 1.6;
     for(const f of foodItems){
       const dx=f.x - c.pos.x, dy=f.y - c.pos.y;
-      const d2=dx*dx+dy*dy;
-      if(d2 < nearestD2){ nearestD2 = d2; nearestFood = f; }
+      const d2=dx*dx+dy*dy; if(d2 < nearestD2){ nearestD2 = d2; nearestFood = f; }
     }
     const isNearFood = nearestFood && nearestD2 < (eatRLock*eatRLock);
     let wantFood = wantFood0;
     if(isNearFood && eRatio < 0.95){
-      c.feedLockT = Math.max(c.feedLockT, 0.8); // 0.8 s am Food bleiben
+      c.feedLockT = Math.max(c.feedLockT, 0.8);
       wantFood = Math.max(wantFood, 0.9);
-      // bei aktivem Feed-Lock: Mate stark drosseln
-      wantMate *= 0.15;
-      // Senses für Food etwas erhöhen, damit sie „kleben“
       senseFood *= 1.2;
+      wantMate *= 0.15;
     }
 
     // Courtship-Prio
     let mateTarget = null;
     if(c.mateLockId && c.mateLockT > 0){
       mateTarget = neighbors.find(o=>o.id===c.mateLockId) || null;
-      if(mateTarget){
-        wantMate = Math.max(wantMate, 0.9);
-        senseMate *= 1.4;
-      }else{
-        c.mateLockId = null; c.mateLockT = 0;
-      }
+      if(mateTarget){ wantMate = Math.max(wantMate, 0.9); senseMate *= 1.4; }
+      else { c.mateLockId = null; c.mateLockT = 0; }
     } else if (wantMate > 0.05){
       mateTarget = chooseMate(c, senseMate, neighbors);
+    }
+
+    // Dummy: manuelles Ziel / Flocking-/Wander-Schalter
+    let manualTarget = null;
+    let flockEnabled = true;
+    let wanderEnabled = true;
+    if(c.dummyCfg){
+      if(c.dummyCfg.manualTarget) manualTarget = c.dummyCfg.manualTarget;
+      if(c.dummyCfg.disableFlocking) flockEnabled = false;
+      if(c.dummyCfg.noWander) wanderEnabled = false;
     }
 
     // Ziele
@@ -339,52 +322,43 @@ export function step(dt, env, t=0){
     const foodStop = CONFIG.food.itemRadius + radiusOf(c) + 2;
     const mateStop = CONFIG.cell.pairDistance * 0.9;
 
-    let fFood=[0,0], fMate=[0,0];
-    if(foodTarget){
-      fFood = steerSeekArrive(c, foodTarget, maxSpeed, foodStop, slowR);
-    }
-    if(mateTarget){
-      fMate = steerSeekArrive(c, {x:mateTarget.pos.x, y:mateTarget.pos.y}, maxSpeed*0.9, mateStop, slowR);
-    }
+    let fFood=[0,0], fMate=[0,0], fManual=[0,0];
+    if(foodTarget){ fFood = steerSeekArrive(c, foodTarget, maxSpeed, foodStop, slowR); }
+    if(mateTarget){ fMate = steerSeekArrive(c, {x:mateTarget.pos.x, y:mateTarget.pos.y}, maxSpeed*0.9, mateStop, slowR); }
+    if(manualTarget){ fManual = steerSeekArrive(c, manualTarget, maxSpeed, CONFIG.physics.stopRadius, slowR); }
 
     // Flocking
     let nSep=0, nAli=0, nCoh=0;
     let fSep=[0,0], fAli=[0,0], fCoh=[0,0];
-    if(CONFIG.physics.enableSep){
-      const r = steerSeparation(c, neighbors, sep, mateTarget?.id || null);
-      fSep = [r[0], r[1]]; nSep = r[2];
-    }
-    if(CONFIG.physics.enableAli){
-      const r = steerAlignment(c, neighbors, ali, maxSpeed);
-      fAli = [r[0], r[1]]; nAli = r[2];
-    }
-    if(CONFIG.physics.enableCoh){
-      const r = steerCohesion(c, neighbors, coh, maxSpeed);
-      fCoh = [r[0], r[1]]; nCoh = r[2];
+    if(flockEnabled){
+      const r1 = steerSeparation(c, neighbors, sep, mateTarget?.id || null); fSep=[r1[0],r1[1]]; nSep=r1[2];
+      const r2 = steerAlignment(c, neighbors, ali, maxSpeed);             fAli=[r2[0],r2[1]]; nAli=r2[2];
+      const r3 = steerCohesion(c, neighbors, coh, maxSpeed);              fCoh=[r3[0],r3[1]]; nCoh=r3[2];
     }
 
     // Rand-Vermeidung
     const fAvoid = steerWallAvoid(c);
-
-    // Wander (gedrosselt bei Ziel/Feed-Lock)
-    const hasTarget = !!(foodTarget || mateTarget);
+    // Wander
     let fWander=[0,0];
-    if(CONFIG.physics.enableWander){
-      fWander = updateWander(c, dt);
-    }
+    if(wanderEnabled){ fWander = updateWander(c, dt); }
 
-    /* ===== Priority-Blending mit Restbudget ===== */
+    /* ===== Priority-Blending ===== */
     let st = { fx:0, fy:0, rem: maxForce };
 
     // 1) Avoid
     st = addWithBudget(st, fAvoid[0], fAvoid[1],
       CONFIG.physics.wAvoid * (0.6 + 0.7*wantAvoid) * (0.9 + 0.03*g.SCH));
 
-    // Hunger-bedingte Drosselung anderer Kräfte
-    const hungerFac = (wantFood > 0.6) ? 0.35 : 1.0;      // stark hungrig → drossele Nicht-Food
-    const flockFacBase = (wantFood > 0.6) ? 0.35 : 1.0;   // Flocking runter wenn hungrig
+    // 2) Manuelles Ziel (Dummy hat Vorrang vor allem anderen außer Avoid)
+    if(manualTarget){
+      st = addWithBudget(st, fManual[0], fManual[1], 1.2); // kräftig
+    }
 
-    // 2) Hauptziel (Food bevorzugt bei Hunger)
+    // Hunger-Drosselung
+    const hungerFac = (wantFood > 0.6) ? 0.35 : 1.0;
+    const flockFacBase = (wantFood > 0.6) ? 0.35 : 1.0;
+
+    // 3) Hauptziel Food/Mate mit Secondary
     const wFood = CONFIG.physics.wFood * (0.7 + 0.5*wantFood) * (0.85 + 0.05*g.EFF) * (c.feedLockT>0 ? 1.35 : 1.0);
     const wMate = CONFIG.physics.wMate * (0.8 + 0.4*wantMate) * (c.feedLockT>0 ? 0.25 : 1.0) * hungerFac;
     const secondaryScale = CONFIG.physics.secondaryGoalScale;
@@ -398,41 +372,27 @@ export function step(dt, env, t=0){
       if(foodTarget) st = addWithBudget(st, fFood[0], fFood[1], wFood * secondaryScale);
     }
 
-    // 3) Separation
-    if(CONFIG.physics.enableSep){
+    // 4/5/6) Flocking + Wander
+    if(flockEnabled){
       st = addWithBudget(st, fSep[0], fSep[1], CONFIG.physics.wSep * flockFacBase);
-    }
-
-    // 4/5) Cohesion & Alignment – adaptiv nach Nachbarn, zusätzlich Hunger-Drossel
-    const nFlock = Math.max(nAli, nCoh);
-    let flockFac = 1.0;
-    if(nFlock < 3) flockFac = 0.45;
-    else if(nFlock > 8) flockFac = 1.25;
-    flockFac *= flockFacBase;
-
-    if(CONFIG.physics.enableCoh){
+      const nFlock = Math.max(nAli, nCoh);
+      let flockFac = 1.0; if(nFlock < 3) flockFac = 0.45; else if(nFlock > 8) flockFac = 1.25;
+      flockFac *= flockFacBase;
       st = addWithBudget(st, fCoh[0], fCoh[1], CONFIG.physics.wCoh * flockFac);
-    }
-    if(CONFIG.physics.enableAli){
       st = addWithBudget(st, fAli[0], fAli[1], CONFIG.physics.wAli * flockFac);
     }
-
-    // 6) Wander – sehr stark drosseln bei Feed-Lock/Ziel/Hazard
+    const hasTarget = !!(foodTarget || mateTarget || manualTarget);
     const wanderScaleBase = CONFIG.physics.wWander * (hasTarget ? CONFIG.physics.wanderWhenTarget : 1.0);
-    const wanderScale = wanderScaleBase * (1 - 0.6*wantAvoid) * (c.feedLockT>0 ? 0.1 : 1.0) * hungerFac;
-    if(CONFIG.physics.enableWander){
-      st = addWithBudget(st, fWander[0], fWander[1], wanderScale);
-    }
+    const wanderScale = wanderEnabled ? (wanderScaleBase * (1 - 0.6*wantAvoid) * (c.feedLockT>0 ? 0.1 : 1.0) * hungerFac) : 0;
+    st = addWithBudget(st, fWander[0], fWander[1], wanderScale);
 
-    // Limit & Integration
     [st.fx, st.fy] = limitVec(st.fx, st.fy, maxForce);
-    c.vel.x += st.fx * dt;
-    c.vel.y += st.fy * dt;
-    [c.vel.x, c.vel.y] = limitVec(c.vel.x, c.vel.y, maxSpeed);
 
+    // Integration
+    c.vel.x += st.fx * dt; c.vel.y += st.fy * dt;
+    [c.vel.x, c.vel.y] = limitVec(c.vel.x, c.vel.y, maxSpeed);
     c.pos.x = clamp(c.pos.x + c.vel.x * dt, 0, W);
     c.pos.y = clamp(c.pos.y + c.vel.y * dt, 0, H);
-    // etwas höhere Dämpfung, wenn Feed-Lock aktiv (ruhiger am Food stehen)
     const damp = (c.feedLockT>0) ? 0.975 : 0.985;
     c.vel.x *= damp; c.vel.y *= damp;
 
@@ -446,43 +406,47 @@ export function step(dt, env, t=0){
         const got = Math.min(take, f.amount);
         c.energy = Math.min(energyCapacity(c), c.energy + got);
         f.amount -= got;
-        if(f.amount <= 1){
-          foodItems.splice(k,1);
-        }
+        if(f.amount <= 1){ foodItems.splice(k,1); }
       }
     }
 
-    /* ===== Energiehaushalt & Umwelt ===== */
+    /* ===== Energie & Umwelt ===== */
     const sp = len(c.vel.x, c.vel.y);
     const baseDrain = CONFIG.cell.baseMetabolic * (0.6 + 0.1*g.MET) * dt;
     const moveDrain = (CONFIG.physics.moveCostK ?? 0.0006) * sp * sp * dt;
     c.energy -= baseDrain + moveDrain;
 
-    // Umgebungsschaden
+    // Umweltschaden (Dummy unsterblich?)
     let dmg = 0;
-    const nearLeft = c.pos.x, nearRight = W - c.pos.x, nearTop = c.pos.y, nearBot = H - c.pos.y;
-    const distEdge = Math.min(nearLeft,nearRight,nearTop,nearBot);
+    if(!(c.dummyCfg?.invulnerable)){
+      const nearLeft = c.pos.x, nearRight = W - c.pos.x, nearTop = c.pos.y, nearBot = H - c.pos.y;
+      const distEdge = Math.min(nearLeft,nearRight,nearTop,nearBot);
+      if(env.acid.enabled && distEdge < env.acid.range){ dmg += env.acid.dps * dt; }
+      if(env.barb.enabled && distEdge < env.barb.range){ dmg += env.barb.dps * dt; }
+      if(env.nano.enabled){ dmg += env.nano.dps * dt; }
+      dmg *= (1 - 0.06 * (g.SCH-5));
+      c.energy -= Math.max(0, dmg);
 
-    if(env.acid.enabled && distEdge < env.acid.range){ dmg += env.acid.dps * dt; }
-    if(env.barb.enabled && distEdge < env.barb.range){ dmg += env.barb.dps * dt; }
-    if(env.nano.enabled){ dmg += env.nano.dps * dt; }
-    dmg *= (1 - 0.06 * (g.SCH-5)); // Schild
-    c.energy -= Math.max(0, dmg);
-
-    // Zaunimpuls
-    if(env.fence.enabled && distEdge < env.fence.range){
-      const phase = (t % env.fence.period);
-      if(phase < dt){
-        const fx = (nearLeft === distEdge) ? 1 : (nearRight === distEdge ? -1 : 0);
-        const fy = (nearTop === distEdge) ? 1 : (nearBot === distEdge ? -1 : 0);
-        c.vel.x += fx * env.fence.impulse;
-        c.vel.y += fy * env.fence.impulse;
+      if(env.fence.enabled && distEdge < env.fence.range){
+        const phase = (t % env.fence.period);
+        if(phase < dt){
+          const fx = (nearLeft === distEdge) ? 1 : (nearRight === distEdge ? -1 : 0);
+          const fy = (nearTop === distEdge) ? 1 : (nearBot === distEdge ? -1 : 0);
+          c.vel.x += fx * env.fence.impulse;
+          c.vel.y += fy * env.fence.impulse;
+        }
       }
+    }
+
+    // Dummy: unendliche Energie?
+    if(c.dummyCfg?.infiniteEnergy){
+      c.energy = energyCapacity(c);
     }
 
     // Tod
     if(c.energy <= 0 || c.age > CONFIG.cell.ageMax){
-      killCell(c.id);
+      if(!c.isDummy) killCell(c.id);
+      else c.energy = Math.max(1, c.energy); // Dummy stirbt nicht „einfach so“
     }
   }
 }

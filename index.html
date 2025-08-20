@@ -38,6 +38,7 @@
         <span class="group-title">Werkzeuge</span>
         <button id="btnEditor">CRISPR-Editor</button>
         <button id="btnEnv">Umwelt</button>
+        <button id="btnDummy">Dummy</button>
       </div>
     </div>
 
@@ -51,6 +52,7 @@
   <!-- Panels -->
   <div id="editorPanel" class="panel hidden"></div>
   <div id="envPanel" class="panel hidden"></div>
+  <div id="dummyPanel" class="panel hidden"></div>
 
   <!-- Error overlay -->
   <div id="errorOverlay" class="hidden">
@@ -61,7 +63,7 @@
     </div>
   </div>
 
-  <!-- Diagnose zuerst -->
+  <!-- Diagnose zuerst (optional, falls bereits im Projekt) -->
   <script type="module" src="./preflight.js"></script>
   <!-- Engine danach -->
   <script type="module" src="./engine.js"></script>

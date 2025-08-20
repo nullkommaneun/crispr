@@ -9,6 +9,7 @@ import { openEditor } from "./editor.js";
 import { openEnvPanel, getEnvState } from "./environment.js";
 import { initTicker, setPerfMode as tickerPerf, pushFrame } from "./ticker.js";
 import { emit } from "./event.js";
+import { openDummyPanel, handleCanvasClickForDummy } from "./dummy.js";
 
 let running = false;
 let timescale = 1;
@@ -44,6 +45,7 @@ function bindUI() {
   document.getElementById("btnReset").onclick = reset;
   document.getElementById("btnEditor").onclick = openEditor;
   document.getElementById("btnEnv").onclick = openEnvPanel;
+  document.getElementById("btnDummy").onclick = openDummyPanel;
 
   const mu = document.getElementById("mutation");
   mu.oninput = () => setMutationRate(parseFloat(mu.value));
@@ -56,6 +58,15 @@ function bindUI() {
 
   const sp = document.getElementById("btnSpeed");
   sp.onclick = () => cycleSpeed();
+
+  // Canvas-Klick → ggf. Dummy-Ziel setzen
+  const canvas = document.getElementById("world");
+  canvas.addEventListener("click", (e)=>{
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    handleCanvasClickForDummy(x, y);
+  });
 
   // Defaults setzen
   setMutationRate(parseFloat(mu.value));
@@ -111,10 +122,7 @@ function frame(now) {
 
 /** Public API */
 export function boot() {
-  try{
-    initErrorManager();
-  }catch(e){ /* falls errorManager selbst fehlt */ }
-
+  try{ initErrorManager(); }catch(e){}
   resizeCanvas();
   window.addEventListener("resize", resizeCanvas);
 
@@ -127,7 +135,6 @@ export function boot() {
   bindUI();
   draw();
 
-  // Preflight-Bootflag setzen (damit Diagnose weiß: Engine läuft)
   window.__APP_BOOTED = true;
 }
 
@@ -141,7 +148,7 @@ export function reset(){
 }
 export function setTimescale(x){
   timescale = Math.max(0.1, Math.min(50, x));
-  emit("ui:speed", timescale); // Ticker via Event aktualisieren
+  emit("ui:speed", timescale);
 }
 export function setPerfMode(on){
   perfMode = !!on;
