@@ -1,5 +1,5 @@
 // environment/panel.js
-import { applyEnvironment } from './entities.js';
+import { applyEnvironment } from '../entities.js';
 
 let $o=null;
 function h(html){ const d=document.createElement('div'); d.innerHTML=html.trim(); return d.firstChild; }
