@@ -1,96 +1,157 @@
-// reproduction.js – Paarung mit Nachbarsuche (falls neighborQuery vorhanden)
+// reproduction.js
+// Paarungsverhalten mit leicht kooperativem Tuning:
+// - größere effektive Reichweite
+// - niedrigere Energie-Schwelle, kürzerer Cooldown
+// - geringere Paarungskosten
+// - Score-basierte Partnerwahl (Distanz, Fitness, Kompatibilität, anderer Stamm)
 
 import { Events, EVT } from './event.js';
-import { recombineGenes } from './genetics.js';
+import { recombineGenes, survivalScore } from './genetics.js';
 
-const MATE_DISTANCE_FACTOR = 1.2;
-const now = ()=> performance.now()/1000;
+const MATE_DISTANCE_FACTOR = 1.35;   // vorher 1.2 – erleichtert Kontakte
+const ENERGY_THR_MULT      = 0.85;   // ~15% geringere Schwelle
+const COOLDOWN_MULT        = 0.85;   // ~15% kürzerer Cooldown
+const COST_OFFSET          = -1;     // Energie-Kosten je Elternteil -1 (min 1)
 
-function eligible(c,tNow){
-  if(c.dead) return false;
-  const cd=c.derived?.mateCooldown ?? 6;
-  const thr=c.derived?.mateEnergyThreshold ?? 14;
-  if((tNow-(c.lastMateAt||0)) < cd) return false;
-  return c.energy >= thr;
+/** Zeit in Sekunden */
+const now = () => performance.now() / 1000;
+
+/** Eligibility mit abgesenkter Schwelle & Cooldown */
+function eligible(c, tNow){
+  if (c.dead) return false;
+  const baseThr = c.derived?.mateEnergyThreshold ?? 14;
+  const baseCd  = c.derived?.mateCooldown ?? 6;
+
+  const thr = Math.max(6, baseThr * ENERGY_THR_MULT);
+  const cd  = Math.max(1.5, baseCd  * COOLDOWN_MULT);
+
+  if ((tNow - (c.lastMateAt || 0)) < cd) return false;
+  if (c.energy < thr) return false;
+  return true;
+}
+
+/** Paarungs-Score (größer = besser) */
+function mateScore(a, b, dist){
+  // Distanznähe (0..1): sehr nah bevorzugt
+  const prox = 1 / (dist + 8);
+
+  // Fitness (0..1): mittlere Fitness beider Eltern
+  const fitA = survivalScore(a.genes) / 100;
+  const fitB = survivalScore(b.genes) / 100;
+  const fit  = (fitA + fitB) * 0.5;
+
+  // Verwandtschaft (0..1): geringe Verwandtschaft ist gut
+  const rel = typeof a._relatednessFn === 'function'
+    ? a._relatednessFn(a, b)
+    : 0;
+  const compat = Math.max(0.2, 1 - 0.8 * rel); // Inzest bremst, aber nie 0
+
+  // Bonus anderer Stamm
+  const cross = (a.stammId !== b.stammId) ? 1.15 : 1.0;
+
+  // Gewichte: Distanz 0.45, Fitness 0.35, Kompatibilität 0.20
+  const base = (0.45 * prox) + (0.35 * fit) + (0.20 * compat);
+  return base * cross;
 }
 
 /**
- * alive: Array<cell>
- * spawnFn: (params)=>cell
- * opts: { mutationRate, relatednessFn, neighborQuery?: (cell)=>Iterable<cell> }
+ * evaluateMatingPairs
+ * @param {Array} aliveCells   – lebende Zellen
+ * @param {Function} spawnFn   – (params)=>cell  (wird von entities.createCell gereicht)
+ * @param {Object} opts        – { mutationRate, relatednessFn, neighborQuery? }
  */
-export function evaluateMatingPairs(alive, spawnFn, opts){
-  const { mutationRate=0.1, relatednessFn, neighborQuery } = opts || {};
-  const t = now();
+export function evaluateMatingPairs(aliveCells, spawnFn, opts = {}){
+  const { mutationRate = 0.10, relatednessFn, neighborQuery } = opts;
+  const tNow = now();
 
-  if (neighborQuery){
-    // Pro Zelle nur Kandidaten aus Nachbarschaft (einseitig: nur b.id > a.id)
-    for(const a of alive){
-      for(const b of neighborQuery(a)){
-        if(b.id <= a.id) continue;
-        if(a.sex === b.sex) continue;
-        // Nähe
-        const dx=a.x-b.x, dy=a.y-b.y;
-        const rr=(a.radius+b.radius)*MATE_DISTANCE_FACTOR;
-        if(dx*dx+dy*dy > rr*rr) continue;
-        if(!eligible(a,t) || !eligible(b,t)) continue;
+  // Flag, damit eine Zelle pro Tick höchstens einmal paart
+  const paired = new Set();
 
-        const mother = a.sex==='f' ? a : b;
-        const father = a.sex==='m' ? a : b;
-        const rel   = typeof relatednessFn==='function' ? relatednessFn(a,b) : 0;
-        const genes = recombineGenes(mother.genes, father.genes, { mutationRate, inbreeding: rel });
+  // Hilfsfunktion: bestes Gegenüber aus Nachbarschaft für a finden
+  function bestPartnerFor(a){
+    let best = null, bestScore = -Infinity;
 
-        const px=(a.x+b.x)/2 + (Math.random()*12-6);
-        const py=(a.y+b.y)/2 + (Math.random()*12-6);
+    const candidates = neighborQuery
+      ? Array.from(neighborQuery(a))
+      : aliveCells; // Fallback ohne Grid
 
-        const child = spawnFn({
-          x:px, y:py, genes,
-          stammId: mother.stammId,
-          parents: { motherId: mother.id, fatherId: father.id },
-          energy: 14
-        });
+    const rr = (radA) => (radA) * MATE_DISTANCE_FACTOR; // wird mit b addiert
 
-        const costA=a.derived?.mateEnergyCost ?? 4;
-        const costB=b.derived?.mateEnergyCost ?? 4;
-        a.lastMateAt=b.lastMateAt=t;
-        a.energy=Math.max(0,a.energy-costA);
-        b.energy=Math.max(0,b.energy-costB);
+    for (const b of candidates){
+      if (b === a || paired.has(b.id) || b.dead) continue;
+      if (b.sex === a.sex) continue;
 
-        Events.emit(EVT.MATE, { aId:a.id, bId:b.id, motherId:mother.id, fatherId:father.id, relatedness:rel });
-        Events.emit(EVT.BIRTH,{ id:child.id, stammId:child.stammId, parents:child.parents });
+      // Reichweite (symmetrisch)
+      const dx = a.x - b.x, dy = a.y - b.y;
+      const dist = Math.hypot(dx, dy);
+      const range = rr(a.radius + b.radius);
+      if (dist > range) continue;
+
+      // Status & Energie
+      if (!eligible(a, tNow) || !eligible(b, tNow)) continue;
+
+      // Score
+      a._relatednessFn = relatednessFn; // für score()
+      const s = mateScore(a, b, dist);
+      if (s > bestScore){
+        bestScore = s; best = { b, dist, score: s };
       }
     }
-  } else {
-    // Fallback (kleine Populationen)
-    const n = alive.length;
-    for(let i=0;i<n;i++){
-      const a = alive[i];
-      for(let j=i+1;j<n;j++){
-        const b = alive[j];
-        if(a.sex === b.sex) continue;
-        const dx=a.x-b.x, dy=a.y-b.y;
-        const rr=(a.radius+b.radius)*MATE_DISTANCE_FACTOR;
-        if(dx*dx+dy*dy > rr*rr) continue;
-        if(!eligible(a,t) || !eligible(b,t)) continue;
 
-        const mother = a.sex==='f' ? a : b;
-        const father = a.sex==='m' ? a : b;
-        const rel   = typeof relatednessFn==='function' ? relatednessFn(a,b) : 0;
-        const genes = recombineGenes(mother.genes, father.genes, { mutationRate, inbreeding: rel });
+    return best;
+  }
 
-        const px=(a.x+b.x)/2 + (Math.random()*12-6);
-        const py=(a.y+b.y)/2 + (Math.random()*12-6);
-        const child = spawnFn({ x:px, y:py, genes, stammId:mother.stammId, parents:{motherId:mother.id,fatherId:father.id}, energy:14 });
+  // Pro Zelle (in zufälliger Reihenfolge) Partner wählen
+  // – Shuffle leichte Varianz
+  const order = aliveCells.slice();
+  for (let i=order.length-1; i>0; i--){
+    const j = (Math.random()*(i+1))|0; const tmp = order[i]; order[i]=order[j]; order[j]=tmp;
+  }
 
-        const costA=a.derived?.mateEnergyCost ?? 4;
-        const costB=b.derived?.mateEnergyCost ?? 4;
-        a.lastMateAt=b.lastMateAt=t;
-        a.energy=Math.max(0,a.energy-costA);
-        b.energy=Math.max(0,b.energy-costB);
+  for (const a of order){
+    if (paired.has(a.id) || a.dead) continue;
 
-        Events.emit(EVT.MATE, { aId:a.id, bId:b.id, motherId:mother.id, fatherId:father.id, relatedness:rel });
-        Events.emit(EVT.BIRTH,{ id:child.id, stammId:child.stammId, parents:child.parents });
-      }
-    }
+    const pick = bestPartnerFor(a);
+    if (!pick) continue;
+
+    const { b } = pick;
+    if (paired.has(b.id)) continue;
+
+    // Gene des Kindes
+    const rel = typeof relatednessFn === 'function' ? relatednessFn(a, b) : 0;
+    const genes = recombineGenes(
+      (a.sex === 'f' ? a : b).genes,
+      (a.sex === 'm' ? a : b).genes,
+      { mutationRate, inbreeding: rel }
+    );
+
+    const px = (a.x + b.x)/2 + (Math.random()*12-6);
+    const py = (a.y + b.y)/2 + (Math.random()*12-6);
+
+    // Mutter/Vater bestimmen
+    const mother = a.sex === 'f' ? a : b;
+    const father = a.sex === 'm' ? a : b;
+
+    // Kind erzeugen (gleiche Stammlinie wie die Mutter)
+    const child = spawnFn({
+      x: px, y: py,
+      genes,
+      stammId: mother.stammId,
+      parents: { motherId: mother.id, fatherId: father.id },
+      energy: 14
+    });
+
+    // Energie-Kosten leicht reduziert
+    const costA = Math.max(1, (a.derived?.mateEnergyCost ?? 4) + COST_OFFSET);
+    const costB = Math.max(1, (b.derived?.mateEnergyCost ?? 4) + COST_OFFSET);
+    a.lastMateAt = b.lastMateAt = tNow;
+    a.energy = Math.max(0, a.energy - costA);
+    b.energy = Math.max(0, b.energy - costB);
+
+    paired.add(a.id); paired.add(b.id);
+
+    // Events
+    Events.emit(EVT.MATE,  { aId:a.id, bId:b.id, motherId:mother.id, fatherId:father.id, relatedness: rel });
+    Events.emit(EVT.BIRTH, { id: child.id, stammId: child.stammId, parents: child.parents });
   }
 }
