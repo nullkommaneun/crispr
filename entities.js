@@ -6,7 +6,7 @@
 //  - Bewegung mit sanfter Glättung, Rand-Reflexion
 // MET (Stoffwechsel) wirkt auf Basis-Drain & Hunger-Kurve
 
-import { Events, EVT } from './event.js';
+import { on, off, emit, once, EVT } from './event.js';
 import { getStammColor } from './legend.js';
 import { createGenome, survivalScore } from './genetics.js';
 import { evaluateMatingPairs } from './reproduction.js';

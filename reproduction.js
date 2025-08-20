@@ -5,7 +5,7 @@
 // - geringere Paarungskosten
 // - Score-basierte Partnerwahl (Distanz, Fitness, Kompatibilität, anderer Stamm)
 
-import { Events, EVT } from './event.js';
+import { on, off, emit, once, EVT } from './event.js';
 import { recombineGenes, survivalScore } from './genetics.js';
 
 const MATE_DISTANCE_FACTOR = 1.35;   // vorher 1.2 – erleichtert Kontakte

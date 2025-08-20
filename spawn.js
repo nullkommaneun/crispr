@@ -9,7 +9,7 @@ import {
   setFounders,
 } from './entities.js';
 import { createGenome } from './genetics.js';
-import { Events, EVT } from './event.js';
+import { on, off, emit, once, EVT } from './event.js';
 
 export function seedWorld(w, h){
   // Zentrale Startposition (leicht links/rechts versetzt)

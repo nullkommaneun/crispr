@@ -1,7 +1,7 @@
 // engine.js – Gameloop, UI, Orchestrierung (Fixed Timestep)
 
 import { initErrorManager, setContextGetter, assertModule, showError } from './errorManager.js';
-import { Events, EVT } from './event.js';
+import { on, off, emit, once, EVT } from './event.js';
 import { Renderer } from './renderer.js';
 import { seedWorld } from './spawn.js';
 import * as Entities from './entities.js';

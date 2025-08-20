@@ -5,7 +5,7 @@
 // - aktualisiert Text alle ~5 s
 // - konstante Scrolling-Geschwindigkeit, nahtloser Loop
 
-import { Events, EVT } from './event.js';
+import { on, off, emit, once, EVT } from './event.js';
 import * as Entities from './entities.js';
 import { getStatusLabel } from './advisor.js';
 
