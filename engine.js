@@ -5,7 +5,6 @@ import { step as foodStep, setSpawnRate } from "./food.js";
 import { draw, setPerfMode as rendererPerf } from "./renderer.js";
 import { openEditor } from "./editor.js";
 import { openEnvPanel, getEnvState } from "./environment.js";
-import { initNarrative, openDaily } from "./narrative/panel.js";
 import { initTicker, setPerfMode as tickerPerf, pushFrame } from "./ticker.js";
 
 let running = false;
@@ -41,7 +40,6 @@ function bindUI() {
   document.getElementById("btnReset").onclick = reset;
   document.getElementById("btnEditor").onclick = openEditor;
   document.getElementById("btnEnv").onclick = openEnvPanel;
-  document.getElementById("btnDaily").onclick = openDaily;
 
   const ts = document.getElementById("timescale");
   ts.oninput = () => setTimescale(parseFloat(ts.value));
@@ -111,7 +109,6 @@ export function boot() {
   createAdamAndEve();
   applyEnvironment(getEnvState());
 
-  initNarrative();
   initTicker();
   bindUI();
 

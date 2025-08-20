@@ -88,10 +88,6 @@ button:hover{background:#1a2a35}
 .panel .row input[type=range]{width:150px}
 .badge{display:inline-block;padding:2px 6px;border-radius:999px;background:#18242d;border:1px solid #274050;color:#bde1ff;font-size:12px}
 
-/* DNA Daily */
-.story{border-left:3px solid #274f2f;padding:6px 8px;margin:8px 0;background:#0f151a;border-radius:6px}
-.story .time{color:#89a; font-size:12px}
-
 /* Error overlay – ganz oben */
 #errorOverlay{
   position:fixed; inset:0; z-index:4000;
