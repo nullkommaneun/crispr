@@ -1,167 +1,57 @@
-/* style.css – Apoc-Theme, UI-Basis + Editor 2.0 + Umwelt
-   ------------------------------------------------------------------------- */
-
-:root{
-  --bg: #0b0f11;
-  --panel-1:#0f1416;
-  --panel-2:#10181b;
-  --panel-3:#0a0f11;
-  --line-1:#1e2a2e;
-  --line-2:#1d272a;
-  --text-1:#e7f0ea;
-  --text-2:#b7c4be;
-  --muted:#8aa39a;
-  --accent:#89f17f;
-  --accent-2:#ffd166;
-  --danger:#ff6b6b;
-  --warn:#f6a821;
-  --ok:#2dd4bf;
-  --chip-pos:#5fe18e;
-  --chip-neg:#ff7575;
+body {
+    background-color: #111;
+    color: #eee;
+    font-family: monospace;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
 }
 
-*{ box-sizing:border-box; }
-html, body{ margin:0; padding:0; background:var(--bg); color:var(--text-1); font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"Apple Color Emoji","Segoe UI Emoji"; }
-button, input, select{ font:inherit; }
-
-.btn{
-  background:var(--panel-3); color:var(--text-1);
-  border:1px solid var(--line-2); border-radius:10px;
-  padding:6px 12px; cursor:pointer;
-}
-.btn:hover{ filter:brightness(1.08); }
-.btn:active{ transform: translateY(1px); }
-.btn-ghost{ background:transparent; border:1px solid var(--line-2); }
-.btn-accent{ background:var(--accent); color:#0b0f11; border:1px solid #6ddc69; }
-.btn.sm{ padding:4px 8px; border-radius:8px; }
-
-/* Modal Basis */
-.modal{
-  position:fixed; inset:0; display:none;
-  align-items:center; justify-content:center;
-  backdrop-filter: blur(2px);
-  z-index:1000;
-}
-.modal.open{ display:flex; }
-.modal > .modalHeader, .modal > .modalBody{
-  background:var(--panel-2); color:var(--text-1);
-}
-.modal > .modalHeader{
-  position:relative; width:min(980px, calc(100vw - 2rem));
-  border:1px solid var(--line-2); border-bottom:none; border-radius:14px 14px 0 0;
-  padding:14px 16px; background:var(--panel-1);
-}
-.modal > .modalBody{
-  width:min(980px, calc(100vw - 2rem));
-  border:1px solid var(--line-2); border-top:none; border-radius:0 0 14px 14px;
-  padding:16px;
+#canvas {
+    display: block;
+    width: 100vw;
+    height: 100vh;
 }
 
-/* ---------- Editor 2.0 --------------------------------------------------- */
-
-.editorBody{
-  display:grid; grid-template-columns:1fr 380px; gap:20px;
-}
-@media (max-width: 900px){ .editorBody{ grid-template-columns:1fr; } }
-
-.editorBody h3{ margin:8px 0 10px; color:var(--text-1); }
-
-.traitRow{
-  display:flex; align-items:center; justify-content:space-between;
-  background:var(--panel-3); border:1px solid var(--line-2);
-  border-radius:10px; padding:10px 12px; margin-bottom:10px;
-}
-.traitRow label{ opacity:.92; }
-.stepper{ display:flex; align-items:center; gap:10px; }
-.stepper .val{ min-width:2.4ch; text-align:center; font-variant-numeric:tabular-nums; }
-
-.whatIfBox{
-  margin:12px 0; padding:12px;
-  background:var(--panel-3); border:1px solid var(--line-2); border-radius:10px;
-}
-.whatIfBox .scoreLine{ display:flex; align-items:baseline; gap:8px; }
-.whatIfBox strong{ font-size:1.2rem; }
-.traitChips{ margin-top:8px; display:flex; flex-wrap:wrap; gap:6px; }
-.chip{
-  padding:4px 8px; border-radius:999px; font-size:.85rem;
-  border:1px solid var(--line-2); background:var(--panel-1);
-}
-.chip.pos{ border-color: rgba(95,225,142,.4); color: var(--chip-pos); }
-.chip.neg{ border-color: rgba(255,117,117,.4); color: var(--chip-neg); }
-.chip.neu{ opacity:.75; }
-
-.btnRow{ display:flex; align-items:center; gap:10px; margin-top:10px; }
-.hint{ color:var(--muted); }
-
-/* Advisor Panel */
-.advisorPanel{
-  background:var(--panel-3); border:1px solid var(--line-2);
-  border-radius:10px; padding:10px 12px; margin-bottom:12px;
-}
-.advisorHeader{ display:flex; align-items:center; justify-content:space-between; gap:12px; }
-.seg{
-  display:inline-flex; background:var(--panel-2); border:1px solid var(--line-2);
-  border-radius:999px; padding:3px;
-}
-.seg button{
-  background:transparent; border:none; color:var(--text-1);
-  padding:6px 10px; border-radius:999px; cursor:pointer;
-}
-.seg button.active{ background:var(--accent); color:#0b0f11; }
-
-.advisorStatus{ display:flex; align-items:center; gap:8px; margin:10px 0 6px; }
-.dot{ width:10px; height:10px; border-radius:50%; display:inline-block; border:1px solid var(--line-2); }
-.dot-idle{ background:#566; }
-.dot-ok{ background:var(--ok); }
-.dot-warn{ background:var(--warn); }
-.dot-err{ background:var(--danger); }
-
-.modelLoader{ display:flex; gap:8px; }
-.modelLoader input{
-  flex:1; min-width:0; background:var(--panel-1); color:var(--text-1);
-  border:1px solid var(--line-2); border-radius:10px; padding:6px 10px;
+#ui-top-bar {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    background: rgba(0, 0, 0, 0.8);
+    padding: 10px;
+    z-index: 10;
 }
 
-/* Zellenliste */
-.cellList{
-  max-height: 52vh; overflow:auto;
-  background:var(--panel-3); border:1px solid var(--line-2); border-radius:10px;
-  padding:6px;
+button, input {
+    background: #222;
+    color: #eee;
+    border: 1px solid #444;
 }
-.cellRow{
-  width:100%; text-align:left; cursor:pointer;
-  display:grid; grid-template-columns: 1fr auto auto auto; gap:8px;
-  align-items:center; padding:8px 10px; border-radius:8px;
-  background:transparent; border:1px solid transparent; color:var(--text-1);
-}
-.cellRow:hover{ background:rgba(255,255,255,.03); border-color:var(--line-2); }
-.cellRow .cellName{ font-weight:600; }
-.cellRow .muted{ color:var(--muted); }
-.cellRow .sex{ opacity:.9; }
-.cellRow .score{ justify-self:end; font-variant-numeric:tabular-nums; }
 
-/* ---------- Umwelt-Modal (aus vorherigem Schritt) ------------------------ */
+#dna-daily, #ticker {
+    position: absolute;
+    bottom: 10px;
+    left: 10px;
+    width: 300px;
+    background: rgba(0, 0, 0, 0.7);
+    padding: 10px;
+    z-index: 10;
+}
 
-#envModal{
-  width: min(960px, calc(100vw - 2rem)); max-width:100%;
-  padding:0; background:var(--panel-2); color:var(--text-1);
-  border:1px solid var(--line-2); border-radius:14px; box-shadow:0 20px 60px rgba(0,0,0,.6);
+#editor-panel, #env-panel {
+    position: absolute;
+    top: 50px;
+    right: 10px;
+    width: 300px;
+    background: rgba(0, 0, 0, 0.8);
+    padding: 10px;
+    z-index: 10;
 }
-#envModal .modalHeader{
-  display:flex; align-items:center; justify-content:space-between;
-  padding:14px 16px; border-bottom:1px solid var(--line-2); background:var(--panel-1);
+
+/* Matrix-green for food */
+.food {
+    fill: #0f0;
 }
-#envModal .modalHeader h2{ margin:0; font-size:1.1rem; }
-#envModal .modalBody{ display:grid; grid-template-columns:1fr 320px; gap:20px; padding:16px; background:transparent; }
-@media (max-width: 880px){ #envModal .modalBody{ grid-template-columns:1fr; } }
-#envModal .editorLeft > .traitRow{ margin-bottom:10px; }
-#envModal .editorLeft .traitRow label{ display:block; margin:6px 2px; opacity:.9; }
-#envModal .stepper{ display:flex; align-items:center; gap:10px; background:var(--panel-3); border:1px solid var(--line-2); border-radius:10px; padding:10px 12px; }
-#envModal .stepper input[type="range"]{ flex:1; min-width:0; }
-#envModal .stepper .val{ min-width:3.8ch; text-align:right; font-variant-numeric:tabular-nums; opacity:.85; }
-#envModal .editorLeft input[type="checkbox"]{ transform:translateY(1px); accent-color:var(--accent); }
-#envModal .editorLeft .traitRow:has(input[type="checkbox"]){ background:var(--panel-3); border:1px solid var(--line-2); border-radius:10px; padding:10px 12px; }
-#envModal .editorRight .advisorBox{ background:var(--panel-3); border:1px solid var(--line-2); border-radius:10px; padding:12px; }
-#envModal #envClose{ border:1px solid var(--line-2); background:var(--panel-3); color:var(--text-1); border-radius:10px; padding:6px 10px; cursor:pointer; }
-#envModal #envClose:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
-#envModal input[type="range"]{ height:6px; }
+
+/* Post-apocalyptic dark theme */

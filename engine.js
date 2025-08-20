@@ -1,157 +1,87 @@
-// engine.js
-import { initErrorManager, showError, safeImport } from './errorManager.js';
+import { createAdamAndEve, step as entitiesStep, getCells, getFoodItems, applyEnvironment, setWorldSize } from './entities.js';
+import { step as reproductionStep } from './reproduction.js';
+import { step as foodStep, setSpawnRate } from './food.js';
+import { draw, setPerfMode as rendererSetPerfMode } from './renderer.js';
+import { openEditor } from './editor.js';
+import { openEnvPanel, getEnvState } from './environment.js';
 import { on, emit } from './event.js';
-import * as Entities from './entities.js';
-import { initAdvisor } from './advisor.js';
-import { mountTicker, registerFrame } from './ticker.js';
-import { initDaily } from './dnaDaily.js';
+import { initTicker, setPerfMode as tickerSetPerfMode } from './ticker.js';
+import { initNarrative } from './narrative/panel.js';
+import { initErrorManager } from './errorManager.js';
 
-initErrorManager();
-initAdvisor();
-initDaily();
-
-// ---------- Canvas
-let canvas = document.getElementById('sim');
-if (!canvas) {
-  canvas = document.createElement('canvas');
-  canvas.id='sim';
-  document.body.appendChild(canvas);
-}
-const ctx = canvas.getContext('2d', { alpha:false });
-
-function resize(){
-  const w = Math.max(640, Math.floor(window.innerWidth  * 0.98));
-  const h = Math.max(420, Math.floor(window.innerHeight * 0.70));
-  canvas.width = w; canvas.height = h;
-  Entities.setWorldSize(w, h);
-}
-window.addEventListener('resize', resize);
-resize();
-
-// ---------- State
 let running = false;
-let timescaleIdx = 0;
-const TIMES = [1,5,10];
+let timescale = 1;
 let perfMode = false;
+let lastTime = 0;
+let mutationRate = 0.1;
+let foodRate = 1;
+let canvas, ctx;
 
-function getDt(tsNow){
-  const dt = (tsNow - lastTs)/1000;
-  return Math.min(dt * TIMES[timescaleIdx], 1/15); // clamp
+export function boot() {
+    initErrorManager();
+    canvas = document.getElementById('canvas');
+    ctx = canvas.getContext('2d');
+    setWorldSize(canvas.width, canvas.height);
+    createAdamAndEve();
+    applyEnvironment(getEnvState());
+    initTicker();
+    initNarrative();
+    setupUIEvents();
 }
 
-function clearScreen(){
-  ctx.fillStyle = '#0b0f0f';
-  ctx.fillRect(0,0,canvas.width,canvas.height);
+function setupUIEvents() {
+    document.getElementById('start-btn').addEventListener('click', start);
+    document.getElementById('pause-btn').addEventListener('click', pause);
+    document.getElementById('reset-btn').addEventListener('click', reset);
+    document.getElementById('editor-btn').addEventListener('click', openEditor);
+    document.getElementById('env-panel-btn').addEventListener('click', openEnvPanel);
+    document.getElementById('perf-mode-btn').addEventListener('click', () => setPerfMode(!perfMode));
+    document.getElementById('timescale-slider').addEventListener('input', (e) => setTimescale(e.target.value));
+    document.getElementById('mutation-rate-slider').addEventListener('input', (e) => mutationRate = e.target.value);
+    document.getElementById('food-rate-slider').addEventListener('input', (e) => { foodRate = e.target.value; setSpawnRate(foodRate); });
 }
 
-function draw(){
-  clearScreen();
-  Entities.draw(ctx);
+export function start() {
+    if (!running) {
+        running = true;
+        lastTime = performance.now();
+        requestAnimationFrame(gameLoop);
+    }
 }
 
-let lastTs = performance.now();
-function loop(ts){
-  if (running) {
-    const dt = getDt(ts);
-    Entities.update(dt);
-    draw();
-    registerFrame();
-  }
-  requestAnimationFrame(loop);
-}
-requestAnimationFrame(loop);
-
-// ---------- Controls (IDs optional – falls nicht vorhanden, werden sie ignoriert)
-const $play      = document.getElementById('btnPlay')      || document.querySelector('[data-role="play"]');
-const $reset     = document.getElementById('btnReset')     || document.querySelector('[data-role="reset"]');
-const $time      = document.getElementById('btnTimescale') || document.querySelector('[data-role="timescale"]');
-const $mut       = document.getElementById('sliderMutation') || document.querySelector('[data-role="mutation"]');
-const $food      = document.getElementById('sliderFood')     || document.querySelector('[data-role="food"]');
-const $highlight = document.getElementById('btnHighlight')   || document.querySelector('[data-role="highlight"]');
-const $editor    = document.getElementById('btnEditor')      || document.querySelector('[data-role="editor"]');
-const $env       = document.getElementById('btnEnv')         || document.querySelector('[data-role="env"]');
-const $perf      = document.getElementById('btnPerf')        || document.querySelector('[data-role="perf"]');
-
-// Play / Pause
-$play?.addEventListener('click', ()=>{
-  running = !running;
-  $play.textContent = running ? 'Pause' : 'Play';
-});
-$reset?.addEventListener('click', ()=>{
-  Entities.reset(); Entities.spawnAdamEva();
-  clearScreen(); draw();
-});
-
-// Timescale zyklisch
-function updateTimescaleLabel(){ if ($time) $time.textContent = `⚡ ${TIMES[timescaleIdx]}x`; }
-$time?.addEventListener('click', ()=>{
-  timescaleIdx = (timescaleIdx+1) % TIMES.length;
-  updateTimescaleLabel();
-});
-updateTimescaleLabel();
-
-// Mutation in %
-function setMutationFromUI(v){
-  const pct = Math.max(0, Math.min(0.10, v)); // 0..0.10
-  Entities.setMutationPct(pct);
-}
-if ($mut) {
-  const init = 0.005; // 0.5%
-  $mut.value = init*100; setMutationFromUI(init);
-  $mut.addEventListener('input', ()=> setMutationFromUI($mut.value/100));
+export function pause() {
+    running = false;
 }
 
-// Food /s
-function setFoodFromUI(vps){ Entities.setFoodRate(vps); }
-if ($food) {
-  $food.value = 90; setFoodFromUI(90);
-  $food.addEventListener('input', ()=> setFoodFromUI(+$food.value));
+export function reset() {
+    pause();
+    // Reset states
+    createAdamAndEve();
+    emit('reset');
 }
 
-// Highlight zyklen (Alle → Stamm IDs)
-$highlight?.addEventListener('click', ()=>{
-  const ids = Entities.getStammIds();
-  if (!ids.length) { Entities.setHighlightStamm(null); $highlight.textContent='Alle Stämme'; return; }
-  let idx = ids.indexOf(currentHighlightId);
-  idx = (idx+1) % (ids.length+1); // +1 = alle
-  currentHighlightId = (idx===ids.length) ? null : ids[idx];
-  Entities.setHighlightStamm(currentHighlightId);
-  $highlight.textContent = currentHighlightId? `Stamm ${currentHighlightId}` : 'Alle Stämme';
-});
-let currentHighlightId = null;
-
-// Editor (lazy)
-$editor?.addEventListener('click', async ()=>{
-  const m = await safeImport('./editor.js', ['openEditor']);
-  m.openEditor();
-});
-
-// Umwelt (lazy)
-$env?.addEventListener('click', async ()=>{
-  const m = await safeImport('./environment/panel.js', ['openEnvPanel']);
-  m.openEnvPanel();
-});
-
-// Performance‑Modus
-function applyPerf(){
-  if (perfMode) {
-    Entities.setPerfProfile({ drawStride:2, renderScale:0.8 });
-  } else {
-    Entities.setPerfProfile({ drawStride:1, renderScale:1 });
-  }
+export function setTimescale(x) {
+    timescale = parseFloat(x);
 }
-$perf?.addEventListener('click', ()=>{
-  perfMode = !perfMode; applyPerf();
-  $perf.textContent = perfMode ? 'Performance: AN' : 'Performance: AUS';
-});
-applyPerf();
 
-// Start
-Entities.reset();
-Entities.spawnAdamEva();
-mountTicker();
-running = true;
-$play && ($play.textContent='Pause');
+export function setPerfMode(on) {
+    perfMode = on;
+    rendererSetPerfMode(on);
+    tickerSetPerfMode(on);
+}
 
-// Event‑Hinweis bei Fehler
-on('error', (e)=> showError(e?.message??String(e)));
+function gameLoop(time) {
+    if (!running) return;
+    const dt = (time - lastTime) / 1000 * timescale;
+    lastTime = time;
+
+    entitiesStep(dt, getEnvState());
+    reproductionStep(dt);
+    foodStep(dt);
+
+    draw({ cells: getCells(), food: getFoodItems() }, getEnvState());
+
+    requestAnimationFrame(gameLoop);
+}
+
+boot();
