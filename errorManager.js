@@ -1,36 +1,38 @@
-// errorManager.js – frühes Fehler-Overlay + Utilities
-
-let overlayEl = null;
-let contextGetter = null;
-
-function getOverlay(){
-  if(!overlayEl) overlayEl = document.getElementById('errorOverlay');
-  return overlayEl;
+// errorManager.js
+let banner;
+function showBanner(msg, detail='') {
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = 'err-banner';
+    banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#c0392b;color:#fff;font:600 14px system-ui;padding:10px 14px;';
+    document.body.appendChild(banner);
+  }
+  banner.textContent = `⚠️ ${msg}` + (detail ? ` — ${detail}` : '');
 }
 
-export function initErrorManager(){
-  const el = getOverlay();
-  // globale Handler
-  window.addEventListener('error', (e)=>{
-    showError('Laufzeitfehler', e?.error || e?.message || e);
+function parseImportMessage(message='') {
+  // Beispiele:
+  // "Importing binding name 'Advisor' is not found."
+  // "Failed to fetch dynamically imported module: ..."
+  const m = message.match(/Importing binding name '(.+?)' is not found/);
+  if (m) {
+    const name = m[1];
+    return `Benannter Export „${name}“ wurde nicht gefunden. Prüfe:
+- Existiert der Export in der Quelldatei (export const ${name} = … / export { ${name} })?
+- Oder wird ein Default-Export irrtümlich als benannter importiert?  -> „import X from '…'“ statt „import { ${name} } …“`;
+  }
+  return '';
+}
+
+export function initErrorManager() {
+  window.addEventListener('error', (ev) => {
+    const friendly = parseImportMessage(ev.message);
+    if (friendly) showBanner('Module-Import fehlgeschlagen', friendly);
   });
-  window.addEventListener('unhandledrejection', (e)=>{
-    showError('Unhandled Promise', e?.reason || e);
+
+  window.addEventListener('unhandledrejection', (ev) => {
+    const msg = String(ev.reason?.message || ev.reason || '');
+    const friendly = parseImportMessage(msg);
+    if (friendly) showBanner('Module-Import fehlgeschlagen', friendly);
   });
-  if(el){ el.classList.add('hidden'); el.textContent=''; }
-}
-
-export function setContextGetter(fn){ contextGetter = fn; }
-
-export function showError(title, err){
-  const el = getOverlay(); if(!el) return;
-  const msg = `${title}: ${err?.message || String(err)}`;
-  el.textContent = `⚠️ ${msg}`;
-  el.classList.remove('hidden');
-  el.classList.add('show');
-  console.error('[CRISPR ERROR]', msg, { context: contextGetter?.() });
-}
-
-export function assertModule(name, mod){
-  if(!mod) showError(`Modul ${name} fehlt`, new Error('undefined'));
 }

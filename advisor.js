@@ -1,6 +1,6 @@
 // advisor.js
 // KI-/Heuristik-Advisor: wertet Genome aus, verwaltet Modus, lädt optional ein TFJS-Modell.
-// Bietet rückwärtskompatible Exporte (initAdvisor, tryLoadTF, etc.).
+// Stellt rückwärtskompatible Exporte bereit (u.a. initAdvisor) UND einen benannten Namespace-Export "Advisor".
 
 import { on, emit, EVT } from './event.js';
 
@@ -11,11 +11,11 @@ export const AdvisorMode = Object.freeze({
 });
 
 let mode = AdvisorMode.OFF;
-let modelUrl = 'models/model.json'; // Standardpfad (falls UI nichts setzt)
+let modelUrl = 'models/model.json'; // Standardpfad
 let tf = null;
 let model = null;
 
-// ---------- Status-Helfer ----------
+// ---------------------- Status / Modus ----------------------
 
 export function getAdvisorMode() { return mode; }
 
@@ -47,17 +47,14 @@ export function toggleAdvisorMode() {
   }
 }
 
-// ---------- Modell laden (optional) ----------
+// ---------------------- Modell laden (optional) ----------------------
 
-/** Versucht, TFJS zu verwenden und ein Layers-Model zu laden. */
 export async function loadAdvisorModel(url = modelUrl) {
   modelUrl = url || modelUrl;
   try {
-    // TFJS aus globalem Namespace verwenden, falls schon eingebunden.
     tf = globalThis.tf ?? null;
 
-    // Wenn TFJS nicht global vorliegt, kannst du (optional) dynamisch laden:
-    // Achtung: große Library; ggf. bewusst deaktiviert lassen.
+    // Optionales dynamisches Laden (deaktiviert, um Seitenstart schlank zu halten):
     // if (!tf) {
     //   const mod = await import('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.15.0/dist/tf.min.js');
     //   tf = globalThis.tf || mod?.default || mod;
@@ -78,31 +75,27 @@ export async function loadAdvisorModel(url = modelUrl) {
   }
 }
 
-// Rückwärtskompatibler Alias (einige ältere UIs rufen „tryLoadTF“ auf).
+// Rückwärtskompatibler Alias (falls ältere UIs „tryLoadTF“ verwenden)
 export async function tryLoadTF(url) { return loadAdvisorModel(url); }
 
-// ---------- Scoring ----------
+// ---------------------- Scoring ----------------------
 
-/** Heuristische Bewertung (1..99) – robust ohne Modell. */
 export function scoreGenomeHeuristic(g) {
-  // erwartete Felder: TEM, GRO, EFF, SCH, MET (je 1..9)
   const TEM = g?.TEM ?? 5;
   const GRO = g?.GRO ?? 5;
   const EFF = g?.EFF ?? 5;
   const SCH = g?.SCH ?? 5;
   const MET = g?.MET ?? 5;
 
-  // einfache, lesbare Mischung:
-  const forage = (0.55 * TEM + 0.65 * EFF) * 6; // Nahrungssuche/Nutzung
-  const surviv = (0.45 * SCH + 0.35 * GRO) * 6; // Überleben/Tragen
-  const upkeepPenalty = (10 - Math.max(1, MET)) * 2.5; // zu niedriger MET -> höhere Kosten
+  const forage = (0.55 * TEM + 0.65 * EFF) * 6;   // Nahrungssuche/-nutzung
+  const surviv = (0.45 * SCH + 0.35 * GRO) * 6;   // Überleben/Tragen
+  const upkeepPenalty = (10 - Math.max(1, MET)) * 2.5;
 
   let score = forage + surviv - upkeepPenalty;
   score = Math.max(1, Math.min(99, Math.round(score)));
   return score;
 }
 
-/** Modellbewertung (fällt bei Fehler auf Heuristik zurück). */
 export function scoreGenomeWithModel(g) {
   if (!model || !globalThis.tf) return scoreGenomeHeuristic(g);
   try {
@@ -121,37 +114,43 @@ export function scoreGenomeWithModel(g) {
   }
 }
 
-/** Öffentliche Bewertung je nach Modus. */
 export function scoreGenome(g) {
   return (mode === AdvisorMode.MODEL)
     ? scoreGenomeWithModel(g)
     : scoreGenomeHeuristic(g);
 }
 
-// ---------- Initialisierung (von engine.js aufgerufen) ----------
+// ---------------------- Initialisierung ----------------------
 
 export function initAdvisor() {
-  // aktuellen Status direkt einmal senden (Ticker/UI)
   emit(EVT.ADVISOR_MODE_CHANGED, { mode, modeLabel: getAdvisorModeLabel() });
-
-  // Beispiel: Externe Änderungen des Modus (falls UI-Buttons eigene Events feuern)
   on(EVT.ADVISOR_MODE_CHANGED, ({ mode: m }) => { mode = m; });
 
-  // Optional: automatischer, stiller Modell-Ladeversuch
-  // (auskommentieren, falls unerwünscht)
-  // loadAdvisorModel(modelUrl).then(r => {
-  //   if (r?.ok) setAdvisorMode(AdvisorMode.MODEL);
-  // });
+  // Optionales Autoload (deaktiviert)
+  // loadAdvisorModel(modelUrl).then(r => { if (r?.ok) setAdvisorMode(AdvisorMode.MODEL); });
 }
 
-// ---------- Zusätzliche (kompatible) Exporte ----------
+// Praktischer Alias
+export const initAI = initAdvisor;
 
-export const initAI = initAdvisor; // Alias
-export default {
+// ---------------------- Namespace-Export + Default ----------------------
+// >>> Dieser Block stellt *zusätzlich* einen benannten Export "Advisor" bereit
+//     und exportiert ihn außerdem als Default. So funktionieren beide Varianten:
+//     import { Advisor } from './advisor.js'
+//     import Advisor from './advisor.js'
+
+export const Advisor = {
+  // Methoden
   initAdvisor, initAI,
-  AdvisorMode,
-  getAdvisorMode, getAdvisorModeLabel, isModelLoaded,
   setAdvisorMode, toggleAdvisorMode,
   loadAdvisorModel, tryLoadTF,
-  scoreGenome, scoreGenomeHeuristic, scoreGenomeWithModel
+  scoreGenome, scoreGenomeHeuristic, scoreGenomeWithModel,
+
+  // Status/Getter
+  getAdvisorMode, getAdvisorModeLabel, isModelLoaded,
+
+  // Konstanten
+  AdvisorMode,
 };
+
+export default Advisor;
