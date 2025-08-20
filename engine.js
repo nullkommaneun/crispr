@@ -111,19 +111,26 @@ function frame(now) {
 
 /** Public API */
 export function boot() {
-  initErrorManager();
+  try{
+    initErrorManager();
+  }catch(e){ /* falls errorManager selbst fehlt */ }
+
   resizeCanvas();
   window.addEventListener("resize", resizeCanvas);
 
   createAdamAndEve();
   applyEnvironment(getEnvState());
 
-  initTicker();            // Ticker initialisieren
-  emit("ui:speed", timescale); // Anfangstempo melden
+  initTicker();
+  emit("ui:speed", timescale); // Anfangstempo an Ticker
 
   bindUI();
   draw();
+
+  // Preflight-Bootflag setzen (damit Diagnose weiß: Engine läuft)
+  window.__APP_BOOTED = true;
 }
+
 export function start(){ if (!running) { running = true; lastTime = 0; requestAnimationFrame(frame); } }
 export function pause(){ running = false; }
 export function reset(){

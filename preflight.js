@@ -1,0 +1,120 @@
+// preflight.js
+const OVERLAY_ID = "preflightOverlay";
+const BOOT_FLAG = "__APP_BOOTED";
+const TIMEOUT_MS = 2200;
+
+function ensureOverlay(){
+  let el = document.getElementById(OVERLAY_ID);
+  if(el) return el;
+  el = document.createElement("div");
+  el.id = OVERLAY_ID;
+  el.style.cssText = `
+    position:fixed; inset:0; z-index:9000; display:none;
+    background:rgba(0,0,0,.72); color:#fff;
+    font:14px/1.5 system-ui,Segoe UI,Roboto,Helvetica,Arial;
+  `;
+  el.innerHTML = `
+    <div style="max-width:840px;margin:8vh auto;background:#1a232b;border:1px solid #33414c;border-radius:12px;padding:16px;box-shadow:0 12px 30px rgba(0,0,0,.4)">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:12px">
+        <h3 style="margin:0;font-size:18px">Start-Diagnose</h3>
+        <button id="pfClose" style="background:#23313b;border:1px solid #3a4c5a;color:#d8f0ff;border-radius:8px;padding:6px 10px;cursor:pointer">Schließen</button>
+      </div>
+      <div id="pfBody" style="margin-top:8px;white-space:pre-wrap"></div>
+    </div>
+  `;
+  document.body.appendChild(el);
+  document.getElementById("pfClose").onclick = ()=> el.style.display="none";
+  return el;
+}
+
+function showOverlay(text){
+  const el = ensureOverlay();
+  const body = el.querySelector("#pfBody");
+  body.textContent = text.trim();
+  el.style.display = "block";
+}
+
+function listMissingDom(){
+  const need = ["topbar","world","ticker","editorPanel","envPanel"];
+  const missing = need.filter(id=>!document.getElementById(id));
+  return missing;
+}
+
+async function checkModule(path, expects){
+  try{
+    const m = await import(path);
+    const miss = expects.filter(x=> !(x in m));
+    if(miss.length) return `❌ ${path}: fehlt Export ${miss.join(", ")}`;
+    return `✅ ${path}`;
+  }catch(e){
+    return `❌ ${path}: Import/Parse fehlgeschlagen → ${String(e.message||e)}`;
+  }
+}
+
+// Sammle Fehler aus dem Fenster (auch Modul-Promise)
+const runtimeErrors = [];
+window.addEventListener("error", (e)=> runtimeErrors.push(`window.error: ${e.message}`));
+window.addEventListener("unhandledrejection", (e)=> runtimeErrors.push(`unhandledrejection: ${e.reason}`));
+
+async function diagnose(){
+  const lines = [];
+
+  // 1) DOM-IDs?
+  const missingDom = listMissingDom();
+  if(missingDom.length){
+    lines.push(`⚠️ Fehlende DOM-IDs: ${missingDom.join(", ")}`);
+  }else{
+    lines.push("✅ DOM-Struktur OK");
+  }
+
+  // 2) Module & Exporte prüfen (ohne engine.js)
+  const checks = [
+    ["./event.js",           ["on","off","emit"]],
+    ["./config.js",          ["CONFIG"]],
+    ["./errorManager.js",    ["initErrorManager","report"]],
+    ["./entities.js",        ["step","createAdamAndEve","setWorldSize","applyEnvironment","getCells","getFoodItems"]],
+    ["./reproduction.js",    ["step","setMutationRate"]],
+    ["./food.js",            ["step","setSpawnRate","spawnClusters"]],
+    ["./renderer.js",        ["draw","setPerfMode"]],
+    ["./editor.js",          ["openEditor","closeEditor","setAdvisorMode","getAdvisorMode"]],
+    ["./environment.js",     ["openEnvPanel","getEnvState","setEnvState"]],
+    ["./advisor.js",         ["setMode","getMode","scoreCell","sortCells"]],
+    ["./ticker.js",          ["initTicker","setPerfMode","pushFrame"]],
+  ];
+  for(const [path,expects] of checks){
+    lines.push(await checkModule(path, expects));
+  }
+
+  // 3) Runtime-Fehler, falls vorhanden
+  if(runtimeErrors.length){
+    lines.push("\nLaufzeitfehler:");
+    for(const r of runtimeErrors) lines.push(`• ${r}`);
+  }
+
+  return lines.join("\n");
+}
+
+function armWatchdog(){
+  const t0 = performance.now();
+  setTimeout(async ()=>{
+    if(!window[BOOT_FLAG]){
+      const report = await diagnose();
+      showOverlay(
+`Die Anwendung ist nicht gestartet (Boot-Flag fehlt nach ${TIMEOUT_MS}ms).
+
+Wahrscheinliche Ursache: Ein ES-Modul konnte nicht geladen werden
+(fehlende Datei, falscher Export, Groß/Kleinschreibung, veraltete Datei).
+
+Diagnose:
+${report}
+
+Hinweise:
+- Prüfe Groß/Kleinschreibung von Dateinamen auf GitHub Pages.
+- Stelle sicher, dass *alle* oben mit ❌ markierten Module existieren und die Exporte enthalten.
+- Lade die Seite mit anderem Querystring (z. B. ?ts=${Date.now()}).`
+      );
+    }
+  }, TIMEOUT_MS);
+}
+
+document.addEventListener("DOMContentLoaded", armWatchdog);
