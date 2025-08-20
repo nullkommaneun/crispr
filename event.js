@@ -1,37 +1,45 @@
-// event.js – zentraler Event-Bus (einzige gültige Variante)
+// event.js
+// Minimaler, robuster Event-Bus mit benannten Exporten + Default-Export.
 
-const listeners = new Map(); // Map<string, Set<Function>>
+const _listeners = new Map(); // Map<string, Set<Function>>
 
-function on(type, handler){
-  if(!listeners.has(type)) listeners.set(type, new Set());
-  listeners.get(type).add(handler);
+function _getSet(type) {
+  let set = _listeners.get(type);
+  if (!set) { set = new Set(); _listeners.set(type, set); }
+  return set;
 }
-function off(type, handler){
-  const set = listeners.get(type); if(set) set.delete(handler);
+
+/** Listener registrieren. Rückgabewert ist eine Unsubscribe-Funktion. */
+export function on(type, handler) {
+  const set = _getSet(type);
+  set.add(handler);
+  return () => off(type, handler);
 }
-function once(type, handler){
-  const wrap = (payload) => { off(type, wrap); try{ handler(payload); }catch(e){ console.error('[EVT once]', type, e); } };
-  on(type, wrap);
+
+/** Listener entfernen. */
+export function off(type, handler) {
+  const set = _listeners.get(type);
+  if (set) set.delete(handler);
 }
-function emit(type, payload){
-  const set = listeners.get(type); if(!set) return;
-  for(const fn of Array.from(set)){
-    try{ fn(payload); }catch(e){ console.error('[EVT]', type, e); }
+
+/** Ereignis auslösen; detail ist das Payload-Objekt. */
+export function emit(type, detail = {}) {
+  const set = _listeners.get(type);
+  if (!set || set.size === 0) return 0;
+  // Kopie, damit Entfernen während der Iteration nicht stört
+  for (const fn of Array.from(set)) {
+    try { fn(detail); } catch (e) { console.error(`[event] handler for "${type}" failed:`, e); }
   }
+  return set.size;
 }
 
-export const Events = { on, off, once, emit };
+/** Einmaliger Listener (Promise-basiert). */
+export function once(type) {
+  return new Promise(resolve => {
+    const unsub = on(type, (data) => { unsub(); resolve(data); });
+  });
+}
 
-export const EVT = Object.freeze({
-  TICK: 'tick',
-  BIRTH: 'birth',
-  DEATH: 'death',
-  MATE: 'mate',
-  FOOD_SPAWN: 'foodSpawn',
-  TIP: 'tip',
-  STATUS: 'status',
-  HIGHLIGHT_CHANGED: 'highlightChanged',
-  RESET: 'reset',
-  HUNGER_CRISIS: 'hungerCrisis',
-  OVERPOP: 'overPop'
-});
+// Optional: alles auch als Default-Objekt exportieren
+const Events = { on, off, emit, once };
+export default Events;
