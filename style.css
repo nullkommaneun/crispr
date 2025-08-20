@@ -1,442 +1,167 @@
-/* ==========================================================================
-   CRISPR Genetics Lab – Postapokalyptisches Theme
-   Düstere Flächen • Toxic-Green Akzente • Gealtertes Papier • Mobile-ready
-   ========================================================================== */
+/* style.css – Apoc-Theme, UI-Basis + Editor 2.0 + Umwelt
+   ------------------------------------------------------------------------- */
 
 :root{
-  /* Palette (apokalyptisch) */
-  --bg:#0b0f0d;                 /* Tiefes Kohlegrün-Schwarz */
-  --bg-2:#0e1411;               /* Hintergrund-Variation */
-  --surface:#101713;            /* Karten/Toolbar */
-  --surface-2:#0e1613;          /* Modale/Paneele */
-  --border:#1a241d;             /* kalte, dunkle Kante */
-  --border-2:#152018;
-
-  --ink:#e7efe8;                /* Text hell, leicht grünlich */
-  --ink-dim:#b7c7bc;            /* sekundärer Text */
-  --ink-muted:#8a9b90;          /* Hinweise */
-
-  --accent:#8cff57;             /* Toxic-Green (Akzent) */
-  --accent-weak:#57d14a;
-  --accent-faint:rgba(140,255,87,.23);
-
-  --danger:#ff6b6b;             /* Fehlermeldung */
-  --paper:#dbcfab;              /* DNA Daily Papier (gealtert) */
-  --paper-ink:#1f1b12;          /* Druckerschwärze */
-
-  --radius:12px; --radius-sm:10px; --radius-lg:16px;
-  --shadow-1:0 6px 18px rgba(0,0,0,.35);
-  --shadow-2:0 10px 28px rgba(0,0,0,.45);
-  --inner:inset 0 0 0 1px rgba(255,255,255,.03);
-  --focus:0 0 0 3px rgba(140,255,87,.18), 0 0 0 1px rgba(140,255,87,.48);
-
-  /* Ticker-Scroll-Dauer (wird von JS gesetzt) */
-  --marquee-dur: 24s;
+  --bg: #0b0f11;
+  --panel-1:#0f1416;
+  --panel-2:#10181b;
+  --panel-3:#0a0f11;
+  --line-1:#1e2a2e;
+  --line-2:#1d272a;
+  --text-1:#e7f0ea;
+  --text-2:#b7c4be;
+  --muted:#8aa39a;
+  --accent:#89f17f;
+  --accent-2:#ffd166;
+  --danger:#ff6b6b;
+  --warn:#f6a821;
+  --ok:#2dd4bf;
+  --chip-pos:#5fe18e;
+  --chip-neg:#ff7575;
 }
 
-/* Basis */
 *{ box-sizing:border-box; }
-html, body{
-  margin:0; padding:0; width:100%; height:100%;
-  background:
-    radial-gradient(1200px 800px at 85% -20%, rgba(140,255,87,.08), transparent 60%),
-    radial-gradient(900px 600px at 10% 110%, rgba(255,194,86,.05), transparent 55%),
-    var(--bg);
-  color:var(--ink);
-  font:400 16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans";
-  -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
-}
-/* feines Scanline/Grain-Feeling ohne Images */
-body::before{
-  content:""; position:fixed; inset:0; pointer-events:none; z-index:0;
-  background:
-    radial-gradient(1200px 800px at 70% 20%, rgba(140,255,87,.05), transparent 60%),
-    repeating-linear-gradient(0deg, rgba(255,255,255,.015) 0 2px, transparent 2px 4px);
-  mix-blend-mode:overlay; opacity:.8;
-}
-.mono{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Courier New", monospace; }
-.hidden{ display:none; }
+html, body{ margin:0; padding:0; background:var(--bg); color:var(--text-1); font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"Apple Color Emoji","Segoe UI Emoji"; }
+button, input, select{ font:inherit; }
 
-/* Toolbar */
-.toolbar{
-  position:sticky; top:0; z-index:50;
-  background:linear-gradient(180deg, rgba(16,23,19,.95), rgba(12,18,15,.9));
-  backdrop-filter:saturate(1.05) blur(8px);
-  border-bottom:1px solid var(--border);
-  box-shadow:var(--shadow-1);
+.btn{
+  background:var(--panel-3); color:var(--text-1);
+  border:1px solid var(--line-2); border-radius:10px;
+  padding:6px 12px; cursor:pointer;
 }
-.toolbar-row{
-  max-width:1280px; margin:0 auto; padding:.6rem .9rem;
-  display:flex; flex-wrap:wrap; align-items:center; gap:.65rem .75rem;
-}
-.toolbar label{ color:var(--ink-muted); font-size:.9rem; margin-left:.2rem; }
+.btn:hover{ filter:brightness(1.08); }
+.btn:active{ transform: translateY(1px); }
+.btn-ghost{ background:transparent; border:1px solid var(--line-2); }
+.btn-accent{ background:var(--accent); color:#0b0f11; border:1px solid #6ddc69; }
+.btn.sm{ padding:4px 8px; border-radius:8px; }
 
-/* Buttons */
-button{
-  -webkit-tap-highlight-color:transparent;
-  appearance:none;
-  border:1px solid var(--border);
-  border-radius:var(--radius);
-  background:linear-gradient(180deg,#152019,#0f1713);
-  color:var(--ink);
-  padding:.55rem .8rem;
-  font-weight:600; letter-spacing:.2px;
-  box-shadow:var(--inner);
-  cursor:pointer;
-  transition:transform .06s ease, box-shadow .12s ease, border-color .12s ease, background .12s ease;
+/* Modal Basis */
+.modal{
+  position:fixed; inset:0; display:none;
+  align-items:center; justify-content:center;
+  backdrop-filter: blur(2px);
+  z-index:1000;
 }
-button:hover{
-  border-color:#223029;
-  box-shadow:0 0 0 1px rgba(255,255,255,.02), 0 4px 14px rgba(0,0,0,.25), 0 0 18px var(--accent-faint);
+.modal.open{ display:flex; }
+.modal > .modalHeader, .modal > .modalBody{
+  background:var(--panel-2); color:var(--text-1);
 }
-button:active{ transform:translateY(1px) scale(.99); }
-button:focus-visible{ outline:none; box-shadow:var(--focus); }
-button.primary{
-  background:linear-gradient(180deg,#1a2a1f,#112016);
-  border-color:rgba(140,255,87,.35);
-  box-shadow:0 0 0 1px rgba(140,255,87,.27), var(--inner);
+.modal > .modalHeader{
+  position:relative; width:min(980px, calc(100vw - 2rem));
+  border:1px solid var(--line-2); border-bottom:none; border-radius:14px 14px 0 0;
+  padding:14px 16px; background:var(--panel-1);
 }
-button.primary:hover{ border-color:rgba(140,255,87,.6); }
-
-/* Slider */
-input[type="range"]{ appearance:none; height:34px; width:220px; margin:0 .2rem; background:transparent; }
-@media (max-width:420px){ input[type="range"]{ width:160px; } }
-input[type="range"]::-webkit-slider-runnable-track{
-  height:8px; border-radius:999px;
-  background:linear-gradient(180deg,#18231c,#111a15);
-  border:1px solid var(--border);
-  box-shadow:var(--inner), inset 0 1px 0 rgba(255,255,255,.03);
-}
-input[type="range"]::-moz-range-track{
-  height:8px; border-radius:999px; background:linear-gradient(180deg,#18231c,#111a15); border:1px solid var(--border);
-}
-input[type="range"]::-webkit-slider-thumb{
-  appearance:none; margin-top:-6px; width:20px; height:20px; border-radius:50%;
-  background:radial-gradient(circle at 50% 42%, #c6ffad, #8cff57 60%, #3aa13b);
-  border:1px solid rgba(16,23,19,.9);
-  box-shadow:0 0 0 3px rgba(140,255,87,.18), 0 6px 18px rgba(0,0,0,.8);
-}
-input[type="range"]::-moz-range-thumb{
-  width:18px; height:18px; border-radius:50%;
-  background:radial-gradient(circle at 50% 42%, #c6ffad, #8cff57 60%, #3aa13b);
-  border:1px solid rgba(16,23,19,.9);
+.modal > .modalBody{
+  width:min(980px, calc(100vw - 2rem));
+  border:1px solid var(--line-2); border-top:none; border-radius:0 0 14px 14px;
+  padding:16px;
 }
 
-/* Canvas-Bereich */
-#main{ max-width:1280px; margin:0 auto; padding:.8rem .9rem 0; position:relative; z-index:1; }
-#simCanvas{
-  width:100%; height:64vh; max-height:calc(100vh - 250px); display:block;
-  background:radial-gradient(800px 600px at 70% 20%, rgba(140,255,87,.06), transparent 60%), #0a1210;
-  border:1px solid var(--border);
-  border-radius:14px;
-  box-shadow:inset 0 0 0 1px rgba(255,255,255,.02), var(--shadow-1);
-}
+/* ---------- Editor 2.0 --------------------------------------------------- */
 
-/* Fehleroverlay */
-#errorOverlay.hidden{ display:none; }
-#errorOverlay{
-  position:fixed; left:0; right:0; top:0; z-index:1000;
-  padding:.6rem .9rem;
-  background:var(--danger);
-  color:#fff; font-weight:700;
-  text-shadow:0 1px 0 rgba(0,0,0,.15);
-  box-shadow:0 6px 18px rgba(0,0,0,.45);
+.editorBody{
+  display:grid; grid-template-columns:1fr 380px; gap:20px;
 }
-#errorOverlay.show{ display:block; }
+@media (max-width: 900px){ .editorBody{ grid-template-columns:1fr; } }
 
-/* DNA Daily (Zeitungsstil) */
-#narrativeSection{ max-width:1280px; margin:.9rem auto 96px; padding:0 .8rem; }
-.paperHead{
-  position:sticky; top:0; z-index:1;
-  display:flex; align-items:center; justify-content:space-between;
-  background:linear-gradient(180deg,#e8dbb6,#d9caa0);
-  color:var(--paper-ink);
-  border-radius:12px 12px 0 0;
-  border:1px solid #cdbd90;
-  box-shadow:0 10px 28px rgba(0,0,0,.25);
-  padding:.6rem .9rem; font-weight:800;
-}
-.paperTitle{ font-family:Georgia,"Times New Roman",serif; font-size:1.15rem; letter-spacing:.2px; }
-.paperSub{ font-size:.95rem; color:#6c5c3d; }
+.editorBody h3{ margin:8px 0 10px; color:var(--text-1); }
 
-.scrollbox{
-  max-height:32vh; overflow:auto; overscroll-behavior:contain;
-  background:linear-gradient(180deg,#fbf2dd,#e8dbb6);
-  color:var(--paper-ink);
-  border:1px solid #cdbd90; border-top:none; border-radius:0 0 12px 12px;
-  padding:.75rem .9rem;
-  scrollbar-width:thin; scrollbar-color:#c7b78e #f4ecd8;
-}
-.scrollbox b{ font-weight:800; }
-.scrollbox .headline{ display:block; margin:.45rem 0; font-weight:800; line-height:1.35; }
-
-/* Ticker – nahtloser Marquee, nur Technik & Tipps */
-#ticker{
-  position:fixed; left:0; right:0; bottom:0; z-index:45;
-  background:linear-gradient(180deg,#e8dbb6,#decea8);
-  color:var(--paper-ink);
-  border-top:1px solid #cdbd90;
-  box-shadow:0 -8px 24px rgba(0,0,0,.35);
-}
-#tickerInner{ overflow:hidden; white-space:nowrap; }
-#tickerContent{
-  display:flex; align-items:center; gap:2rem; will-change:transform;
-  padding:.65rem 1rem; animation: scrollx var(--marquee-dur,24s) linear infinite;
-}
-#tickerContent .chunk{ flex:0 0 auto; white-space:nowrap; font-weight:600; }
-#tickerContent .gap{ flex:0 0 auto; opacity:.3; }
-@keyframes scrollx{ 0%{ transform:translateX(0);} 100%{ transform:translateX(-50%);} }
-
-/* Editor (Dialog) */
-#editorModal{
-  width:min(1020px, calc(100vw - 24px));
-  border:1px solid var(--border);
-  border-radius:14px; padding:0;
-  color:var(--ink);
-  background:linear-gradient(180deg, var(--surface-2), #0d1512 65%);
-  box-shadow:var(--shadow-2);
-}
-#editorModal::backdrop{
-  background:radial-gradient(600px 400px at 50% 30%, rgba(140,255,87,.06), transparent 60%), rgba(0,0,0,.55);
-  backdrop-filter:blur(2px);
-}
-.modalHeader{
-  display:flex; align-items:center; justify-content:space-between;
-  padding:.9rem 1rem;
-  border-bottom:1px solid var(--border);
-  background:linear-gradient(180deg,#142019,#0f1713);
-  border-radius:14px 14px 0 0;
-}
-.modalHeader h2{ margin:0; font-size:1.1rem; letter-spacing:.2px; }
-.modalHeader button{ width:40px; height:40px; display:inline-grid; place-items:center; font-size:18px; border-radius:10px; }
-
-.modalBody{ display:grid; grid-template-columns:1fr 1fr; gap:1rem; padding:.9rem 1rem 1rem; }
-@media (max-width:900px){ .modalBody{ grid-template-columns:1fr; } }
-
-/* Links: Traits */
-.editorLeft h3{ margin:.25rem 0 .6rem; }
 .traitRow{
-  display:grid; grid-template-columns:1fr auto; align-items:center;
-  gap:.6rem; padding:.55rem .65rem; margin-bottom:.25rem;
-  background:linear-gradient(180deg,#111a15,#0d1512);
-  border:1px solid var(--border-2);
-  border-radius:var(--radius);
-  box-shadow:var(--inner);
+  display:flex; align-items:center; justify-content:space-between;
+  background:var(--panel-3); border:1px solid var(--line-2);
+  border-radius:10px; padding:10px 12px; margin-bottom:10px;
 }
-.traitRow label{ color:var(--ink-dim); }
-.stepper{ display:flex; gap:.35rem; align-items:center; }
-.stepper .val{
-  display:inline-block; min-width:2ch; text-align:center;
-  padding:.35rem .6rem; border-radius:10px;
-  background:linear-gradient(180deg,#0c1411,#0a120f);
-  border:1px solid var(--border); box-shadow:var(--inner);
-}
-.stepper .dec, .stepper .inc{ min-width:42px; padding:.45rem .5rem; font-weight:800; }
+.traitRow label{ opacity:.92; }
+.stepper{ display:flex; align-items:center; gap:10px; }
+.stepper .val{ min-width:2.4ch; text-align:center; font-variant-numeric:tabular-nums; }
 
-/* Rechts: Liste + Advisor */
-.editorRight h3{ margin:.25rem 0 .6rem; }
-.cellList{ display:flex; flex-direction:column; gap:.4rem; max-height:46vh; overflow:auto; padding-right:.2rem; }
-.cellCard{
-  display:flex; align-items:center; justify-content:space-between; gap:.6rem; width:100%;
-  border:1px solid var(--border); border-radius:var(--radius);
-  background:linear-gradient(180deg,#131d18,#0f1713);
-  color:var(--ink); padding:.6rem .7rem; box-shadow:var(--inner);
-  cursor:pointer;
+.whatIfBox{
+  margin:12px 0; padding:12px;
+  background:var(--panel-3); border:1px solid var(--line-2); border-radius:10px;
 }
-.cellCard:hover{ border-color:#223029; }
-.cellCard.active{ outline:none; box-shadow:var(--focus); }
-.cellCard .id{ font-weight:600; }
-.cellCard .score{ font-weight:800; color:var(--accent); min-width:3ch; text-align:right; }
-.cellCard .score small{ font-weight:700; color:var(--ink-dim); margin-left:2px; }
-
-.advisorBox{
-  margin-top:.7rem; border:1px solid var(--border); border-radius:var(--radius);
-  background:linear-gradient(180deg,#111912,#0d1512); box-shadow:var(--inner);
-  padding:.65rem .7rem;
+.whatIfBox .scoreLine{ display:flex; align-items:baseline; gap:8px; }
+.whatIfBox strong{ font-size:1.2rem; }
+.traitChips{ margin-top:8px; display:flex; flex-wrap:wrap; gap:6px; }
+.chip{
+  padding:4px 8px; border-radius:999px; font-size:.85rem;
+  border:1px solid var(--line-2); background:var(--panel-1);
 }
-.advisorHeader{ display:flex; align-items:baseline; gap:.6rem; margin-bottom:.35rem; }
-#adviserAdvisorStatus, #editorAdvisorStatus{ color:var(--ink); font-weight:700; }
-.advisorCtrls{ display:flex; flex-wrap:wrap; gap:.5rem; align-items:center; margin:.35rem 0 .25rem; }
-.advisorCtrls input[type="text"]{
-  min-width:260px; padding:.55rem .6rem;
-  background:linear-gradient(180deg,#0f1712,#0d1411);
-  color:var(--ink); border:1px solid var(--border); border-radius:.6rem; box-shadow:var(--inner);
+.chip.pos{ border-color: rgba(95,225,142,.4); color: var(--chip-pos); }
+.chip.neg{ border-color: rgba(255,117,117,.4); color: var(--chip-neg); }
+.chip.neu{ opacity:.75; }
+
+.btnRow{ display:flex; align-items:center; gap:10px; margin-top:10px; }
+.hint{ color:var(--muted); }
+
+/* Advisor Panel */
+.advisorPanel{
+  background:var(--panel-3); border:1px solid var(--line-2);
+  border-radius:10px; padding:10px 12px; margin-bottom:12px;
 }
-
-/* Hinweise */
-.hint{ color:var(--ink-muted); margin:.6rem 0 0; }
-
-/* Responsiv */
-@media (max-width:720px){
-  .toolbar-row{ gap:.55rem .6rem; }
-  #simCanvas{ height:58vh; }
-  .paperHead, .scrollbox{ font-size:.95rem; }
+.advisorHeader{ display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.seg{
+  display:inline-flex; background:var(--panel-2); border:1px solid var(--line-2);
+  border-radius:999px; padding:3px;
 }
-/* === Apokalyptische Verkleidung (Frame + Nieten + Warnband) =============== */
-/* Aktiv, wenn <body class="skin-apoc"> gesetzt ist */
-body.skin-apoc #simCanvas{ position: relative; z-index: 1; }
+.seg button{
+  background:transparent; border:none; color:var(--text-1);
+  padding:6px 10px; border-radius:999px; cursor:pointer;
+}
+.seg button.active{ background:var(--accent); color:#0b0f11; }
 
-/* Metallrahmen mit Nieten (ohne zusätzliche DOM-Elemente) */
-body.skin-apoc #simCanvas::before{
-  content:""; position:absolute; inset:-18px; border-radius:22px;
-  /* Nieten in den vier Ecken (radial-gradients) + Metallpanel (linear-gradient) */
-  background:
-    radial-gradient(circle at 18px 18px,                 #5f6a63 0 6px, #2b332e 6px 7px, transparent 7px) no-repeat,
-    radial-gradient(circle at calc(100% - 18px) 18px,    #5f6a63 0 6px, #2b332e 6px 7px, transparent 7px) no-repeat,
-    radial-gradient(circle at 18px calc(100% - 18px),    #5f6a63 0 6px, #2b332e 6px 7px, transparent 7px) no-repeat,
-    radial-gradient(circle at calc(100% - 18px) calc(100% - 18px), #5f6a63 0 6px, #2b332e 6px 7px, transparent 7px) no-repeat,
-    linear-gradient(180deg,#18231c,#0f1713);
-  background-size: 18px 18px, 18px 18px, 18px 18px, 18px 18px, cover;
-  background-position: 0 0, 100% 0, 0 100%, 100% 100%, center;
-  border:1px solid #1a241d;
-  box-shadow:
-    0 14px 40px rgba(0,0,0,.55),
-    inset 0 0 0 1px rgba(255,255,255,.03),
-    inset 0 0 40px rgba(140,255,87,.06);
-  pointer-events:none;
+.advisorStatus{ display:flex; align-items:center; gap:8px; margin:10px 0 6px; }
+.dot{ width:10px; height:10px; border-radius:50%; display:inline-block; border:1px solid var(--line-2); }
+.dot-idle{ background:#566; }
+.dot-ok{ background:var(--ok); }
+.dot-warn{ background:var(--warn); }
+.dot-err{ background:var(--danger); }
+
+.modelLoader{ display:flex; gap:8px; }
+.modelLoader input{
+  flex:1; min-width:0; background:var(--panel-1); color:var(--text-1);
+  border:1px solid var(--line-2); border-radius:10px; padding:6px 10px;
 }
 
-/* Dezentes, halbtransparentes „Warnband“ schräg über den Rahmen */
-body.skin-apoc #simCanvas::after{
-  content:""; position:absolute; inset:-1px; border-radius:14px; pointer-events:none;
-  background:
-    repeating-linear-gradient(135deg,
-      rgba(0,0,0,.15) 0 14px,
-      rgba(255,205,0,.22) 14px 28px);
-  background-size: 220% 20%;
-  background-position: 0 0;
-  transform: translateY(-20%) rotate(-8deg);
-  mix-blend-mode:overlay; opacity:.35; filter: blur(.2px);
+/* Zellenliste */
+.cellList{
+  max-height: 52vh; overflow:auto;
+  background:var(--panel-3); border:1px solid var(--line-2); border-radius:10px;
+  padding:6px;
 }
+.cellRow{
+  width:100%; text-align:left; cursor:pointer;
+  display:grid; grid-template-columns: 1fr auto auto auto; gap:8px;
+  align-items:center; padding:8px 10px; border-radius:8px;
+  background:transparent; border:1px solid transparent; color:var(--text-1);
+}
+.cellRow:hover{ background:rgba(255,255,255,.03); border-color:var(--line-2); }
+.cellRow .cellName{ font-weight:600; }
+.cellRow .muted{ color:var(--muted); }
+.cellRow .sex{ opacity:.9; }
+.cellRow .score{ justify-self:end; font-variant-numeric:tabular-nums; }
 
-/* Optional: „Gefahr“-Badge am Canvas-Rand (klein & subtil) */
-body.skin-apoc #main::after{
-  content:"☣ ZONE-13"; position:absolute; right: 20px; top: 6px;
-  font: 700 12px/1 var(--font, system-ui);
-  letter-spacing:.08em; text-transform:uppercase;
-  color: rgba(140,255,87,.55);
-  text-shadow: 0 0 10px rgba(140,255,87,.18);
-  pointer-events:none;
-}
+/* ---------- Umwelt-Modal (aus vorherigem Schritt) ------------------------ */
 
-/* Ticker leicht altern – feine Kanten und „abgegriffen“ */
-body.skin-apoc #ticker{
-  border-top-color:#c2b68a;
-  box-shadow:0 -8px 24px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.25);
+#envModal{
+  width: min(960px, calc(100vw - 2rem)); max-width:100%;
+  padding:0; background:var(--panel-2); color:var(--text-1);
+  border:1px solid var(--line-2); border-radius:14px; box-shadow:0 20px 60px rgba(0,0,0,.6);
 }
-body.skin-apoc .paperHead{
-  background:linear-gradient(180deg,#e6d5ac,#d6c396);
-  border-color:#c2b68a;
+#envModal .modalHeader{
+  display:flex; align-items:center; justify-content:space-between;
+  padding:14px 16px; border-bottom:1px solid var(--line-2); background:var(--panel-1);
 }
-
-/* Leichter Vignette-Ring über dem Canvas (Atmosphäre) */
-body.skin-apoc #simCanvas{
-  box-shadow:inset 0 0 140px rgba(0,0,0,.22), inset 0 0 26px rgba(0,0,0,.25);
-}
-
-/* Wenn die Skin temporär deaktiviert werden soll, Klasse entfernen oder:
-body:not(.skin-apoc) #simCanvas::before,
-body:not(.skin-apoc) #simCanvas::after,
-body:not(.skin-apoc) #main::after{ display:none; }
-*/
-
-/* === Umwelt-Modal – Layout & Look ======================================= */
-
-/* Dialog selbst dunkler und breiter; mobil passt er sich an */
-#envModal {
-  width: min(960px, calc(100vw - 2rem));
-  max-width: 100%;
-  padding: 0;
-  background: var(--panel-2, #0f1416);
-  color: var(--text-1, #e7f0ea);
-  border: 1px solid var(--line-2, #1d272a);
-  border-radius: 14px;
-  box-shadow: 0 20px 60px rgba(0,0,0,.6);
-}
-
-/* Modal-Kopf identisch zum Editor */
-#envModal .modalHeader {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 14px 16px; border-bottom: 1px solid var(--line-2, #1d272a);
-  background: var(--panel-1, #0b1012);
-}
-#envModal .modalHeader h2 { margin: 0; font-size: 1.1rem; }
-
-/* Zwei Spalten auf groß, eine Spalte auf schmal */
-#envModal .modalBody {
-  display: grid;
-  grid-template-columns: 1fr 320px;
-  gap: 20px;
-  padding: 16px;
-  background: transparent; /* verhindert die „weiße Fläche“ */
-}
-
-@media (max-width: 880px){
-  #envModal .modalBody { grid-template-columns: 1fr; }
-}
-
-/* Links – die Reglerliste wirkt wie Karten */
-#envModal .editorLeft > .traitRow,
-#envModal .editorLeft > .traitRow + .traitRow {
-  margin-bottom: 10px;
-}
-#envModal .editorLeft .traitRow label {
-  display: block;
-  margin: 6px 2px;
-  opacity: .9;
-}
-
-/* Einheitlicher „Stepper“ mit Range + Zahl rechts daneben */
-#envModal .stepper {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  background: var(--panel-3, #0a0f11);
-  border: 1px solid var(--line-2, #1d272a);
-  border-radius: 10px;
-  padding: 10px 12px;
-}
-#envModal .stepper input[type="range"] { flex: 1; min-width: 0; }
-#envModal .stepper .val {
-  min-width: 3.8ch;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-  opacity: .85;
-}
-
-/* Checkboxzeilen ebenfalls als kleine Karten */
-#envModal .editorLeft input[type="checkbox"] {
-  transform: translateY(1px);
-  accent-color: var(--accent, #89f17f);
-}
-#envModal .editorLeft .traitRow:has(input[type="checkbox"]) {
-  background: var(--panel-3, #0a0f11);
-  border: 1px solid var(--line-2, #1d272a);
-  border-radius: 10px;
-  padding: 10px 12px;
-}
-
-/* Rechts – Infofeld */
-#envModal .editorRight .advisorBox {
-  background: var(--panel-3, #0a0f11);
-  border: 1px solid var(--line-2, #1d272a);
-  border-radius: 10px;
-  padding: 12px;
-}
-#envModal .editorRight .advisorHeader { margin-bottom: 8px; }
-
-/* Close-Button optisch wie im Editor */
-#envModal #envClose {
-  border: 1px solid var(--line-2, #1d272a);
-  background: var(--panel-3, #0a0f11);
-  color: var(--text-1, #e7f0ea);
-  border-radius: 10px;
-  padding: 6px 10px;
-  cursor: pointer;
-}
-#envModal #envClose:focus-visible { outline: 2px solid var(--accent, #89f17f); outline-offset: 2px; }
-
-/* Slider-Thumb/Track minimal angleichen (optional, universell) */
-#envModal input[type="range"] {
-  height: 6px;
-}
+#envModal .modalHeader h2{ margin:0; font-size:1.1rem; }
+#envModal .modalBody{ display:grid; grid-template-columns:1fr 320px; gap:20px; padding:16px; background:transparent; }
+@media (max-width: 880px){ #envModal .modalBody{ grid-template-columns:1fr; } }
+#envModal .editorLeft > .traitRow{ margin-bottom:10px; }
+#envModal .editorLeft .traitRow label{ display:block; margin:6px 2px; opacity:.9; }
+#envModal .stepper{ display:flex; align-items:center; gap:10px; background:var(--panel-3); border:1px solid var(--line-2); border-radius:10px; padding:10px 12px; }
+#envModal .stepper input[type="range"]{ flex:1; min-width:0; }
+#envModal .stepper .val{ min-width:3.8ch; text-align:right; font-variant-numeric:tabular-nums; opacity:.85; }
+#envModal .editorLeft input[type="checkbox"]{ transform:translateY(1px); accent-color:var(--accent); }
+#envModal .editorLeft .traitRow:has(input[type="checkbox"]){ background:var(--panel-3); border:1px solid var(--line-2); border-radius:10px; padding:10px 12px; }
+#envModal .editorRight .advisorBox{ background:var(--panel-3); border:1px solid var(--line-2); border-radius:10px; padding:12px; }
+#envModal #envClose{ border:1px solid var(--line-2); background:var(--panel-3); color:var(--text-1); border-radius:10px; padding:6px 10px; cursor:pointer; }
+#envModal #envClose:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+#envModal input[type="range"]{ height:6px; }
