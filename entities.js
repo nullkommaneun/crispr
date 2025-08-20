@@ -1,8 +1,5 @@
 import { CONFIG } from "./config.js";
 import { emit } from "./event.js";
-import { getEnvState } from "./environment.js";
-import { getFoodItems } from "./entities.js"; // Hinweis: zirkulär – NICHT importieren! (wir definieren unten selbst) – nur Reminder
-
 import { getAction as drivesGetAction, afterStep as drivesAfterStep } from "./drives.js";
 
 let W = CONFIG.world.width, H = CONFIG.world.height;
@@ -109,7 +106,7 @@ export function createAdamAndEve(){
     energy: capE * 0.85
   });
 
-  // Start-Bonus: 10 Kinder (5 je Elternpaar)
+  // Start-Bonus: 10 Kinder (5 je Eltern)
   for(let k=0;k<10;k++){
     const child = makeChild(A, E, k);
     cells.push(child);
@@ -171,7 +168,6 @@ function steerWallAvoid(c){
   return [fx, fy];
 }
 function updateWander(c, dt){
-  // Ornstein–Uhlenbeck
   const th = CONFIG.physics.wanderTheta ?? 1.6;
   const sg = CONFIG.physics.wanderSigma ?? 0.45;
   const gauss = ()=>{ let u=0,v=0; while(u===0) u=Math.random(); while(v===0) v=Math.random(); return Math.sqrt(-2*Math.log(u)) * Math.cos(2*Math.PI*v); };
@@ -185,8 +181,8 @@ function capEnergy(c){ return CONFIG.cell.energyMax * (1 + 0.08*(c.genome.GRÖ-5
 
 /* Nahrung & Partner-Ziele (Nearest) */
 function nearestFoodCenter(c, sense){
-  let best = []; const foods = foodItems;
-  for(const f of foods){
+  let best = [];
+  for(const f of foodItems){
     const dx=f.x - c.pos.x, dy=f.y - c.pos.y;
     const d2=dx*dx+dy*dy; if(d2 < sense*sense){ best.push({ f, d2 }); }
   }
@@ -214,7 +210,7 @@ function chooseMate(c, sense, cells){
 
 /* ===== Hauptschritt mit Drives-Policy ===== */
 export function step(dt, env, t=0){
-  const neighbors = cells; // einfache Variante
+  const neighbors = cells;
 
   for(let i=cells.length-1;i>=0;i--){
     const c = cells[i];
@@ -222,11 +218,9 @@ export function step(dt, env, t=0){
     c.cooldown = Math.max(0, c.cooldown - dt);
 
     const g = c.genome;
-    // Geschwindigkeits-/Kraft-Limits
     const maxSpeed = CONFIG.cell.baseSpeed * (0.7 + 0.08*g.TEM);
     const maxForce = CONFIG.physics.maxForceBase * (0.7 + 0.08*g.TEM);
 
-    // Kontextdaten für Drives
     const senseFood = CONFIG.cell.senseFood * (0.7 + 0.1*g.EFF);
     const senseMate = CONFIG.cell.senseMate * (0.7 + 0.08*g.EFF);
 
@@ -236,7 +230,7 @@ export function step(dt, env, t=0){
     const hazard = (
       (env.acid.enabled  ? clamp(1 - dEdge/env.acid.range, 0, 1) : 0) +
       (env.barb.enabled  ? clamp(1 - dEdge/env.barb.range, 0, 1) : 0) +
-      (env.fence.enabled ? clamp(1 - dEdge/env.fence.range, 0, 1) : 0) +
+      (env.fence.enabled ? clamp(1 - dEdge/env.fence.range,0,1) : 0) +
       (env.nano.enabled  ? 0.3 : 0)
     );
     const ctx = {
@@ -246,20 +240,20 @@ export function step(dt, env, t=0){
       mate: mate?.cell ?? null,
       mateDist: mate?.d ?? null,
       hazard,
-      neighCount: 0, // ggf. später: echte Nachbarschaft
+      neighCount: 0,
       worldMin: Math.min(W,H)
     };
 
-    // Primäre Option über Drives bestimmen
+    // Primäre Option via Drives
     const option = drivesGetAction(c, t, ctx);
 
-    // Avoid hat Priorität
+    // Avoid (Priorität)
     let [fx,fy] = [0,0], rem = maxForce;
     const fAvoid = steerWallAvoid(c);
     const avoidW = (CONFIG.physics.wAvoid ?? 1.15) * (0.6 + 0.7*clamp(hazard,0,1)) * (0.9 + 0.03*g.SCH);
     ({fx,fy,rem} = addBudget(fx,fy,rem, fAvoid[0],fAvoid[1], avoidW));
 
-    // Primärvektor aus Option
+    // Primärvektor
     let fOpt=[0,0];
     const slowR = Math.max(CONFIG.physics.slowRadius ?? 120, CONFIG.cell.pairDistance*3);
     if(option==="food" && food){
@@ -269,10 +263,9 @@ export function step(dt, env, t=0){
     }else{
       fOpt = updateWander(c, dt);
     }
-
     ({fx,fy,rem} = addBudget(fx,fy,rem, fOpt[0],fOpt[1], 1.0));
 
-    // Minimal-Separation (kleines Budget)
+    // Mini-Separation
     const fSep = quickSeparation(c, neighbors, 22);
     ({fx,fy,rem} = addBudget(fx,fy,rem, fSep[0],fSep[1], 0.35));
 
@@ -284,7 +277,7 @@ export function step(dt, env, t=0){
     c.pos.y = clamp(c.pos.y + c.vel.y * dt, 0, H);
     c.vel.x *= 0.985; c.vel.y *= 0.985;
 
-    // Essen (lokal)
+    // Essen
     const eatR = CONFIG.food.itemRadius + radiusOf(c) + 0.5;
     for(let k=foodItems.length-1;k>=0;k--){
       const f = foodItems[k];
