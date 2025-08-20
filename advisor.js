@@ -5,20 +5,13 @@ import { survivalScore } from './genetics.js';
 
 const DEFAULT_MODEL_URL = 'models/model.json';
 
-const state = {
-  enabled:false,
-  libReady:false,
-  model:null,
-  useModel:false,
-  lastHeuristicAt:0
-};
+const state = { enabled:false, libReady:false, model:null, useModel:false, lastHeuristicAt:0 };
 
 export function initAdvisor(){}
 
 export function setEnabled(on){ state.enabled=!!on; Events.emit(EVT.STATUS,{source:'advisor',text:getStatusLabel().replace('Berater: ','')}); }
 export function setUseModel(on){ state.useModel=!!on && !!state.model; Events.emit(EVT.STATUS,{source:'advisor',text:getStatusLabel().replace('Berater: ','')}); }
 export function getStatusLabel(){ if(!state.enabled) return 'Berater: Aus'; if(state.useModel&&state.model) return 'Berater: Modell aktiv'; return 'Berater: Heuristik aktiv'; }
-export function isModelLoaded(){ return !!state.model; }
 
 export async function tryLoadTF(){
   if(state.libReady) return true;
@@ -31,46 +24,28 @@ export async function tryLoadTF(){
     document.head.appendChild(s);
   });
 }
-
 export async function loadModelFromUrl(url=DEFAULT_MODEL_URL){
   const ok=await tryLoadTF(); if(!ok) return null;
-  const tf=window.tf;
-  const m=await tf.loadLayersModel(url);
-  state.model=m; state.useModel=true; setEnabled(true);
-  Events.emit(EVT.STATUS,{source:'advisor',text:'Modell geladen'});
-  return m;
+  const tf=window.tf; state.model=await tf.loadLayersModel(url);
+  state.useModel=true; setEnabled(true);
+  Events.emit(EVT.STATUS,{source:'advisor',text:'Modell geladen'}); return state.model;
 }
-
 export async function cycleAdvisorMode(defaultModelUrl){
   if(!state.enabled){ setEnabled(true); state.useModel=false; return 'heuristic'; }
-  if(state.enabled && !state.useModel){
-    try{ await loadModelFromUrl(defaultModelUrl||DEFAULT_MODEL_URL); state.useModel=true; return 'model'; }
-    catch{ setEnabled(false); state.useModel=false; return 'off'; }
-  }
+  if(state.enabled && !state.useModel){ try{ await loadModelFromUrl(defaultModelUrl||DEFAULT_MODEL_URL); state.useModel=true; return 'model'; } catch{ setEnabled(false); state.useModel=false; return 'off'; } }
   setEnabled(false); state.useModel=false; return 'off';
 }
-
-function modelInputDim(){
-  try{
-    const inShape = state.model?.inputs?.[0]?.shape;
-    const dim = Array.isArray(inShape) ? inShape[inShape.length-1] : null;
-    return (typeof dim==='number' && (dim===4 || dim===5)) ? dim : 4;
-  }catch{ return 4; }
-}
-
+function modelInputDim(){ try{ const sh=state.model?.inputs?.[0]?.shape; const d=Array.isArray(sh)? sh[sh.length-1]:null; return (d===5||d===4)?d:4; }catch{ return 4; } }
 export function predictProbability(genome){
   if(!state.enabled) return null;
   if(state.useModel && state.model && window.tf){
-    const tf=window.tf;
-    const dim = modelInputDim();
-    // 4 oder 5 Features normalisieren (1..9 → 0..1)
-    const v4 = [genome.TEM,genome.GRO,genome.EFF,genome.SCH].map(v=>(v-1)/8);
-    const x  = dim===5 ? [...v4, (genome.MET-1)/8] : v4;
-    const t=tf.tensor2d([x]); const y=state.model.predict(t);
-    let p; if(Array.isArray(y)){ p=(y[0].dataSync?.()[0]??0.5); y.forEach(t=>t.dispose?.()); } else { p=(y.dataSync?.()[0]??0.5); y.dispose?.(); }
+    const tf=window.tf; const dim=modelInputDim();
+    const v4=[genome.TEM,genome.GRO,genome.EFF,genome.SCH].map(v=>(v-1)/8);
+    const x=dim===5? [...v4,(genome.MET-1)/8] : v4;
+    const t=tf.tensor2d([x]); const y=state.model.predict(t); let p;
+    if(Array.isArray(y)){ p=(y[0].dataSync?.()[0]??0.5); y.forEach(t=>t.dispose?.()); } else { p=(y.dataSync?.()[0]??0.5); y.dispose?.(); }
     t.dispose?.(); return Math.max(0, Math.min(1, p));
   }
   return survivalScore(genome)/100;
 }
-
-export function updateAdvisor(){} // Tipps liefert die DNA Daily
+export function updateAdvisor(){} // keine Tipps in den Ticker injizieren
