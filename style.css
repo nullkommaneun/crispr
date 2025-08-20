@@ -7,12 +7,20 @@
   --warn:#ff6b6b;
   --grid:#1a222a;
   --brand:#27c7ff;
+  --topbar-h: 56px; /* wird per JS dynamisch gesetzt */
 }
+
+/* Base */
 *{box-sizing:border-box}
 html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font:14px/1.4 system-ui,Segoe UI,Roboto,Helvetica,Arial}
+
+/* FIXED TOPBAR ÜBER ALLEM (außer Panels/Overlays) */
 #topbar{
-  position:sticky;top:0;z-index:10;display:flex;align-items:center;justify-content:space-between;
-  padding:8px 10px;background:linear-gradient(180deg,#0f151b,#0b0f12);
+  position:fixed; top:0; left:0; right:0;
+  z-index:1000;
+  display:flex; align-items:center; justify-content:space-between;
+  padding:8px 10px;
+  background:linear-gradient(180deg,#0f151b,#0b0f12);
   border-bottom:1px solid #0f1a22
 }
 .controls{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
@@ -24,7 +32,12 @@ button{
 button:hover{background:#1a2a35}
 .sep{width:1px;height:22px;background:#253340;margin:0 4px}
 
-#worldWrap{display:flex;justify-content:center;align-items:center;padding:6px}
+/* WORLD unterhalb der Topbar */
+#worldWrap{
+  display:flex;justify-content:center;align-items:center;
+  padding:6px;
+  margin-top: calc(var(--topbar-h) + 8px); /* Abstand unter die fixe Topbar */
+}
 #world{
   width:100%;max-width:1200px;aspect-ratio:16/10;background:
     linear-gradient(0deg, rgba(20,30,36,.85),rgba(12,16,20,.85)),
@@ -33,9 +46,12 @@ button:hover{background:#1a2a35}
   border:1px solid #17222c;border-radius:8px;display:block
 }
 
-/* Panels */
+/* PANELS – ÜBER ALLEM (auch über Topbar) */
 .panel{
-  position:fixed;top:64px;right:16px;bottom:16px;width:360px;background:var(--panel);
+  position:fixed;
+  top:12px; right:16px; bottom:16px; width:360px;
+  z-index:3000; /* > topbar */
+  background:var(--panel);
   border:1px solid #22303a;border-radius:10px;padding:12px;overflow:auto;box-shadow:0 10px 30px rgba(0,0,0,.35)
 }
 .panel.hidden{display:none}
@@ -49,8 +65,11 @@ button:hover{background:#1a2a35}
 .story{border-left:3px solid #274f2f;padding:6px 8px;margin:8px 0;background:#0f151a;border-radius:6px}
 .story .time{color:#89a; font-size:12px}
 
-/* Error overlay */
-#errorOverlay{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center}
+/* Error overlay – ganz oben */
+#errorOverlay{
+  position:fixed; inset:0; z-index:4000; /* über Panels */
+  background:rgba(0,0,0,.55); display:flex; align-items:center; justify-content:center
+}
 #errorOverlay.hidden{display:none}
 .errorCard{width:min(680px,90vw);background:#151b22;border:1px solid #2f3d48;border-radius:10px;padding:16px}
 #errorText{white-space:pre-wrap;color:#ffb3b3}
