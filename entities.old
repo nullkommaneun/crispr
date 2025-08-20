@@ -9,22 +9,32 @@ const foodItems = []; // {x,y,amount,radius}
 let stammMeta = new Map();
 let nextCellId = 1;
 
+/* ===== Utils ===== */
+const clamp = (x,a,b)=> Math.max(a, Math.min(b,x));
+const len = (x,y)=> Math.hypot(x,y);
+function norm(x,y){ const L=len(x,y)||1e-6; return [x/L, y/L]; }
+function limitVec(x,y,max){
+  const L=len(x,y);
+  if(L>max){ const s=max/(L||1e-6); return [x*s,y*s]; }
+  return [x,y];
+}
 function rnd(a,b){ return a + Math.random()*(b-a); }
-function pick(arr){ return arr[(Math.random()*arr.length)|0]; }
 
-function stammColor(id){
-  // deterministic pseudo-random color per stamm
+function pickColorByStamm(id){
   const rand = Math.sin(id*999)*43758.5453;
   const h = Math.abs(rand)%360;
   return `hsl(${h}deg 70% 60%)`;
 }
 
+/* Für Renderer */
 export function worldSize(){ return {width:W,height:H}; }
 export function setWorldSize(w,h){ W=w; H=h; }
 
+/* Food-API (von food.js genutzt) */
 export function addFoodItem(f){ foodItems.push(f); }
 export function getFoodItems(){ return foodItems; }
 
+/* Cells-API */
 export function getCells(){ return cells; }
 export function getStammCounts(){
   const m={}; for(const c of cells){ m[c.stammId]=(m[c.stammId]||0)+1; } return m;
@@ -32,10 +42,12 @@ export function getStammCounts(){
 
 export function createCell(opts={}){
   const id = nextCellId++;
-  const stammId = opts.stammId ?? (opts.id?.stammId) ?? 1;
+  const stammId = opts.stammId ?? 1;
   if(!stammMeta.has(stammId)){
-    stammMeta.set(stammId, { id: stammId, color: stammColor(stammId) });
+    stammMeta.set(stammId, { id: stammId, color: pickColorByStamm(stammId) });
   }
+  // Energie-Kapazität wächst mit GRÖ
+  const baseEnergyMax = CONFIG.cell.energyMax * (1 + 0.08 * (((opts.genome?.GRÖ) ?? 5) - 5));
   const cell = {
     id,
     name: opts.name || `Z${id}`,
@@ -44,7 +56,7 @@ export function createCell(opts={}){
     color: stammMeta.get(stammId).color,
     pos: opts.pos || { x: rnd(60, W-60), y: rnd(60, H-60) },
     vel: { x: 0, y: 0 },
-    energy: Math.min(CONFIG.cell.energyMax, opts.energy ?? rnd(60, CONFIG.cell.energyMax)),
+    energy: Math.min(baseEnergyMax, opts.energy ?? rnd(60, baseEnergyMax)),
     age: 0,
     cooldown: 0,
     genome: opts.genome || {
@@ -53,7 +65,9 @@ export function createCell(opts={}){
       EFF: (opts.EFF ?? (2+ (Math.random()*7|0))),
       SCH: (opts.SCH ?? (2+ (Math.random()*7|0))),
       MET: (opts.MET ?? (2+ (Math.random()*7|0))),
-    }
+    },
+    // Wander-Noise (OU-Prozess)
+    wander: { vx: 0, vy: 0 }
   };
   cells.push(cell);
   return cell;
@@ -77,96 +91,256 @@ export function createAdamAndEve(){
   return [A,E];
 }
 
-/** Environment application is stateless here; we read env live in step(). */
-export function applyEnvironment(env){ /* no-op holder to satisfy API */ }
+/** Environment application (Placeholder, Live-Lesen in step()) */
+export function applyEnvironment(env){ /* no-op */ }
 
-/** Physics & Behaviour */
+/* ===== Kern: natürliches Bewegungsmodell ===== */
+function senseRadii(c){
+  const g=c.genome;
+  const senseFood = CONFIG.cell.senseFood * (0.7 + 0.1*g.EFF);
+  const senseMate = CONFIG.cell.senseMate * (0.7 + 0.08*g.EFF);
+  const sep = CONFIG.physics.separationRadius * (0.8 + 0.06*(g.GRÖ));
+  const ali = CONFIG.physics.alignmentRadius * (0.9 + 0.05*(g.EFF-5));
+  const coh = CONFIG.physics.cohesionRadius * (0.9 + 0.05*(g.EFF-5));
+  return { senseFood, senseMate, sep, ali, coh };
+}
+function speedAndForce(c){
+  const g=c.genome;
+  const maxSpeed = CONFIG.cell.baseSpeed * (0.7 + 0.08*g.TEM);
+  const maxForce = CONFIG.physics.maxForceBase * (0.7 + 0.08*g.TEM);
+  return { maxSpeed, maxForce };
+}
+function energyCapacity(c){
+  return CONFIG.cell.energyMax * (1 + 0.08*(c.genome.GRÖ-5));
+}
+function radiusOf(c){
+  return CONFIG.cell.radius * (0.7 + 0.1*(c.genome.GRÖ));
+}
+
+/* Steering-Primitiven */
+function steerSeekArrive(c, target, maxSpeed, stopR, slowR){
+  const dx=target.x - c.pos.x, dy=target.y - c.pos.y;
+  const d=len(dx,dy);
+  if(d < stopR) return [0,0]; // am Ziel
+  let sp = maxSpeed;
+  if(d < slowR) sp = maxSpeed * (d/slowR); // „Arrive“: weich abbremsen
+  const [ux,uy] = norm(dx,dy);
+  const desiredX = ux * sp, desiredY = uy * sp;
+  return [desiredX - c.vel.x, desiredY - c.vel.y];
+}
+function steerSeparation(c, neighbors, sepR){
+  let fx=0, fy=0, n=0;
+  for(const o of neighbors){
+    if(o===c) continue;
+    const dx = c.pos.x - o.pos.x, dy = c.pos.y - o.pos.y;
+    const d2 = dx*dx + dy*dy;
+    if(d2 > sepR*sepR || d2===0) continue;
+    const d = Math.sqrt(d2);
+    const w = 1/Math.max(d,1e-3);
+    fx += (dx/d)*w; fy += (dy/d)*w; n++;
+  }
+  if(n===0) return [0,0];
+  return [fx/n, fy/n];
+}
+function steerAlignment(c, neighbors, aliR, maxSpeed){
+  let vx=0, vy=0, n=0;
+  for(const o of neighbors){
+    const dx=o.pos.x - c.pos.x, dy=o.pos.y - c.pos.y;
+    const d2=dx*dx+dy*dy; if(d2>aliR*aliR) continue;
+    vx += o.vel.x; vy += o.vel.y; n++;
+  }
+  if(n===0) return [0,0];
+  const [ux,uy] = norm(vx/n, vy/n);
+  const desiredX = ux * maxSpeed, desiredY = uy * maxSpeed;
+  return [desiredX - c.vel.x, desiredY - c.vel.y];
+}
+function steerCohesion(c, neighbors, cohR, maxSpeed){
+  let sx=0, sy=0, n=0;
+  for(const o of neighbors){
+    const dx=o.pos.x - c.pos.x, dy=o.pos.y - c.pos.y;
+    const d2=dx*dx+dy*dy; if(d2>cohR*cohR) continue;
+    sx += o.pos.x; sy += o.pos.y; n++;
+  }
+  if(n===0) return [0,0];
+  const cx = sx/n, cy = sy/n;
+  return steerSeekArrive(c, {x:cx,y:cy}, maxSpeed*0.6, CONFIG.physics.stopRadius, CONFIG.physics.slowRadius);
+}
+function steerWallAvoid(c){
+  const r = CONFIG.physics.wallAvoidRadius + radiusOf(c);
+  let fx=0, fy=0;
+
+  const l = c.pos.x;            if(l < r) fx += (r - l)/r;
+  const rgt = W - c.pos.x;      if(rgt < r) fx -= (r - rgt)/r;
+  const t = c.pos.y;            if(t < r) fy += (r - t)/r;
+  const b = H - c.pos.y;        if(b < r) fy -= (r - b)/r;
+
+  return [fx, fy];
+}
+function updateWander(c, dt){
+  // Ornstein–Uhlenbeck: dv = theta*(mu-v)*dt + sigma*sqrt(dt)*N(0,1)
+  const th = CONFIG.physics.wanderTheta;
+  const sg = CONFIG.physics.wanderSigma;
+  const gauss = ()=> {
+    let u=0,v=0; while(u===0) u=Math.random(); while(v===0) v=Math.random();
+    return Math.sqrt(-2*Math.log(u)) * Math.cos(2*Math.PI*v);
+  };
+  c.wander.vx += th * (0 - c.wander.vx) * dt + sg * Math.sqrt(dt) * gauss();
+  c.wander.vy += th * (0 - c.wander.vy) * dt + sg * Math.sqrt(dt) * gauss();
+  // richtungsabhängig leicht entlang aktueller Bewegung projizieren
+  const [ux,uy] = (len(c.vel.x, c.vel.y) > 1e-3) ? norm(c.vel.x, c.vel.y) : [0,0];
+  return [ c.wander.vx + 0.2*ux, c.wander.vy + 0.2*uy ];
+}
+
+/* Nahrung & Partner-Ziele */
+function nearestFoodCenter(c, sense){
+  // nimm bis zu 3 nächstgelegene Items und bilde deren Schwerpunkt
+  let best = [];
+  for(const f of foodItems){
+    const dx=f.x - c.pos.x, dy=f.y - c.pos.y;
+    const d2=dx*dx+dy*dy;
+    if(d2 < sense*sense){
+      best.push({ f, d2 });
+    }
+  }
+  if(best.length===0) return null;
+  best.sort((a,b)=>a.d2-b.d2);
+  const take = best.slice(0,3).map(o=>o.f);
+  const cx = take.reduce((s,f)=>s+f.x,0)/take.length;
+  const cy = take.reduce((s,f)=>s+f.y,0)/take.length;
+  return { x: cx, y: cy };
+}
+function chooseMate(c, sense, cells){
+  if(c.cooldown>0) return null;
+  let best=null, bestScore=-1e9;
+  for(const o of cells){
+    if(o===c) continue;
+    if(o.sex===c.sex) continue;
+    if(o.cooldown>0) continue;
+    const dx=o.pos.x - c.pos.x, dy=o.pos.y - c.pos.y;
+    const d2=dx*dx+dy*dy;
+    if(d2 > sense*sense) continue;
+
+    // einfacher „Komplement“-Score: Nähe + Gene (niedriger MET, gute EFF, ok SCH)
+    const distScore = -Math.sqrt(d2);
+    const geneScore = (o.genome.EFF*0.8 + (10-o.genome.MET)*0.7 + o.genome.SCH*0.2 + o.genome.TEM*0.2);
+    const total = distScore*0.05 + geneScore;
+    if(total > bestScore){ bestScore=total; best=o; }
+  }
+  return best;
+}
+
+/** Hauptschritt: kraftbasierte, natürliche Bewegung */
 export function step(dt, env, t=0){
-  // metabolism baseline: energy drain per sec depends on MET
+  // Vorab: einfache Liste für Nachbarschaft (kleine N → ok ohne Spatial Grid)
+  const neighbors = cells; // alle Zellen als potentielle Nachbarn
+
   for(let i=cells.length-1;i>=0;i--){
     const c = cells[i];
     c.age += dt;
     c.cooldown = Math.max(0, c.cooldown - dt);
 
-    // wall avoidance vector
-    const margin=CONFIG.world.marginWall + c.genome.GRÖ;
-    let ax=0, ay=0;
+    const g = c.genome;
+    const { senseFood, senseMate, sep, ali, coh } = senseRadii(c);
+    const { maxSpeed, maxForce } = speedAndForce(c);
 
-    if(c.pos.x < margin) ax += (margin - c.pos.x);
-    if(c.pos.x > W - margin) ax -= (c.pos.x - (W - margin));
-    if(c.pos.y < margin) ay += (margin - c.pos.y);
-    if(c.pos.y > H - margin) ay -= (c.pos.y - (H - margin));
+    // Motivation (0..1)
+    const cap = energyCapacity(c);
+    const eRatio = clamp(c.energy / cap, 0, 1);
+    const wantFood = Math.pow(1 - eRatio, 1.3);                         // hungrig → höher
+    const wantMate = (c.cooldown<=0 && eRatio>0.5) ? (0.4*(1 - wantFood)) : 0;
+    // „Sicherheitsdrang“: Nähe zum Rand + aktive Gefahren
+    const dEdge = Math.min(c.pos.x, W-c.pos.x, c.pos.y, H-c.pos.y);
+    const hazard = (
+      (env.acid.enabled  ? clamp(1 - dEdge/env.acid.range, 0, 1) : 0) +
+      (env.barb.enabled  ? clamp(1 - dEdge/env.barb.range, 0, 1) : 0) +
+      (env.fence.enabled ? clamp(1 - dEdge/env.fence.range,0,1) : 0) +
+      (env.nano.enabled  ? 0.3 : 0)
+    );
+    const wantAvoid = clamp(hazard, 0, 1);
 
-    // sense food
-    let targetFood = null, targetDist2=Infinity;
-    const sense = CONFIG.cell.senseFood * (0.8 + 0.08*c.genome.EFF);
-    for(const f of foodItems){
+    // Ziele
+    const foodTarget = wantFood > 0.05 ? nearestFoodCenter(c, senseFood) : null;
+    const mateTarget = wantMate > 0.05 ? chooseMate(c, senseMate, cells) : null;
+
+    // Steering-Kräfte
+    let [fx, fy] = [0,0];
+
+    if(foodTarget){
+      const [sx,sy] = steerSeekArrive(c, foodTarget, maxSpeed, CONFIG.physics.stopRadius, CONFIG.physics.slowRadius);
+      fx += sx * CONFIG.physics.wFood * (0.7 + 0.5*wantFood)*(0.8 + 0.05*g.EFF);
+      fy += sy * CONFIG.physics.wFood * (0.7 + 0.5*wantFood)*(0.8 + 0.05*g.EFF);
+    }
+    if(mateTarget){
+      const [sx,sy] = steerSeekArrive(c, {x:mateTarget.pos.x, y:mateTarget.pos.y}, maxSpeed*0.9, CONFIG.cell.pairDistance, CONFIG.physics.slowRadius);
+      fx += sx * CONFIG.physics.wMate * (0.8 + 0.4*wantMate);
+      fy += sy * CONFIG.physics.wMate * (0.8 + 0.4*wantMate);
+    }
+
+    // Flocking
+    {
+      const [sx,sy] = steerSeparation(c, neighbors, sep);
+      fx += sx * CONFIG.physics.wSep;
+      fy += sy * CONFIG.physics.wSep;
+
+      const [ax,ay] = steerAlignment(c, neighbors, ali, maxSpeed);
+      fx += ax * CONFIG.physics.wAli;
+      fy += ay * CONFIG.physics.wAli;
+
+      const [cx,cy] = steerCohesion(c, neighbors, coh, maxSpeed);
+      fx += cx * CONFIG.physics.wCoh;
+      fy += cy * CONFIG.physics.wCoh;
+    }
+
+    // Randvermeidung / Sicherheitsdrang
+    if(wantAvoid > 0.01){
+      const [ax,ay] = steerWallAvoid(c);
+      fx += ax * CONFIG.physics.wAvoid * (0.6 + 0.7*wantAvoid) * (0.9 + 0.03*g.SCH);
+      fy += ay * CONFIG.physics.wAvoid * (0.6 + 0.7*wantAvoid) * (0.9 + 0.03*g.SCH);
+    }
+
+    // Korrelierter „Wander“-Noise
+    {
+      const [wx,wy] = updateWander(c, dt);
+      fx += wx * CONFIG.physics.wWander;
+      fy += wy * CONFIG.physics.wWander;
+    }
+
+    // Force limit + Integration
+    [fx, fy] = limitVec(fx, fy, maxForce);
+    c.vel.x += fx * dt;
+    c.vel.y += fy * dt;
+
+    // Geschwindigkeitslimit
+    [c.vel.x, c.vel.y] = limitVec(c.vel.x, c.vel.y, maxSpeed);
+
+    // Position + sanfte Dämpfung
+    c.pos.x = clamp(c.pos.x + c.vel.x * dt, 0, W);
+    c.pos.y = clamp(c.pos.y + c.vel.y * dt, 0, H);
+    c.vel.x *= 0.985; c.vel.y *= 0.985; // leicht zähflüssig
+
+    /* ===== Interaktion mit Nahrung (Essen in Reichweite) ===== */
+    const eatR = CONFIG.food.itemRadius + radiusOf(c);
+    for(let k=foodItems.length-1;k>=0;k--){
+      const f = foodItems[k];
       const dx=f.x - c.pos.x, dy=f.y - c.pos.y;
-      const d2=dx*dx+dy*dy;
-      if(d2 < sense*sense && d2 < targetDist2){
-        targetDist2 = d2; targetFood = f;
-      }
-    }
-    if(targetFood){
-      const dx=targetFood.x - c.pos.x, dy=targetFood.y - c.pos.y;
-      const d = Math.hypot(dx,dy)+1e-6;
-      ax += (dx/d)*1.8; ay += (dy/d)*1.8;
-      // eat if within radius
-      if(d < (CONFIG.food.itemRadius + radiusOf(c))){
+      if(dx*dx + dy*dy < eatR*eatR){
         const take = CONFIG.cell.eatPerSecond * dt;
-        const got = Math.min(take, targetFood.amount);
-        c.energy = Math.min(CONFIG.cell.energyMax*(1+0.08*(c.genome.GRÖ-5)), c.energy + got);
-        targetFood.amount -= got;
-        if(targetFood.amount <= 1){
-          const idx = foodItems.indexOf(targetFood);
-          if(idx>=0) foodItems.splice(idx,1);
+        const got = Math.min(take, f.amount);
+        c.energy = Math.min(energyCapacity(c), c.energy + got);
+        f.amount -= got;
+        if(f.amount <= 1){
+          foodItems.splice(k,1);
         }
-      }
-    }else{
-      // no food: seek mate
-      const mateSense = CONFIG.cell.senseMate * (0.9 + 0.05*c.genome.EFF);
-      let best=null, bestd2=Infinity;
-      for(const o of cells){
-        if(o===c) continue;
-        if(o.sex===c.sex) continue;
-        if(o.cooldown>0 || c.cooldown>0) continue;
-        const dx=o.pos.x - c.pos.x, dy=o.pos.y - c.pos.y;
-        const d2=dx*dx+dy*dy;
-        if(d2 < mateSense*mateSense && d2 < bestd2){
-          best=o; bestd2=d2;
-        }
-      }
-      if(best){
-        const dx=best.pos.x - c.pos.x, dy=best.pos.y - c.pos.y;
-        const d = Math.hypot(dx,dy)+1e-6;
-        ax += (dx/d)*1.2; ay += (dy/d)*1.2;
-      }else{
-        // wander slight
-        ax += (Math.random()-0.5)*0.6; ay += (Math.random()-0.5)*0.6;
       }
     }
 
-    // speed and energy
-    const maxSpeed = CONFIG.cell.baseSpeed * (0.7 + 0.08*(c.genome.TEM));
-    c.vel.x = (c.vel.x + ax) * 0.92;
-    c.vel.y = (c.vel.y + ay) * 0.92;
-    // clamp speed
-    const sp = Math.hypot(c.vel.x, c.vel.y);
-    if(sp > maxSpeed){ c.vel.x *= maxSpeed/sp; c.vel.y *= maxSpeed/sp; }
-
-    c.pos.x += c.vel.x * dt;
-    c.pos.y += c.vel.y * dt;
-    // clamp inside
-    c.pos.x = Math.max(0, Math.min(W, c.pos.x));
-    c.pos.y = Math.max(0, Math.min(H, c.pos.y));
-
-    // base metabolism
-    const baseDrain = CONFIG.cell.baseMetabolic * (0.6 + 0.1*c.genome.MET) * dt;
-    // moving drain
-    const moveDrain = 0.002 * sp * dt;
+    /* ===== Energiehaushalt & Umwelt ===== */
+    const sp = len(c.vel.x, c.vel.y);
+    const baseDrain = CONFIG.cell.baseMetabolic * (0.6 + 0.1*g.MET) * dt;
+    const moveDrain = 0.0009 * sp * sp * dt;         // ~v^2 → realistischere Kosten
     c.energy -= baseDrain + moveDrain;
 
-    // environment damage
+    // Umgebungsschaden
     let dmg = 0;
     const nearLeft = c.pos.x, nearRight = W - c.pos.x, nearTop = c.pos.y, nearBot = H - c.pos.y;
     const distEdge = Math.min(nearLeft,nearRight,nearTop,nearBot);
@@ -175,15 +349,14 @@ export function step(dt, env, t=0){
     if(env.barb.enabled && distEdge < env.barb.range){ dmg += env.barb.dps * dt; }
     if(env.nano.enabled){ dmg += env.nano.dps * dt; }
 
-    // shield by SCH
-    dmg *= (1 - 0.06 * (c.genome.SCH-5));
+    // Schild durch SCH
+    dmg *= (1 - 0.06 * (g.SCH-5));
     c.energy -= Math.max(0, dmg);
 
-    // fence impulse (periodic)
+    // Zaunimpuls (periodisch)
     if(env.fence.enabled && distEdge < env.fence.range){
       const phase = (t % env.fence.period);
       if(phase < dt){
-        // push back from nearest edge
         const fx = (nearLeft === distEdge) ? 1 : (nearRight === distEdge ? -1 : 0);
         const fy = (nearTop === distEdge) ? 1 : (nearBot === distEdge ? -1 : 0);
         c.vel.x += fx * env.fence.impulse;
@@ -191,15 +364,12 @@ export function step(dt, env, t=0){
       }
     }
 
-    // death by starvation or age
+    // Tod
     if(c.energy <= 0 || c.age > CONFIG.cell.ageMax){
       killCell(c.id);
     }
   }
 }
 
-function radiusOf(c){
-  return CONFIG.cell.radius * (0.7 + 0.1*(c.genome.GRÖ));
-}
-
+/* Für Renderer */
 export { radiusOf as __radiusForDebug };

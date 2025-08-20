@@ -46,7 +46,6 @@ export function createCell(opts={}){
   if(!stammMeta.has(stammId)){
     stammMeta.set(stammId, { id: stammId, color: pickColorByStamm(stammId) });
   }
-  // Energie-Kapazität wächst mit GRÖ
   const baseEnergyMax = CONFIG.cell.energyMax * (1 + 0.08 * (((opts.genome?.GRÖ) ?? 5) - 5));
   const cell = {
     id,
@@ -67,7 +66,10 @@ export function createCell(opts={}){
       MET: (opts.MET ?? (2+ (Math.random()*7|0))),
     },
     // Wander-Noise (OU-Prozess)
-    wander: { vx: 0, vy: 0 }
+    wander: { vx: 0, vy: 0 },
+    // Paarungs-Lock
+    mateLockId: null,
+    mateLockT: 0
   };
   cells.push(cell);
   return cell;
@@ -94,7 +96,7 @@ export function createAdamAndEve(){
 /** Environment application (Placeholder, Live-Lesen in step()) */
 export function applyEnvironment(env){ /* no-op */ }
 
-/* ===== Kern: natürliches Bewegungsmodell ===== */
+/* ===== Kern: natürliches Bewegungsmodell mit Priority-Blending ===== */
 function senseRadii(c){
   const g=c.genome;
   const senseFood = CONFIG.cell.senseFood * (0.7 + 0.1*g.EFF);
@@ -110,12 +112,8 @@ function speedAndForce(c){
   const maxForce = CONFIG.physics.maxForceBase * (0.7 + 0.08*g.TEM);
   return { maxSpeed, maxForce };
 }
-function energyCapacity(c){
-  return CONFIG.cell.energyMax * (1 + 0.08*(c.genome.GRÖ-5));
-}
-function radiusOf(c){
-  return CONFIG.cell.radius * (0.7 + 0.1*(c.genome.GRÖ));
-}
+function energyCapacity(c){ return CONFIG.cell.energyMax * (1 + 0.08*(c.genome.GRÖ-5)); }
+function radiusOf(c){ return CONFIG.cell.radius * (0.7 + 0.1*(c.genome.GRÖ)); }
 
 /* Steering-Primitiven */
 function steerSeekArrive(c, target, maxSpeed, stopR, slowR){
@@ -128,10 +126,11 @@ function steerSeekArrive(c, target, maxSpeed, stopR, slowR){
   const desiredX = ux * sp, desiredY = uy * sp;
   return [desiredX - c.vel.x, desiredY - c.vel.y];
 }
-function steerSeparation(c, neighbors, sepR){
+function steerSeparation(c, neighbors, sepR, ignoreId=null){
   let fx=0, fy=0, n=0;
   for(const o of neighbors){
     if(o===c) continue;
+    if(ignoreId && o.id===ignoreId) continue;
     const dx = c.pos.x - o.pos.x, dy = c.pos.y - o.pos.y;
     const d2 = dx*dx + dy*dy;
     if(d2 > sepR*sepR || d2===0) continue;
@@ -139,8 +138,7 @@ function steerSeparation(c, neighbors, sepR){
     const w = 1/Math.max(d,1e-3);
     fx += (dx/d)*w; fy += (dy/d)*w; n++;
   }
-  if(n===0) return [0,0];
-  return [fx/n, fy/n];
+  return [fx/n||0, fy/n||0, n];
 }
 function steerAlignment(c, neighbors, aliR, maxSpeed){
   let vx=0, vy=0, n=0;
@@ -149,10 +147,10 @@ function steerAlignment(c, neighbors, aliR, maxSpeed){
     const d2=dx*dx+dy*dy; if(d2>aliR*aliR) continue;
     vx += o.vel.x; vy += o.vel.y; n++;
   }
-  if(n===0) return [0,0];
+  if(n===0) return [0,0,0];
   const [ux,uy] = norm(vx/n, vy/n);
   const desiredX = ux * maxSpeed, desiredY = uy * maxSpeed;
-  return [desiredX - c.vel.x, desiredY - c.vel.y];
+  return [desiredX - c.vel.x, desiredY - c.vel.y, n];
 }
 function steerCohesion(c, neighbors, cohR, maxSpeed){
   let sx=0, sy=0, n=0;
@@ -161,9 +159,10 @@ function steerCohesion(c, neighbors, cohR, maxSpeed){
     const d2=dx*dx+dy*dy; if(d2>cohR*cohR) continue;
     sx += o.pos.x; sy += o.pos.y; n++;
   }
-  if(n===0) return [0,0];
+  if(n===0) return [0,0,0];
   const cx = sx/n, cy = sy/n;
-  return steerSeekArrive(c, {x:cx,y:cy}, maxSpeed*0.6, CONFIG.physics.stopRadius, CONFIG.physics.slowRadius);
+  const [ax,ay] = steerSeekArrive(c, {x:cx,y:cy}, maxSpeed*0.6, CONFIG.physics.stopRadius, CONFIG.physics.slowRadius);
+  return [ax,ay,n];
 }
 function steerWallAvoid(c){
   const r = CONFIG.physics.wallAvoidRadius + radiusOf(c);
@@ -186,14 +185,13 @@ function updateWander(c, dt){
   };
   c.wander.vx += th * (0 - c.wander.vx) * dt + sg * Math.sqrt(dt) * gauss();
   c.wander.vy += th * (0 - c.wander.vy) * dt + sg * Math.sqrt(dt) * gauss();
-  // richtungsabhängig leicht entlang aktueller Bewegung projizieren
   const [ux,uy] = (len(c.vel.x, c.vel.y) > 1e-3) ? norm(c.vel.x, c.vel.y) : [0,0];
   return [ c.wander.vx + 0.2*ux, c.wander.vy + 0.2*uy ];
 }
 
 /* Nahrung & Partner-Ziele */
 function nearestFoodCenter(c, sense){
-  // nimm bis zu 3 nächstgelegene Items und bilde deren Schwerpunkt
+  // Schwerpunkt der bis zu 3 nächsten Items
   let best = [];
   for(const f of foodItems){
     const dx=f.x - c.pos.x, dy=f.y - c.pos.y;
@@ -220,7 +218,7 @@ function chooseMate(c, sense, cells){
     const d2=dx*dx+dy*dy;
     if(d2 > sense*sense) continue;
 
-    // einfacher „Komplement“-Score: Nähe + Gene (niedriger MET, gute EFF, ok SCH)
+    // Komplement-Score: Nähe + Gene
     const distScore = -Math.sqrt(d2);
     const geneScore = (o.genome.EFF*0.8 + (10-o.genome.MET)*0.7 + o.genome.SCH*0.2 + o.genome.TEM*0.2);
     const total = distScore*0.05 + geneScore;
@@ -229,15 +227,29 @@ function chooseMate(c, sense, cells){
   return best;
 }
 
-/** Hauptschritt: kraftbasierte, natürliche Bewegung */
+/* Priority-Blending Helfer: addiert Vektoren mit Restbudget */
+function addWithBudget(state, vx, vy, weight){
+  if(weight<=0) return state;
+  const rx = vx*weight, ry = vy*weight;
+  const mag = len(rx,ry);
+  if(mag < 1e-6 || state.rem<=0) return state;
+  const allowed = Math.min(mag, state.rem);
+  const s = allowed / mag;
+  state.fx += rx * s;
+  state.fy += ry * s;
+  state.rem -= allowed;
+  return state;
+}
+
+/** Hauptschritt: kraftbasierte, natürliche Bewegung mit Prioritäten */
 export function step(dt, env, t=0){
-  // Vorab: einfache Liste für Nachbarschaft (kleine N → ok ohne Spatial Grid)
-  const neighbors = cells; // alle Zellen als potentielle Nachbarn
+  const neighbors = cells; // kleine N: kein Spatial Grid
 
   for(let i=cells.length-1;i>=0;i--){
     const c = cells[i];
     c.age += dt;
     c.cooldown = Math.max(0, c.cooldown - dt);
+    if(c.mateLockT > 0) c.mateLockT -= dt;
 
     const g = c.genome;
     const { senseFood, senseMate, sep, ali, coh } = senseRadii(c);
@@ -247,79 +259,136 @@ export function step(dt, env, t=0){
     const cap = energyCapacity(c);
     const eRatio = clamp(c.energy / cap, 0, 1);
     const wantFood = Math.pow(1 - eRatio, 1.3);                         // hungrig → höher
-    const wantMate = (c.cooldown<=0 && eRatio>0.5) ? (0.4*(1 - wantFood)) : 0;
-    // „Sicherheitsdrang“: Nähe zum Rand + aktive Gefahren
+    const wantMate = (c.cooldown<=0 && eRatio>0.35) ? (0.4*(1 - wantFood)) : 0;
     const dEdge = Math.min(c.pos.x, W-c.pos.x, c.pos.y, H-c.pos.y);
-    const hazard = (
+    const wantAvoid = clamp(
       (env.acid.enabled  ? clamp(1 - dEdge/env.acid.range, 0, 1) : 0) +
       (env.barb.enabled  ? clamp(1 - dEdge/env.barb.range, 0, 1) : 0) +
       (env.fence.enabled ? clamp(1 - dEdge/env.fence.range,0,1) : 0) +
-      (env.nano.enabled  ? 0.3 : 0)
+      (env.nano.enabled  ? 0.3 : 0), 0, 1
     );
-    const wantAvoid = clamp(hazard, 0, 1);
 
     // Ziele
     const foodTarget = wantFood > 0.05 ? nearestFoodCenter(c, senseFood) : null;
-    const mateTarget = wantMate > 0.05 ? chooseMate(c, senseMate, cells) : null;
 
-    // Steering-Kräfte
-    let [fx, fy] = [0,0];
+    // Paarungs-Lock (kein Springen zwischen Kandidaten)
+    let mateTarget = null;
+    if(wantMate > 0.05){
+      if(c.mateLockId && c.mateLockT > 0){
+        mateTarget = neighbors.find(o=>o.id===c.mateLockId) || null;
+        if(!mateTarget) { c.mateLockId=null; c.mateLockT=0; }
+      }
+      if(!mateTarget){
+        const choice = chooseMate(c, senseMate, neighbors);
+        if(choice){
+          mateTarget = choice;
+          c.mateLockId = choice.id;
+          c.mateLockT = CONFIG.physics.mateLockSec;
+        }
+      }
+    }else{
+      c.mateLockId = null; c.mateLockT = 0;
+    }
 
+    // Seek/Arrive-Vektoren vorbereiten
+    const slowR = Math.max(CONFIG.physics.slowRadius, CONFIG.cell.pairDistance*3);
+    const foodStop = CONFIG.food.itemRadius + radiusOf(c) + 2;
+    const mateStop = CONFIG.cell.pairDistance * 0.9;
+
+    let fFood=[0,0], fMate=[0,0];
     if(foodTarget){
-      const [sx,sy] = steerSeekArrive(c, foodTarget, maxSpeed, CONFIG.physics.stopRadius, CONFIG.physics.slowRadius);
-      fx += sx * CONFIG.physics.wFood * (0.7 + 0.5*wantFood)*(0.8 + 0.05*g.EFF);
-      fy += sy * CONFIG.physics.wFood * (0.7 + 0.5*wantFood)*(0.8 + 0.05*g.EFF);
+      fFood = steerSeekArrive(c, foodTarget, maxSpeed, foodStop, slowR);
     }
     if(mateTarget){
-      const [sx,sy] = steerSeekArrive(c, {x:mateTarget.pos.x, y:mateTarget.pos.y}, maxSpeed*0.9, CONFIG.cell.pairDistance, CONFIG.physics.slowRadius);
-      fx += sx * CONFIG.physics.wMate * (0.8 + 0.4*wantMate);
-      fy += sy * CONFIG.physics.wMate * (0.8 + 0.4*wantMate);
+      fMate = steerSeekArrive(c, {x:mateTarget.pos.x, y:mateTarget.pos.y}, maxSpeed*0.9, mateStop, slowR);
     }
 
-    // Flocking
-    {
-      const [sx,sy] = steerSeparation(c, neighbors, sep);
-      fx += sx * CONFIG.physics.wSep;
-      fy += sy * CONFIG.physics.wSep;
+    // Flocking (Zählungen für adaptive Gewichte)
+    let nSep=0, nAli=0, nCoh=0;
+    let fSep=[0,0], fAli=[0,0], fCoh=[0,0];
 
-      const [ax,ay] = steerAlignment(c, neighbors, ali, maxSpeed);
-      fx += ax * CONFIG.physics.wAli;
-      fy += ay * CONFIG.physics.wAli;
-
-      const [cx,cy] = steerCohesion(c, neighbors, coh, maxSpeed);
-      fx += cx * CONFIG.physics.wCoh;
-      fy += cy * CONFIG.physics.wCoh;
+    if(CONFIG.physics.enableSep){
+      const r = steerSeparation(c, neighbors, sep, mateTarget?.id || null);
+      fSep = [r[0], r[1]]; nSep = r[2];
+    }
+    if(CONFIG.physics.enableAli){
+      const r = steerAlignment(c, neighbors, ali, maxSpeed);
+      fAli = [r[0], r[1]]; nAli = r[2];
+    }
+    if(CONFIG.physics.enableCoh){
+      const r = steerCohesion(c, neighbors, coh, maxSpeed);
+      fCoh = [r[0], r[1]]; nCoh = r[2];
     }
 
-    // Randvermeidung / Sicherheitsdrang
-    if(wantAvoid > 0.01){
-      const [ax,ay] = steerWallAvoid(c);
-      fx += ax * CONFIG.physics.wAvoid * (0.6 + 0.7*wantAvoid) * (0.9 + 0.03*g.SCH);
-      fy += ay * CONFIG.physics.wAvoid * (0.6 + 0.7*wantAvoid) * (0.9 + 0.03*g.SCH);
+    // Rand-Vermeidung
+    const fAvoid = steerWallAvoid(c);
+
+    // Wander
+    let fWander=[0,0];
+    if(CONFIG.physics.enableWander){
+      fWander = updateWander(c, dt);
     }
 
-    // Korrelierter „Wander“-Noise
-    {
-      const [wx,wy] = updateWander(c, dt);
-      fx += wx * CONFIG.physics.wWander;
-      fy += wy * CONFIG.physics.wWander;
+    /* ===== Priority-Blending mit Restbudget ===== */
+    let st = { fx:0, fy:0, rem: maxForce };
+
+    // 1) Avoid (höchste Priorität)
+    st = addWithBudget(st, fAvoid[0], fAvoid[1],
+      CONFIG.physics.wAvoid * (0.6 + 0.7*wantAvoid) * (0.9 + 0.03*g.SCH));
+
+    // 2) Hauptziel: Food ODER Mate zuerst (größeres „Want“ bekommt Vorrang)
+    const wFood = CONFIG.physics.wFood * (0.7 + 0.5*wantFood) * (0.8 + 0.05*g.EFF);
+    const wMate = CONFIG.physics.wMate * (0.8 + 0.4*wantMate);
+    const secondaryScale = CONFIG.physics.secondaryGoalScale;
+
+    const foodFirst = (wantFood >= wantMate);
+    if(foodFirst){
+      if(foodTarget) st = addWithBudget(st, fFood[0], fFood[1], wFood);
+      if(mateTarget) st = addWithBudget(st, fMate[0], fMate[1], wMate * secondaryScale);
+    }else{
+      if(mateTarget) st = addWithBudget(st, fMate[0], fMate[1], wMate);
+      if(foodTarget) st = addWithBudget(st, fFood[0], fFood[1], wFood * secondaryScale);
     }
 
-    // Force limit + Integration
-    [fx, fy] = limitVec(fx, fy, maxForce);
-    c.vel.x += fx * dt;
-    c.vel.y += fy * dt;
+    // 3) Separation (kein Druck gegen gewählten Partner)
+    if(CONFIG.physics.enableSep){
+      st = addWithBudget(st, fSep[0], fSep[1], CONFIG.physics.wSep);
+    }
 
-    // Geschwindigkeitslimit
+    // 4) Cohesion & 5) Alignment – adaptiv nach Nachbarn
+    const nFlock = Math.max(nAli, nCoh);
+    let flockFac = 1.0;
+    if(nFlock < 3) flockFac = 0.45;         // dünnes Feld → drosseln
+    else if(nFlock > 8) flockFac = 1.25;    // dichter Schwarm → pushen
+
+    if(CONFIG.physics.enableCoh){
+      st = addWithBudget(st, fCoh[0], fCoh[1], CONFIG.physics.wCoh * flockFac);
+    }
+    if(CONFIG.physics.enableAli){
+      st = addWithBudget(st, fAli[0], fAli[1], CONFIG.physics.wAli * flockFac);
+    }
+
+    // 6) Wander (stark drosseln, wenn Ziel existiert)
+    const hasTarget = !!(foodTarget || mateTarget);
+    const wanderScale = CONFIG.physics.wWander * (hasTarget ? CONFIG.physics.wanderWhenTarget : 1.0) * (1 - 0.5*wantAvoid);
+    if(CONFIG.physics.enableWander){
+      st = addWithBudget(st, fWander[0], fWander[1], wanderScale);
+    }
+
+    // Rest: evtl. numerische Sicherheit
+    [st.fx, st.fy] = limitVec(st.fx, st.fy, maxForce);
+
+    // Integration
+    c.vel.x += st.fx * dt;
+    c.vel.y += st.fy * dt;
     [c.vel.x, c.vel.y] = limitVec(c.vel.x, c.vel.y, maxSpeed);
 
-    // Position + sanfte Dämpfung
     c.pos.x = clamp(c.pos.x + c.vel.x * dt, 0, W);
     c.pos.y = clamp(c.pos.y + c.vel.y * dt, 0, H);
-    c.vel.x *= 0.985; c.vel.y *= 0.985; // leicht zähflüssig
+    c.vel.x *= 0.985; c.vel.y *= 0.985; // leichte Zähigkeit
 
-    /* ===== Interaktion mit Nahrung (Essen in Reichweite) ===== */
-    const eatR = CONFIG.food.itemRadius + radiusOf(c);
+    /* ===== Essen in Reichweite ===== */
+    const eatR = CONFIG.food.itemRadius + radiusOf(c) + 0.5;
     for(let k=foodItems.length-1;k>=0;k--){
       const f = foodItems[k];
       const dx=f.x - c.pos.x, dy=f.y - c.pos.y;

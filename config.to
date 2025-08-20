@@ -9,37 +9,51 @@ export const CONFIG = {
     senseMate: 120,
     energyMax: 120,
     eatPerSecond: 30,         // Menge/s wenn im Food
-    pairDistance: 16,         // Annäherung für Reproduktion (reproduction.js)
+    pairDistance: 16,         // Annäherung für Reproduktion
     energyCostPair: 30,
     cooldown: 8,              // s
     ageMax: 600               // s
   },
 
-  /* Neue, natürlichere Bewegungsphysik */
+  /* Natürlichere Bewegungsphysik + Schalter */
   physics: {
     // Limits (werden mit TEM skaliert)
     maxForceBase: 140,        // px/s^2 bei TEM=5
-    slowRadius: 100,          // Ab hier „Arrive“ (Abbremsen)
-    stopRadius: 16,           // Ziel erreicht
-    wallAvoidRadius: 48,      // Abstand für Randabstoßung
+    slowRadius: 120,          // Ab hier „Arrive“ (Abbremsen)
+    stopRadius: 16,           // generischer Stoppwert
+
+    wallAvoidRadius: 48,      // Abstoßung vom Rand
 
     // Nachbarschaft (werden mit GRÖ/EFF skaliert)
     separationRadius: 28,
     alignmentRadius: 72,
     cohesionRadius: 80,
 
-    // Gewichte (Blended Steering)
+    // Gewichte (Blended Steering, werden dynamisch gedrosselt)
     wFood: 1.20,
-    wMate: 0.90,
-    wAvoid: 1.10,
+    wMate: 0.95,
+    wAvoid: 1.15,
     wSep:  1.10,
     wAli:  0.35,
     wCoh:  0.25,
-    wWander: 0.25,
+    wWander: 0.22,            // bewusst klein
+
+    // „Restbudget“ für das sekundäre Hauptziel (Food/Mate)
+    secondaryGoalScale: 0.6,
 
     // Korrelierter Noise (Ornstein–Uhlenbeck)
-    wanderTheta: 1.6,         // Rückstellrate
-    wanderSigma: 0.45         // Rauschstärke
+    wanderTheta: 1.6,
+    wanderSigma: 0.45,
+    wanderWhenTarget: 0.2,    // Dämpfung, wenn Food ODER Mate aktiv
+
+    // Flocking-Schalter (Debug/Feintuning)
+    enableSep: true,
+    enableAli: true,
+    enableCoh: true,
+    enableWander: true,
+
+    // Paarungs-Toleranz
+    mateLockSec: 1.5,         // Partner 1.5 s „gelockt“, kein Wechsel
   },
 
   food: {
