@@ -1,7 +1,6 @@
 import { initErrorManager, breadcrumb } from "./errorManager.js";
 import {
-  applyEnvironment, setWorldSize, createAdamAndEve, step as entitiesStep,
-  getCells, getFoodItems
+  applyEnvironment, setWorldSize, createAdamAndEve, step as entitiesStep
 } from "./entities.js";
 import { step as reproductionStep, setMutationRate } from "./reproduction.js";
 import { step as foodStep, setSpawnRate } from "./food.js";
@@ -11,7 +10,7 @@ import { openEnvPanel, getEnvState } from "./environment.js";
 import { initTicker, setPerfMode as tickerPerf, pushFrame } from "./ticker.js";
 import { emit, on } from "./event.js";
 import { openDummyPanel, handleCanvasClickForDummy } from "./dummy.js";
-import { initDrives, getTraceText } from "./drives.js";  // << neu
+import { initDrives, getTraceText } from "./drives.js";
 
 let running = false;
 let timescale = 1;
@@ -21,14 +20,12 @@ const SPEED_STEPS = [1, 5, 10, 50];
 let speedIdx = 0;
 
 let lastTime = 0, acc = 0;
-const fixedDt = 1 / 60;
-let simTime = 0;
+const fixedDt = 1 / 60;           // fixer Simulationsschritt (s)
+let simTime = 0;                   // >>> diese Sim-Zeit wird an entities.step übergeben
 
-/** Canvas-Größe & Topbar-Abstand aktualisieren */
 function resizeCanvas() {
   const canvas = document.getElementById("world");
   const topbar = document.getElementById("topbar");
-
   if (topbar) {
     const h = topbar.offsetHeight || 56;
     document.documentElement.style.setProperty("--topbar-h", h + "px");
@@ -39,45 +36,37 @@ function resizeCanvas() {
   setWorldSize(canvas.width, canvas.height);
 }
 
-/** UI-Bindings */
 function bindUI() {
   document.getElementById("btnStart").onclick = ()=>{ breadcrumb("ui:btn","Start"); start(); };
   document.getElementById("btnPause").onclick = ()=>{ breadcrumb("ui:btn","Pause"); pause(); };
   document.getElementById("btnReset").onclick = ()=>{ breadcrumb("ui:btn","Reset"); reset(); };
   document.getElementById("btnEditor").onclick = ()=>{ breadcrumb("ui:btn","Editor"); openEditor(); };
-  document.getElementById("btnEnv").onclick = ()=>{ breadcrumb("ui:btn","Umwelt"); openEnvPanel(); };
+  document.getElementById("btnEnv").onclick   = ()=>{ breadcrumb("ui:btn","Umwelt"); openEnvPanel(); };
   document.getElementById("btnDummy").onclick = ()=>{ breadcrumb("ui:btn","Dummy"); openDummyPanel(); };
 
-  // << Diagnose-Knopf
   const diag = document.getElementById("btnDiag");
-  if(diag){
-    diag.onclick = async ()=>{
-      const txt = getTraceText(28);
-      try{ await navigator.clipboard.writeText(txt); }catch{}
-      // Minimal-Feedback
-      console.log("DRIVES TRACE COPIED\n"+txt);
-    };
-  }
+  if (diag) diag.onclick = async ()=>{
+    const txt = getTraceText(28);
+    try{ await navigator.clipboard.writeText(txt); }catch{}
+    console.log("DRIVES TRACE COPIED\n"+txt);
+  };
 
   const mu = document.getElementById("mutation");
-  mu.oninput = ()=>{ setMutationRate(parseFloat(mu.value)); breadcrumb("ui:slider","mutation:"+mu.value); };
+  mu.oninput = ()=> setMutationRate(parseFloat(mu.value));
 
   const fr = document.getElementById("foodrate");
-  fr.oninput = ()=>{ setSpawnRate(parseFloat(fr.value)); breadcrumb("ui:slider","foodrate:"+fr.value); };
+  fr.oninput = ()=> setSpawnRate(parseFloat(fr.value));
 
   const pm = document.getElementById("perfmode");
-  pm.oninput = ()=>{ setPerfMode(pm.checked); breadcrumb("ui:toggle","perf:"+pm.checked); };
+  pm.oninput = ()=> setPerfMode(pm.checked);
 
   const sp = document.getElementById("btnSpeed");
-  sp.onclick = ()=>{ cycleSpeed(); breadcrumb("ui:btn","speed:"+SPEED_STEPS[speedIdx]); };
+  sp.onclick = ()=>{ cycleSpeed(); };
 
   const canvas = document.getElementById("world");
   canvas.addEventListener("click", (e)=>{
     const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    breadcrumb("world:click", { x: Math.round(x), y: Math.round(y) });
-    handleCanvasClickForDummy(x, y);
+    handleCanvasClickForDummy(e.clientX - rect.left, e.clientY - rect.top);
   });
 
   setMutationRate(parseFloat(mu.value));
@@ -97,24 +86,24 @@ function cycleSpeed(){
   updateSpeedButton();
 }
 
-/** Render-Loop */
 function frame(now) {
   if (!running) return;
   now /= 1000;
 
   if (!lastTime) lastTime = now;
-  let delta = Math.min(0.1, now - lastTime);
+  const delta = Math.min(0.1, now - lastTime);
   lastTime = now;
 
   acc += delta * timescale;
 
   const desiredSteps = Math.floor(acc / fixedDt);
   const maxSteps = Math.min(60, Math.max(8, Math.ceil(timescale * 1.2)));
-
   const steps = Math.min(desiredSteps, maxSteps);
+
   const env = getEnvState();
 
   for (let s = 0; s < steps; s++) {
+    // >>> HIER: Sim-Zeit fortschreiben und als 3. Parameter übergeben
     entitiesStep(fixedDt, env, simTime);
     reproductionStep(fixedDt);
     foodStep(fixedDt);
@@ -131,7 +120,6 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 
-/** Public API */
 export function boot() {
   try{ initErrorManager({ pauseOnError:true, captureConsole:true }); }catch(e){}
   on("error:panic", ()=> pause());
@@ -140,7 +128,7 @@ export function boot() {
   resizeCanvas();
   window.addEventListener("resize", resizeCanvas);
 
-  initDrives(); // << neu
+  initDrives();                     // Drives initialisieren
 
   createAdamAndEve();
   applyEnvironment(getEnvState());
@@ -171,5 +159,4 @@ export function setPerfMode(on){
   rendererPerf(perfMode);
   tickerPerf(perfMode);
 }
-
 window.addEventListener("DOMContentLoaded", boot);

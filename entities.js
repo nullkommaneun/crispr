@@ -10,6 +10,9 @@ const foodItems = []; // {x,y,amount,radius}
 let stammMeta = new Map();
 let nextCellId = 1;
 
+// Interne Sim-Uhr als Fallback (falls Engine kein t übergibt)
+let __SIM_T = 0;
+
 /* ===== Utils ===== */
 const clamp = (x,a,b)=> Math.max(a, Math.min(b,x));
 const len = (x,y)=> Math.hypot(x,y);
@@ -26,7 +29,7 @@ function pickColorByStamm(id){
   return `hsl(${h}deg 70% 60%)`;
 }
 
-/* ===== Exporte für andere Module ===== */
+/* ===== Exporte ===== */
 export function worldSize(){ return {width:W,height:H}; }
 export function setWorldSize(w,h){ W=w; H=h; window.__WORLD_W=W; window.__WORLD_H=H; }
 
@@ -65,7 +68,6 @@ export function createCell(opts={}){
     age: 0,
     cooldown: 0,
     genome: g,
-    // interne Hilfen
     wander: { vx: 0, vy: 0 }
   };
   cells.push(cell);
@@ -106,11 +108,7 @@ export function createAdamAndEve(){
     energy: capE * 0.85
   });
 
-  // Start-Bonus: 10 Kinder (5 je Eltern)
-  for(let k=0;k<10;k++){
-    const child = makeChild(A, E, k);
-    cells.push(child);
-  }
+  for(let k=0;k<10;k++){ cells.push(makeChild(A, E, k)); }
   return [A,E];
 }
 
@@ -147,10 +145,10 @@ function makeChild(A,E,k){
   };
 }
 
-/** Environment application (Placeholder) */
-export function applyEnvironment(env){ /* no-op */ }
+/** Placeholder */
+export function applyEnvironment(env){}
 
-/* ===== Steering-Primitive ===== */
+/* ===== Steering ===== */
 function steerSeekArrive(c, target, maxSpeed, stopR, slowR){
   const dx=target.x - c.pos.x, dy=target.y - c.pos.y;
   const d=len(dx,dy); if(d < stopR) return [0,0];
@@ -179,7 +177,7 @@ function updateWander(c, dt){
 function radiusOf(c){ return CONFIG.cell.radius * (0.7 + 0.1*(c.genome.GRÖ)); }
 function capEnergy(c){ return CONFIG.cell.energyMax * (1 + 0.08*(c.genome.GRÖ-5)); }
 
-/* Nahrung & Partner-Ziele (Nearest) */
+/* Ziele */
 function nearestFoodCenter(c, sense){
   let best = [];
   for(const f of foodItems){
@@ -208,8 +206,11 @@ function chooseMate(c, sense, cells){
   return best ? { cell: best, d: bestD } : null;
 }
 
-/* ===== Hauptschritt mit Drives-Policy ===== */
-export function step(dt, env, t=0){
+/* ===== Hauptschritt (mit Fallback-Zeit) ===== */
+export function step(dt, env, t=undefined){
+  // >>> Fallback: interne Sim-Zeit, falls Engine kein t liefert
+  if (!Number.isFinite(t)) { __SIM_T += dt; t = __SIM_T; }
+
   const neighbors = cells;
 
   for(let i=cells.length-1;i>=0;i--){
@@ -235,7 +236,6 @@ export function step(dt, env, t=0){
       (env.nano?.enabled  ? 0.3 : 0)
     );
 
-    // einfache Nachbardichte (Radius ~60px)
     let neigh=0;
     for(const o of neighbors){
       if(o===c) continue;
@@ -254,10 +254,10 @@ export function step(dt, env, t=0){
       worldMin: Math.min(W,H)
     };
 
-    // Primäre Option via Drives
+    // Option via Drives
     const option = drivesGetAction(c, t, ctx);
 
-    // Avoid (Priorität)
+    // Avoid
     let [fx,fy] = [0,0], rem = maxForce;
     const fAvoid = steerWallAvoid(c);
     const avoidW = (CONFIG.physics.wAvoid ?? 1.15) * (0.6 + 0.7*clamp(hazard,0,1)) * (0.9 + 0.03*g.SCH);
@@ -275,7 +275,7 @@ export function step(dt, env, t=0){
     }
     ({fx,fy,rem} = addBudget(fx,fy,rem, fOpt[0],fOpt[1], 1.0));
 
-    // Mini-Separation (kleines Budget)
+    // Mini-Separation
     const fSep = quickSeparation(c, neighbors, 22);
     ({fx,fy,rem} = addBudget(fx,fy,rem, fSep[0],fSep[1], 0.35));
 
