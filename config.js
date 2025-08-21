@@ -7,33 +7,50 @@ export const CONFIG = {
     baseSpeed: 35,            // px/s bei TEM=5
     baseMetabolic: 0.6,       // energy/s bei MET=5 (Leerlauf)
     radius: 7,                // bei GRÖ=5
-    senseFood: 110,           // bei EFF=5 (wird auflösungs-skaliert)
+    senseFood: 110,           // wird in entities.js mit sMin skaliert
     senseMate: 120,
     energyMax: 120,
     eatPerSecond: 34,         // Menge/s wenn im Food
     pairDistance: 16,         // Annäherung für Reproduktion
     energyCostPair: 30,
     cooldown: 8,              // s
-    ageMax: 600               // s
+    ageMax: 600               // Basis-Lebenszeit (nur Fallback)
+  },
+
+  // NEU: Langlebigkeit — dynamische Altersgrenze
+  longevity: {
+    // Baseline (wenn gesetzt, überschreibt cell.ageMax intern)
+    baseAge: 600,
+
+    // Deckel/Keller auf den Boost: finalAge = baseAge * (1 + boost)
+    maxBoost: 0.50,   // +50 % maximal
+    minBoost: -0.30,  // -30 % minimal
+
+    // Gen-Gewichte (z-Score um 5): gutes EFF/SCH/TEM leicht +, hohes MET −
+    geneWeights: { EFF: 0.50, MET: -0.50, SCH: 0.30, TEM: 0.10, "GRÖ": 0.00 },
+
+    // Vitalität = integrierte „Lebensstil“-Komponente:
+    // gut ernährt & wenig Hazard -> steigt, sonst fällt
+    vitalityRate: 0.6,   // s^-1 Integrationsrate
+    hazardK: 0.4,        // Hazard-Abzug in Vitalität
+    nutritionK: 0.15,    // Einfluss der Vitalität auf Boost
+    energyGood: 0.60,    // ab diesem Energie-Füllstand (relativ) +Vitalität
+    energyBad:  0.25     // unter diesem Füllstand −Vitalität
   },
 
   physics: {
-    // Limits (werden mit TEM skaliert und zusätzlich auflösungs-skaliert)
-    maxForceBase: 140,        // px/s^2 bei TEM=5
+    maxForceBase: 140,
     slowRadius: 120,
     stopRadius: 16,
     wallAvoidRadius: 48,
 
-    // Nachbarschaft
     separationRadius: 28,
     alignmentRadius: 72,
     cohesionRadius: 80,
 
-    // Wander-Noise
     wanderTheta: 1.6,
     wanderSigma: 0.45,
 
-    // Bewegungs-Energiekosten (wird in entities.js durch sMin geteilt)
     moveCostK: 0.0006
   },
 
@@ -56,15 +73,14 @@ export const CONFIG = {
   },
 
   colors: {
-    // bestehende Farben (Renderer-Overlays etc.)
     food:  "#2ee56a",
     acid:  "rgba(0,255,128,0.10)",
     fence: "rgba(170,200,255,0.08)",
     barb:  "rgba(255,120,120,0.12)",
     nano:  "rgba(120,180,255,0.06)",
 
-    // NEU: Geschlechterfarben
-    sexMale:   "#27c7ff",  // kaltes Neonblau
-    sexFemale: "#ff6bd6"   // neon-magenta
+    // Geschlechterfarben
+    sexMale:   "#27c7ff",  // M
+    sexFemale: "#ff6bd6"   // F
   }
 };
