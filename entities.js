@@ -73,7 +73,7 @@ function makeChild(A,E,k){
            vel:{x:0,y:0}, energy:cap*0.75, age:0, cooldown:0, genome:g, wander:{vx:0,vy:0} };
 }
 
-export function applyEnvironment(_env){ /* live gelesen */ }
+export function applyEnvironment(_env){}
 
 /* Steering */
 function steerSeekArrive(c,t,maxSpeed,stopR,slowR){ const dx=t.x-c.pos.x, dy=t.y-c.pos.y; const d=len(dx,dy); if(d<stopR) return [0,0];
@@ -87,25 +87,23 @@ function updateWander(c,dt){ const th=CONFIG.physics.wanderTheta??1.6, sg=CONFIG
   c.wander.vy += th*(0-c.wander.vy)*dt + sg*Math.sqrt(dt)*gauss();
   const [ux,uy]=(len(c.vel.x,c.vel.y)>1e-3)?norm(c.vel.x,c.vel.y):[0,0]; return [c.wander.vx+0.2*ux, c.wander.vy+0.2*uy]; }
 
-/* --- Food-Zielwahl: Item bevorzugt, Schwerpunkt als Fallback --- */
+/* Food-Sensor: immer Item bestimmen; Zentrum nur Fallback */
 function senseFood(c, sense){
   let nearestItem=null, nd=Infinity;
-  // Schwerpunkt aus den 3 nächsten Items (falls vorhanden)
-  let accX=0, accY=0, n=0;
+  let cx=0, cy=0, n=0;
   for(const f of foodItems){
     const dx=f.x-c.pos.x, dy=f.y-c.pos.y; const d2=dx*dx+dy*dy;
-    if(d2 > sense*sense) continue;
+    if(d2> sense*sense) continue;
     const d=Math.sqrt(d2);
-    if(d < nd){ nd=d; nearestItem = { x:f.x, y:f.y, d }; }
-    // für Schwerpunkt: nimm bis zu 3
-    if(n < 3){ accX += f.x; accY += f.y; n++; }
+    if(d<nd){ nd=d; nearestItem={x:f.x,y:f.y,d}; }
+    if(n<3){ cx+=f.x; cy+=f.y; n++; }
   }
-  if(n===0 && !nearestItem) return null;
-  const center = n? { x:accX/n, y:accY/n, d: Math.hypot(accX/n - c.pos.x, accY/n - c.pos.y) } : null;
+  const center = n? {x:cx/n, y:cy/n, d: Math.hypot(cx/n-c.pos.x, cy/n-c.pos.y)} : null;
+  if(!nearestItem && !center) return null;
   return { item: nearestItem, center };
 }
 
-/* Hauptschritt – dt-basiertes Drives-Fenster */
+/* Hauptschritt */
 export function step(dt, env){
   const neighbors=cells;
 
@@ -121,7 +119,7 @@ export function step(dt, env){
     const senseMateR=CONFIG.cell.senseMate*(0.7+0.08*g.EFF);
 
     const foodS = senseFood(c, senseFoodR);
-    const mate   = chooseMate(c, senseMateR, neighbors);
+    const mate  = chooseMate(c, senseMateR, neighbors);
 
     const dEdge=Math.min(c.pos.x,W-c.pos.x,c.pos.y,H-c.pos.y);
     const hazard=(env?.acid?.enabled?clamp(1-dEdge/Math.max(env.acid.range,1),0,1):0)
@@ -131,52 +129,40 @@ export function step(dt, env){
 
     let neigh=0; for(const o of neighbors){ if(o===c) continue; const dx=o.pos.x-c.pos.x, dy=o.pos.y-c.pos.y; if(dx*dx+dy*dy<60*60) neigh++; }
 
-    // baue kontext für Drives
     const ctx={ env,
-      food: foodS ? {x:(foodS.item?.x ?? foodS.center?.x), y:(foodS.item?.y ?? foodS.center?.y)} : null,
+      food: foodS ? { x:(foodS.item?.x ?? foodS.center?.x), y:(foodS.item?.y ?? foodS.center?.y) } : null,
       foodDist: foodS ? (foodS.item?.d ?? foodS.center?.d) : null,
       mate: mate?.cell??null, mateDist:mate?.d??null,
       hazard, neighCount:neigh, worldMin:Math.min(W,H)
     };
 
-    // Option via Drives
     const option = drivesGetAction(c, 0, ctx);
 
-    // Avoid (Priorität)
+    // Avoid
     let [fx,fy]=[0,0], rem=maxForce;
     const fAvoid=steerWallAvoid(c);
     const avoidW=(CONFIG.physics.wAvoid??1.15)*(0.6+0.7*clamp(hazard,0,1))*(0.9+0.03*g.SCH);
-    ({fx,fy,rem}=addBudget(fx,fy,rem, fAvoid[0],fAvoid[1], avoidW));
+    ({fx,fy,rem}=addBudget(fx,fy,rem,fAvoid[0],fAvoid[1],avoidW));
 
-    // Primärvektor (Food bevorzugt Item; Mikro-Seek, wenn am Zentrum noch nichts gegessen wird)
+    // Primärvektor: **immer zum Item**, Zentrum nur Fallback
     let fOpt=[0,0]; const slowR=Math.max(CONFIG.physics.slowRadius??120, CONFIG.cell.pairDistance*3);
     if(option==="food" && foodS){
-      const eatR = CONFIG.food.itemRadius + radiusOf(c) + 2.0; // etwas großzügiger
-      let target = null;
-      if(foodS.item && foodS.item.d < 30){ // nahes Item vorhanden → direkt
-        target = {x:foodS.item.x, y:foodS.item.y};
-        const stop = Math.max(2, eatR-2);  // bis in den Sammelradius hinein
-        fOpt = steerSeekArrive(c, target, maxSpeed, stop, slowR);
+      const eatR = CONFIG.food.itemRadius + radiusOf(c) + 2;
+      if(foodS.item){
+        fOpt = steerSeekArrive(c,{x:foodS.item.x,y:foodS.item.y}, maxSpeed, Math.max(2,eatR-2), slowR);
       }else if(foodS.center){
-        target = {x:foodS.center.x, y:foodS.center.y};
-        const stopCenter = Math.max(2, radiusOf(c)*0.25 + 1); // kleinerer Stop für Zentrum
-        fOpt = steerSeekArrive(c, target, maxSpeed, stopCenter, slowR);
-        // Mikro-Seek: nahe Zentrum, aber (noch) nicht essend? → auf Item feinfokussieren
-        if(foodS.item && foodS.center.d < 16){
-          const micro = steerSeekArrive(c, {x:foodS.item.x,y:foodS.item.y}, maxSpeed*0.7, Math.max(2, eatR-2), slowR*0.6);
-          fOpt[0] += micro[0]; fOpt[1] += micro[1];
-        }
+        fOpt = steerSeekArrive(c,{x:foodS.center.x,y:foodS.center.y}, maxSpeed, Math.max(2, radiusOf(c)*0.25+1), slowR);
       }
     }else if(option==="mate" && mate){
-      fOpt=steerSeekArrive(c,{x:mate.cell.pos.x,y:mate.cell.pos.y},maxSpeed*0.9, CONFIG.cell.pairDistance*0.9, slowR);
+      fOpt = steerSeekArrive(c,{x:mate.cell.pos.x,y:mate.cell.pos.y}, maxSpeed*0.9, CONFIG.cell.pairDistance*0.9, slowR);
     }else{
-      fOpt=updateWander(c,dt);
+      fOpt = updateWander(c,dt);
     }
-    ({fx,fy,rem}=addBudget(fx,fy,rem, fOpt[0],fOpt[1], 1.0));
+    ({fx,fy,rem}=addBudget(fx,fy,rem,fOpt[0],fOpt[1],1.0));
 
     // Mini-Separation
     const fSep=quickSeparation(c,neighbors,22);
-    ({fx,fy,rem}=addBudget(fx,fy,rem, fSep[0],fSep[1], 0.35));
+    ({fx,fy,rem}=addBudget(fx,fy,rem,fSep[0],fSep[1],0.35));
 
     // Integration
     [fx,fy]=limitVec(fx,fy,maxForce);
@@ -186,10 +172,10 @@ export function step(dt, env){
     c.vel.x*=0.985; c.vel.y*=0.985;
 
     // Essen
-    const eatR = CONFIG.food.itemRadius + radiusOf(c) + 2.0; // konsistent mit oben
+    const eatR = CONFIG.food.itemRadius + radiusOf(c) + 2;
     for(let k=foodItems.length-1;k>=0;k--){
       const f=foodItems[k]; const dx=f.x-c.pos.x, dy=f.y-c.pos.y;
-      if(dx*dx+dy*dy < eatR*eatR){
+      if(dx*dx+dy*dy<eatR*eatR){
         const take=CONFIG.cell.eatPerSecond*dt, got=Math.min(take,f.amount);
         c.energy=Math.min(capEnergy(c),c.energy+got);
         f.amount-=got; if(f.amount<=1) foodItems.splice(k,1);
@@ -202,9 +188,9 @@ export function step(dt, env){
     const moveDrain=(CONFIG.physics.moveCostK??0.0006)*sp*sp*dt;
     c.energy -= baseDrain + moveDrain;
 
-    let dmg=0; if(env?.acid?.enabled && dEdge<env.acid.range) dmg+=env.acid.dps*dt;
-    if(env?.barb?.enabled && dEdge<env.barb.range) dmg+=env.barb.dps*dt;
-    if(env?.nano?.enabled) dmg+=env.nano.dps*dt;
+    let dmg=0; if(env?.acid?.enabled&&dEdge<env.acid.range)dmg+=env.acid.dps*dt;
+    if(env?.barb?.enabled&&dEdge<env.barb.range)dmg+=env.barb.dps*dt;
+    if(env?.nano?.enabled)dmg+=env.nano.dps*dt;
     c.energy -= Math.max(0, dmg * (1 - 0.06*(g.SCH-5)));
 
     // Zaun (vereinfacht)
@@ -238,5 +224,4 @@ function addBudget(fx,fy,rem,vx,vy,w){ const rx=vx*w, ry=vy*w; const m=Math.hypo
 function quickSeparation(c,arr,r){ let sx=0,sy=0,n=0, rr=r*r; for(const o of arr){ if(o===c) continue; const dx=c.pos.x-o.pos.x, dy=c.pos.y-o.pos.y;
   const d2=dx*dx+dy*dy; if(d2>rr||d2===0) continue; const d=Math.sqrt(d2); sx+=dx/d; sy+=dy/d; n++; } return n? [sx/n,sy/n]:[0,0]; }
 
-/* Debug-Export */
 export { radiusOf as __radiusForDebug };
