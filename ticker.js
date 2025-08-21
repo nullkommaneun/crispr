@@ -1,4 +1,3 @@
-import { getEnvState } from "./environment.js";
 import { getCells, getFoodItems } from "./entities.js";
 import { getDrivesSnapshot } from "./drives.js";
 
@@ -22,8 +21,6 @@ export function updateSnapshot(){
 
   const cells = getCells().length;
   const food  = getFoodItems().length;
-  const env   = getEnvState();
-  const activeEnv = Object.entries(env).filter(([_,v])=>v.enabled).map(([k])=>k).join(', ') || 'aus';
 
   const fps   = (lastFrameTimes.at(-1)?.fps ?? 0).toFixed(0);
   const avgDt = (lastFrameTimes.reduce((a,b)=>a+b.dtSim,0)/(lastFrameTimes.length||1)).toFixed(3);
@@ -44,18 +41,13 @@ export function updateSnapshot(){
     <span>Zellen: <b>${cells}</b></span>
     <span>Food: <b>${food}</b></span>
     <span>Perf-Modus: <b>${perf?'An':'Aus'}</b></span>
-    <span>Umwelt: <b>${activeEnv}</b></span>
     <span>Scale: <b>s=${sc.sMin}</b>, <b>A=${sc.area}</b></span>
     <span>Drives: <b>${du}</b> / <b>${wr}%</b> (K=${kdist}, RP=${rpair}, E=${eps})</span>
   `;
 }
 
-export function setSpeedIndicator(x){
-  speedLabel = x;
-  updateSnapshot();
-}
+export function setSpeedIndicator(x){ speedLabel = x; updateSnapshot(); }
 
-/* helpers */
 function fmtK(n){ if(n==null) return "-"; if(n<1000) return String(n); const k=(n/1000).toFixed(1); return k.replace(/\.0$/,"")+"k"; }
 function safeDrives(){ try{ return getDrivesSnapshot() || { misc:{duels:0,wins:0}, cfg:{} }; } catch{ return { misc:{duels:0,wins:0}, cfg:{} }; } }
 function worldScaleInfo(){

@@ -1,17 +1,21 @@
-import { CONFIG } from "./config.js";
-import { emit } from "./event.js";
+// environment.js — Stub: Umwelt ist vollständig deaktiviert.
+// Alle Exporte bleiben bestehen, damit bestehende Importe nicht brechen.
 
-let env = structuredClone(CONFIG.envDefaults);
-let panelOpener = null;
-
-export function getEnvState(){ return env; }
-export function setEnvState(next){
-  env = JSON.parse(JSON.stringify(next));
-  emit("env:changed", env);
+export function getEnvState(){
+  // Keine Gefahren, keine Impulse
+  return {
+    acid:  { enabled:false, range:0, dps:0 },
+    barb:  { enabled:false, range:0, dps:0 },
+    fence: { enabled:false, range:0, impulse:0, period:2 },
+    nano:  { enabled:false, dps:0 }
+  };
 }
-export function onEnvChange(cb){ /* consumer uses event bus */ }
+
+export function setEnvState(_env){
+  // bewusst no-op
+}
 
 export function openEnvPanel(){
-  if(!panelOpener){ import("./environment/panel.js").then(m=>{ panelOpener=m; m.openEnvPanel(); }); }
-  else panelOpener.openEnvPanel();
+  // kein UI mehr
+  console.warn("[environment] Umwelt-Panel wurde entfernt (Stub).");
 }

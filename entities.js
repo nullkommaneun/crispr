@@ -1,6 +1,4 @@
-// entities.js — Entities, Bewegung (Drives-Policy), flächen-/auflösungsstabil
-// Farbe: nach Geschlecht (M/F). Altersgrenze dynamisch nach Genetik & Vitalität.
-
+// entities.js — Entities & Bewegung, ohne Umwelt-Effekte
 import { CONFIG } from "./config.js";
 import { emit } from "./event.js";
 import { getAction as drivesGetAction, afterStep as drivesAfterStep } from "./drives.js";
@@ -14,7 +12,6 @@ const foodItems = [];
 let stammMeta = new Map();
 let nextCellId = 1;
 
-/* ============ Utils ============ */
 const clamp=(x,a,b)=>Math.max(a,Math.min(b,x));
 const len=(x,y)=>Math.hypot(x,y);
 function norm(x,y){ const L=len(x,y)||1e-6; return [x/L,y/L]; }
@@ -22,67 +19,31 @@ function limitVec(x,y,max){ const L=len(x,y); if(L>max){ const s=max/(L||1e-6); 
 function rnd(a,b){ return a + Math.random()*(b-a); }
 function radiusOf(c){ return CONFIG.cell.radius*(0.7+0.1*(c.genome.GRÖ)); }
 function capEnergy(c){ return CONFIG.cell.energyMax*(1+0.08*(c.genome.GRÖ-5)); }
-
-function worldScales(){
-  const BASE_H=640, BASE_W=1024;
-  const sMin = Math.max(0.6, Math.min(W,H)/BASE_H);
-  const areaScale = (W*H)/(BASE_W*BASE_H);
-  return { sMin, areaScale };
-}
+function worldScales(){ const BASE_H=640, BASE_W=1024; const sMin=Math.max(0.6, Math.min(W,H)/BASE_H); const areaScale=(W*H)/(BASE_W*BASE_H); return { sMin, areaScale }; }
 
 function sexColor(sex){ return sex==="M" ? CONFIG.colors.sexMale : CONFIG.colors.sexFemale; }
 
-/* ============ Exporte ============ */
+/* Exporte */
 export function worldSize(){ return {width:W,height:H}; }
 export function setWorldSize(w,h){ W=w; H=h; window.__WORLD_W=W; window.__WORLD_H=H; }
-
 export function addFoodItem(f){ foodItems.push(f); }
 export function getFoodItems(){ return foodItems; }
-
 export function getCells(){ return cells; }
 export function getStammCounts(){ const m={}; for(const c of cells){ m[c.stammId]=(m[c.stammId]||0)+1; } return m; }
 
 export function createCell(opts={}){
-  const id=nextCellId++;
-  const sex = opts.sex || (Math.random()<0.5 ? "M" : "F");
-  const stammId = opts.stammId ?? 1;
+  const id=nextCellId++, sex=opts.sex || (Math.random()<0.5?"M":"F"), stammId=opts.stammId ?? 1;
   if(!stammMeta.has(stammId)) stammMeta.set(stammId,{ id:stammId });
-
-  const g = opts.genome || {
-    TEM:(opts.TEM??(2+(Math.random()*7|0))),
-    GRÖ:(opts.GRÖ??(2+(Math.random()*7|0))),
-    EFF:(opts.EFF??(2+(Math.random()*7|0))),
-    SCH:(opts.SCH??(2+(Math.random()*7|0))),
-    MET:(opts.MET??(2+(Math.random()*7|0))),
-  };
+  const g = opts.genome || { TEM:(opts.TEM??(2+(Math.random()*7|0))), GRÖ:(opts.GRÖ??(2+(Math.random()*7|0))), EFF:(opts.EFF??(2+(Math.random()*7|0))), SCH:(opts.SCH??(2+(Math.random()*7|0))), MET:(opts.MET??(2+(Math.random()*7|0))) };
   const cap = capEnergy({ genome:g });
-
-  const cell = {
-    id, name: opts.name || `Z${id}`,
-    sex, stammId,
-    color: sexColor(sex),
-
-    pos: opts.pos || { x: rnd(60, W-60), y: rnd(60, H-60) },
-    vel: { x: 0, y: 0 },
-    energy: Math.min(cap, opts.energy ?? rnd(60, cap)),
-    age: 0, cooldown: 0,
-    genome: g,
-
-    // NEU: Lebensstil-Integrator (-1..+1)
-    vitality: 0,
-
-    wander:{ vx:0, vy:0 }
-  };
-  cells.push(cell);
-  return cell;
+  const cell = { id, name:opts.name||`Z${id}`, sex, stammId, color:sexColor(sex),
+    pos:opts.pos||{x:rnd(60,W-60), y:rnd(60,H-60)}, vel:{x:0,y:0}, energy:Math.min(cap, opts.energy??rnd(60,cap)),
+    age:0, cooldown:0, genome:g, vitality:0, wander:{vx:0,vy:0} };
+  cells.push(cell); return cell;
 }
+export function killCell(id){ const i=cells.findIndex(c=>c.id===id); if(i>=0){ const c=cells[i]; cells.splice(i,1); emit("cells:died",c);} }
 
-export function killCell(id){
-  const i=cells.findIndex(c=>c.id===id);
-  if(i>=0){ const c=cells[i]; cells.splice(i,1); emit("cells:died",c); }
-}
-
-/* ============ Startpopulation ============ */
+/* Startpopulation (unverändert) */
 export function createAdamAndEve(){
   cells.length=0; stammMeta=new Map(); nextCellId=1;
   const cx=W*0.5, cy=H*0.5, gap=Math.min(W,H)*0.18;
@@ -99,19 +60,17 @@ function makeChild(A,E,k){
            MET:mixGene(A.genome.MET,E.genome.MET)};
   const st=Math.random()<0.5?A.stammId:E.stammId; const cap=capEnergy({genome:g});
   const ang=(k/10)*Math.PI*2, r=Math.min(W,H)*0.08+Math.random()*20;
-  return { id:nextCellId++, name:`C${1000+k}`, sex:(Math.random()<0.5?"M":"F"),
-           stammId:st, pos:{x:W*0.5+Math.cos(ang)*r, y:H*0.5+Math.sin(ang)*r},
-           vel:{x:0,y:0}, energy:cap*0.75, age:0, cooldown:0, genome:g, vitality:0, wander:{vx:0,vy:0} };
+  return { id:nextCellId++, name:`C${1000+k}`, sex:(Math.random()<0.5?"M":"F"), stammId:st,
+           pos:{x:W*0.5+Math.cos(ang)*r, y:H*0.5+Math.sin(ang)*r}, vel:{x:0,y:0}, energy:cap*0.75, age:0, cooldown:0, genome:g, vitality:0, wander:{vx:0,vy:0} };
 }
 
-/* ============ Environment (Export muss existieren) ============ */
-export function applyEnvironment(_env){ /* momentan no-op; env wird live gelesen */ }
+/* Environment-Export existiert weiterhin, hat aber keine Wirkung */
+export function applyEnvironment(_env){}
 
-/* ============ Steering ============ */
+/* Steering */
 function steerSeekArrive(c,t,maxSpeed,stopR,slowR){
   const dx=t.x-c.pos.x, dy=t.y-c.pos.y; const d=len(dx,dy); if(d<stopR) return [0,0];
-  let sp=maxSpeed; if(d<slowR) sp=maxSpeed*(d/slowR);
-  const [ux,uy]=norm(dx,dy); return [ux*sp-c.vel.x, uy*sp-c.vel.y];
+  let sp=maxSpeed; if(d<slowR) sp=maxSpeed*(d/slowR); const [ux,uy]=norm(dx,dy); return [ux*sp-c.vel.x, uy*sp-c.vel.y];
 }
 function steerWallAvoid(c){
   const r=(CONFIG.physics.wallAvoidRadius??48)+radiusOf(c); let fx=0,fy=0;
@@ -142,30 +101,8 @@ function senseFood(c, sense){
   return { item: nearestItem, center };
 }
 
-/* ============ Langlebigkeits-Funktion ============ */
-function effectiveAgeLimit(c){
-  const L = CONFIG.longevity || {};
-  const base = (L.baseAge ?? CONFIG.cell.ageMax) || 600;
-
-  const z = v => (v - 5) / 5;
-  const gw = L.geneWeights || { EFF:0.5, MET:-0.5, SCH:0.3, TEM:0.1, "GRÖ":0.0 };
-  const g = c.genome;
-
-  let geneScore =
-      (gw.EFF||0)*z(g.EFF) +
-      (gw.MET||0)*z(g.MET) +
-      (gw.SCH||0)*z(g.SCH) +
-      (gw.TEM||0)*z(g.TEM) +
-      ((gw["GRÖ"]||0)*z(g["GRÖ"]));
-
-  let boost = geneScore + (L.nutritionK ?? 0.15) * (c.vitality ?? 0);
-
-  boost = clamp(boost, (L.minBoost ?? -0.30), (L.maxBoost ?? 0.50));
-  return base * (1 + boost);
-}
-
-/* ============ Hauptschritt ============ */
-export function step(dt, env){
+/* Hauptschritt – ohne Umwelt-Effekte */
+export function step(dt, _env, _t){
   const neighbors=cells;
   const { sMin } = worldScales();
 
@@ -184,49 +121,32 @@ export function step(dt, env){
     const foodS = senseFood(c, senseFoodR);
     const mate  = chooseMate(c, senseMateR, neighbors);
 
-    const dEdge=Math.min(c.pos.x,W-c.pos.x,c.pos.y,H-c.pos.y);
-    const hazard=(env?.acid?.enabled?clamp(1-dEdge/Math.max(env.acid.range,1),0,1):0)
-               + (env?.barb?.enabled?clamp(1-dEdge/Math.max(env.barb.range,1),0,1):0)
-               + (env?.fence?.enabled?clamp(1-dEdge/Math.max(env.fence.range,1),0,1):0)
-               + (env?.nano?.enabled?0.3:0);
+    // einfache Nachbardichte
+    let neigh=0; for(const o of neighbors){ if(o===c) continue; const dx=o.pos.x-c.pos.x, dy=o.pos.y-c.pos.y; if(dx*dx+dy*dy<(60*sMin)*(60*sMin)) neigh++; }
 
-    // Nachbardichte
-    let neigh=0; for(const o of neighbors){ if(o===c) continue; const dx=o.pos.x-c.pos.x, dy=o.pos.y-c.pos.y;
-      if(dx*dx+dy*dy<(60*sMin)*(60*sMin)) neigh++; }
-
-    const ctx={ env,
-      food: foodS ? { x:(foodS.item?.x ?? foodS.center?.x), y:(foodS.item?.y ?? foodS.center?.y) } : null,
-      foodDist: foodS ? (foodS.item?.d ?? foodS.center?.d) : null,
-      mate: mate?.cell??null, mateDist:mate?.d??null,
-      hazard, neighCount:neigh, worldMin:Math.min(W,H)
-    };
+    const ctx={ env:{}, food: foodS ? {x:(foodS.item?.x??foodS.center?.x), y:(foodS.item?.y??foodS.center?.y)} : null,
+      foodDist: foodS ? (foodS.item?.d ?? foodS.center?.d) : null, mate: mate?.cell??null, mateDist:mate?.d??null,
+      hazard:0, neighCount:neigh, worldMin:Math.min(W,H) };
 
     const option = drivesGetAction(c, 0, ctx);
 
     // Avoid
     let [fx,fy]=[0,0], rem=maxForce;
     const fAvoid=steerWallAvoid(c);
-    const avoidW=(CONFIG.physics.wAvoid??1.15)*(0.6+0.7*clamp(hazard,0,1))*(0.9+0.03*g.SCH);
-    ({fx,fy,rem}=addBudget(fx,fy,rem,fAvoid[0],fAvoid[1],avoidW));
+    ({fx,fy,rem}=addBudget(fx,fy,rem,fAvoid[0],fAvoid[1], (CONFIG.physics.wAvoid??1.15)));
 
     // Primärvektor
     let fOpt=[0,0]; const slowR=Math.max(CONFIG.physics.slowRadius??120, CONFIG.cell.pairDistance*3);
     if(option==="food" && foodS){
-      const eatR = (CONFIG.food.itemRadius + radiusOf(c) + 2) * sMin;
-      if(foodS.item){
-        fOpt = steerSeekArrive(c,{x:foodS.item.x,y:foodS.item.y}, maxSpeed, Math.max(2,eatR-2), slowR);
-      }else if(foodS.center){
-        const stopCenter = Math.max(2, (radiusOf(c)*0.25 + 1) * sMin);
-        fOpt = steerSeekArrive(c,{x:foodS.center.x,y:foodS.center.y}, maxSpeed, stopCenter, slowR);
-      }
+      const eatR=(CONFIG.food.itemRadius+radiusOf(c)+2)*sMin;
+      if(foodS.item) fOpt=steerSeekArrive(c,{x:foodS.item.x,y:foodS.item.y},maxSpeed, Math.max(2,eatR-2), slowR);
+      else{ const stopCenter=Math.max(2,(radiusOf(c)*0.25+1)*sMin); fOpt=steerSeekArrive(c,{x:foodS.center.x,y:foodS.center.y},maxSpeed, stopCenter, slowR); }
     }else if(option==="mate" && mate){
-      fOpt = steerSeekArrive(c,{x:mate.cell.pos.x,y:mate.cell.pos.y}, maxSpeed*0.9, CONFIG.cell.pairDistance*0.9, slowR);
-    }else{
-      fOpt = updateWander(c,dt);
-    }
+      fOpt=steerSeekArrive(c,{x:mate.cell.pos.x,y:mate.cell.pos.y}, maxSpeed*0.9, CONFIG.cell.pairDistance*0.9, slowR);
+    }else fOpt=updateWander(c,dt);
     ({fx,fy,rem}=addBudget(fx,fy,rem,fOpt[0],fOpt[1],1.0));
 
-    // Mini-Separation
+    // Separation
     const fSep=quickSeparation(c,neighbors,22*sMin);
     ({fx,fy,rem}=addBudget(fx,fy,rem,fSep[0],fSep[1],0.35));
 
@@ -237,57 +157,42 @@ export function step(dt, env){
     c.pos.x=clamp(c.pos.x+c.vel.x*dt,0,W); c.pos.y=clamp(c.pos.y+c.vel.y*dt,0,H);
     c.vel.x*=0.985; c.vel.y*=0.985;
 
-    // ===== Essen & Ökonomie-Sample =====
-    let eaten = 0;
-    {
-      const eatR = (CONFIG.food.itemRadius + radiusOf(c) + 2) * sMin;
+    // Essen
+    let eaten=0;{
+      const eatR=(CONFIG.food.itemRadius+radiusOf(c)+2)*sMin;
       for(let k=foodItems.length-1;k>=0;k--){
         const f=foodItems[k]; const dx=f.x-c.pos.x, dy=f.y-c.pos.y;
         if(dx*dx+dy*dy<eatR*eatR){
           const take=CONFIG.cell.eatPerSecond*dt, got=Math.min(take,f.amount);
-          c.energy=Math.min(capEnergy(c),c.energy+got);
-          f.amount-=got; eaten += got;
-          if(f.amount<=1) foodItems.splice(k,1);
+          c.energy=Math.min(capEnergy(c),c.energy+got); f.amount-=got; eaten+=got; if(f.amount<=1) foodItems.splice(k,1);
         }
       }
     }
 
-    // ===== Energie/Umwelt =====
+    // Energie – keine Umwelt-Schäden mehr
     const sp=len(c.vel.x,c.vel.y);
     const baseDrain=CONFIG.cell.baseMetabolic*(0.6+0.1*g.MET)*dt;
     const moveDrain=(CONFIG.physics.moveCostK??0.0006)*(sp*sp)*dt / sMin;
+    c.energy -= baseDrain + moveDrain;
 
-    let envDmg=0; if(env?.acid?.enabled&&dEdge<env.acid.range)envDmg+=env.acid.dps*dt;
-    if(env?.barb?.enabled&&dEdge<env.barb.range)envDmg+=env.barb.dps*dt;
-    if(env?.nano?.enabled)envDmg+=env.nano.dps*dt;
+    metrics.sampleEnergy({ intake:eaten, base:baseDrain, move:moveDrain, env:0, eating:(eaten>0) });
 
-    c.energy -= baseDrain + moveDrain + Math.max(0, envDmg * (1 - 0.06*(g.SCH-5)));
-
-    metrics.sampleEnergy({ intake:eaten, base:baseDrain, move:moveDrain, env:envDmg, eating:(eaten>0) });
-
-    // ===== Vitalität integrieren (-1 .. +1) =====
-    {
-      const L = CONFIG.longevity || {};
-      const eFrac = clamp(c.energy / capEnergy(c), 0, 1);
-      let dv = 0;
-      if (eFrac >= (L.energyGood ?? 0.60)) dv += (L.vitalityRate ?? 0.6) * dt;
-      else if (eFrac <= (L.energyBad ?? 0.25)) dv -= (L.vitalityRate ?? 0.6) * dt;
-      dv -= (L.hazardK ?? 0.4) * clamp(hazard, 0, 1) * dt;
-      c.vitality = clamp((c.vitality ?? 0) + dv, -1, 1);
-    }
-
-    // Lernen/Fenster schließen
+    // Lernen & Tod
     drivesAfterStep(c, dt, ctx);
+    // dynamisches Alterslimit (aus unserer Langlebigkeits-Logik)
+    const L=CONFIG.longevity||{}, base=(L.baseAge??CONFIG.cell.ageMax)||600;
+    const z=v=>(v-5)/5, gw=L.geneWeights||{EFF:0.5,MET:-0.5,SCH:0.3,TEM:0.1,"GRÖ":0};
+    const gS=(gw.EFF||0)*z(g.EFF)+(gw.MET||0)*z(g.MET)+(gw.SCH||0)*z(g.SCH)+(gw.TEM||0)*z(g.TEM)+((gw["GRÖ"]||0)*z(g["GRÖ"]));
+    let boost=gS+(L.nutritionK??0.15)*(c.vitality??0); boost=clamp(boost,(L.minBoost??-0.3),(L.maxBoost??0.5));
+    const ageLimit=base*(1+boost);
 
-    // ===== Todsbedingungen (dynamische Altersgrenze) =====
-    const ageLimit = effectiveAgeLimit(c);
-    if(c.energy<=0 || c.age > ageLimit) killCell(c.id);
+    if(c.energy<=0 || c.age>ageLimit) killCell(c.id);
   }
 
   metrics.commitTick(dt, foodItems.length);
 }
 
-/* Mate-Ziel */
+/* Mate */
 function chooseMate(c,sense,arr){
   if(c.cooldown>0) return null; let best=null, bestScore=-1e9, bestD=Infinity;
   for(const o of arr){ if(o===c||o.sex===c.sex||o.cooldown>0) continue;
@@ -302,5 +207,4 @@ function addBudget(fx,fy,rem,vx,vy,w){ const rx=vx*w, ry=vy*w; const m=Math.hypo
   const allow=Math.min(m,rem), s=allow/m; return {fx:fx+rx*s, fy:fy+ry*s, rem:rem-allow}; }
 function quickSeparation(c,arr,r){ let sx=0,sy=0,n=0, rr=r*r; for(const o of arr){ if(o===c) continue; const dx=c.pos.x-o.pos.x, dy=c.pos.y-o.pos.y;
   const d2=dx*dx+dy*dy; if(d2>rr||d2===0) continue; const d=Math.sqrt(d2); sx+=dx/d; sy+=dy/d; n++; } return n? [sx/n,sy/n]:[0,0]; }
-
 export { radiusOf as __radiusForDebug };
