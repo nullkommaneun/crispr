@@ -28,12 +28,12 @@ export function updateSnapshot(){
   const fps   = (lastFrameTimes.at(-1)?.fps ?? 0).toFixed(0);
   const avgDt = (lastFrameTimes.reduce((a,b)=>a+b.dtSim,0)/(lastFrameTimes.length||1)).toFixed(3);
 
-  // Drives-Metriken
   const dri = safeDrives();
   const wr  = dri.misc.duels ? Math.round(100*dri.misc.wins/dri.misc.duels) : 0;
   const du  = fmtK(dri.misc.duels);
   const kdist = (dri.cfg?.K_DIST ?? "-");
   const rpair = (dri.cfg?.R_PAIR ?? "-");
+  const eps   = (dri.cfg?.EPS    ?? "-");
 
   const sc = worldScaleInfo();
 
@@ -46,7 +46,7 @@ export function updateSnapshot(){
     <span>Perf-Modus: <b>${perf?'An':'Aus'}</b></span>
     <span>Umwelt: <b>${activeEnv}</b></span>
     <span>Scale: <b>s=${sc.sMin}</b>, <b>A=${sc.area}</b></span>
-    <span>Drives: <b>${du}</b> / <b>${wr}%</b> (K=${kdist}, RP=${rpair})</span>
+    <span>Drives: <b>${du}</b> / <b>${wr}%</b> (K=${kdist}, RP=${rpair}, E=${eps})</span>
   `;
 }
 

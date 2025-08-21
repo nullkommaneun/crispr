@@ -1,4 +1,5 @@
 // entities.js — Entities, Bewegung (Drives-Policy), flächen-/auflösungsstabil
+// Farbe: NICHT mehr nach Stamm, sondern nach Geschlecht (M/F).
 
 import { CONFIG } from "./config.js";
 import { emit } from "./event.js";
@@ -9,28 +10,32 @@ let W = CONFIG.world.width, H = CONFIG.world.height;
 const cells = [];
 const foodItems = [];
 
-let stammMeta = new Map();
+let stammMeta = new Map(); // bleibt für Statistik erhalten
 let nextCellId = 1;
 
-/* Utils */
+/* ===================== Utils ===================== */
 const clamp=(x,a,b)=>Math.max(a,Math.min(b,x));
 const len=(x,y)=>Math.hypot(x,y);
 function norm(x,y){ const L=len(x,y)||1e-6; return [x/L,y/L]; }
 function limitVec(x,y,max){ const L=len(x,y); if(L>max){ const s=max/(L||1e-6); return [x*s,y*s]; } return [x,y]; }
 function rnd(a,b){ return a + Math.random()*(b-a); }
-function pickColorByStamm(id){ const r=Math.sin(id*999)*43758.5453; const h=Math.abs(r)%360; return `hsl(${h}deg 70% 60%)`; }
 function radiusOf(c){ return CONFIG.cell.radius*(0.7+0.1*(c.genome.GRÖ)); }
 function capEnergy(c){ return CONFIG.cell.energyMax*(1+0.08*(c.genome.GRÖ-5)); }
 
+// NEU: Geschlechtsfarbe
+function sexColor(sex){
+  return sex === "M" ? CONFIG.colors.sexMale : CONFIG.colors.sexFemale;
+}
+
 // Welt-Skalen relativ zu 1024×640 (Baseline)
 function worldScales(){
-  const BASE_W=1024, BASE_H=640;
-  const sMin = Math.max(0.6, Math.min(W,H)/BASE_H);   // min-Skalierung
-  const areaScale = (W*H)/(BASE_W*BASE_H);            // Flächenfaktor
+  const BASE_W = 1024, BASE_H = 640;
+  const sMin = Math.max(0.6, Math.min(W,H)/BASE_H);      // min-Skalierung (Höhe als Referenz)
+  const areaScale = (W*H)/(BASE_W*BASE_H);               // Flächenfaktor
   return { sMin, areaScale };
 }
 
-/* Exporte */
+/* ===================== Exporte ===================== */
 export function worldSize(){ return {width:W,height:H}; }
 export function setWorldSize(w,h){ W=w; H=h; window.__WORLD_W=W; window.__WORLD_H=H; }
 
@@ -41,8 +46,11 @@ export function getCells(){ return cells; }
 export function getStammCounts(){ const m={}; for(const c of cells){ m[c.stammId]=(m[c.stammId]||0)+1; } return m; }
 
 export function createCell(opts={}){
-  const id=nextCellId++, stammId=opts.stammId ?? 1;
-  if(!stammMeta.has(stammId)) stammMeta.set(stammId,{id:stammId,color:pickColorByStamm(stammId)});
+  const id=nextCellId++;
+  const sex = opts.sex || (Math.random()<0.5 ? "M" : "F");
+  const stammId = opts.stammId ?? 1;
+  if(!stammMeta.has(stammId)) stammMeta.set(stammId,{ id:stammId }); // Farbe nicht mehr hier
+
   const g = opts.genome || {
     TEM:(opts.TEM??(2+(Math.random()*7|0))),
     GRÖ:(opts.GRÖ??(2+(Math.random()*7|0))),
@@ -51,24 +59,35 @@ export function createCell(opts={}){
     MET:(opts.MET??(2+(Math.random()*7|0))),
   };
   const cap = capEnergy({ genome:g });
+
   const cell = {
-    id, name:opts.name||`Z${id}`, sex:opts.sex||(Math.random()<0.5?"M":"F"),
-    stammId, color:stammMeta.get(stammId).color,
-    pos:opts.pos||{x:rnd(60,W-60), y:rnd(60,H-60)},
-    vel:{x:0,y:0},
-    energy:Math.min(cap, opts.energy??rnd(60,cap)),
-    age:0, cooldown:0, genome:g,
-    wander:{vx:0,vy:0}
+    id,
+    name: opts.name || `Z${id}`,
+    sex,
+    stammId,
+    // Farbe NUR nach Geschlecht:
+    color: sexColor(sex),
+
+    pos: opts.pos || { x: rnd(60, W-60), y: rnd(60, H-60) },
+    vel: { x: 0, y: 0 },
+    energy: Math.min(cap, opts.energy ?? rnd(60, cap)),
+    age: 0,
+    cooldown: 0,
+    genome: g,
+    wander:{ vx:0, vy:0 }
   };
-  cells.push(cell); return cell;
+  cells.push(cell);
+  return cell;
 }
+
 export function killCell(id){ const i=cells.findIndex(c=>c.id===id); if(i>=0){ const c=cells[i]; cells.splice(i,1); emit("cells:died",c);} }
 
-/* Startpopulation */
+/* ===================== Startpopulation ===================== */
 export function createAdamAndEve(){
   cells.length=0; stammMeta=new Map(); nextCellId=1;
   const cx=W*0.5, cy=H*0.5, gap=Math.min(W,H)*0.18;
   const gA={TEM:6,GRÖ:5,EFF:6,SCH:5,MET:5}, gE={TEM:5,GRÖ:5,EFF:7,SCH:6,MET:4};
+
   const A=createCell({name:"Adam",sex:"M",stammId:1,genome:gA,pos:{x:cx-gap,y:cy},energy:capEnergy({genome:gA})*0.85});
   const E=createCell({name:"Eva", sex:"F",stammId:2,genome:gE,pos:{x:cx+gap,y:cy},energy:capEnergy({genome:gE})*0.85});
   for(let k=0;k<10;k++) cells.push(makeChild(A,E,k));
@@ -81,15 +100,17 @@ function makeChild(A,E,k){
            MET:mixGene(A.genome.MET,E.genome.MET)};
   const st=Math.random()<0.5?A.stammId:E.stammId; const cap=capEnergy({genome:g});
   const ang=(k/10)*Math.PI*2, r=Math.min(W,H)*0.08+Math.random()*20;
+  // Geschlecht & Farbe werden in createCell gesetzt, hier nur Datencontainer zurückgeben:
   return { id:nextCellId++, name:`C${1000+k}`, sex:(Math.random()<0.5?"M":"F"),
-           stammId:st, color:pickColorByStamm(st),
+           stammId:st, color:undefined,
            pos:{x:W*0.5+Math.cos(ang)*r, y:H*0.5+Math.sin(ang)*r},
            vel:{x:0,y:0}, energy:cap*0.75, age:0, cooldown:0, genome:g, wander:{vx:0,vy:0} };
 }
 
+/* ===================== Environment (no-op) ===================== */
 export function applyEnvironment(_env){}
 
-/* Steering */
+/* ===================== Steering ===================== */
 function steerSeekArrive(c,t,maxSpeed,stopR,slowR){
   const dx=t.x-c.pos.x, dy=t.y-c.pos.y; const d=len(dx,dy); if(d<stopR) return [0,0];
   let sp=maxSpeed; if(d<slowR) sp=maxSpeed*(d/slowR);
@@ -124,7 +145,7 @@ function senseFood(c, sense){
   return { item: nearestItem, center };
 }
 
-/* Hauptschritt */
+/* ===================== Hauptschritt ===================== */
 export function step(dt, env){
   const neighbors=cells;
   const { sMin } = worldScales();
@@ -134,7 +155,8 @@ export function step(dt, env){
     c.age += dt; c.cooldown=Math.max(0,c.cooldown-dt);
 
     const g=c.genome;
-    // auflösungsstabile Sense/Speed/Force
+
+    // Auflösungs-/flächenskalierte Sense/Speed/Force
     const senseFoodR=CONFIG.cell.senseFood*(0.7+0.1*g.EFF)*sMin;
     const senseMateR=CONFIG.cell.senseMate*(0.7+0.08*g.EFF)*sMin;
     const maxSpeed = CONFIG.cell.baseSpeed*(0.7+0.08*g.TEM)*sMin;
@@ -149,7 +171,7 @@ export function step(dt, env){
                + (env?.fence?.enabled?clamp(1-dEdge/Math.max(env.fence.range,1),0,1):0)
                + (env?.nano?.enabled?0.3:0);
 
-    // Nachbardichte
+    // grobe Nachbardichte (Radius ~60px, skaliert)
     let neigh=0; for(const o of neighbors){ if(o===c) continue; const dx=o.pos.x-c.pos.x, dy=o.pos.y-c.pos.y; if(dx*dx+dy*dy<(60*sMin)*(60*sMin)) neigh++; }
 
     const ctx={ env,
@@ -167,11 +189,10 @@ export function step(dt, env){
     const avoidW=(CONFIG.physics.wAvoid??1.15)*(0.6+0.7*clamp(hazard,0,1))*(0.9+0.03*g.SCH);
     ({fx,fy,rem}=addBudget(fx,fy,rem,fAvoid[0],fAvoid[1],avoidW));
 
-    // Primärvektor
+    // Primärvektor (mit sMin-angepasstem Sammelradius)
     let fOpt=[0,0]; const slowR=Math.max(CONFIG.physics.slowRadius??120, CONFIG.cell.pairDistance*3);
     if(option==="food" && foodS){
-      let eatR = CONFIG.food.itemRadius + radiusOf(c) + 2;
-      eatR *= sMin; // **skalierter Sammelradius**
+      let eatR = (CONFIG.food.itemRadius + radiusOf(c) + 2) * sMin;
       if(foodS.item){
         fOpt = steerSeekArrive(c,{x:foodS.item.x,y:foodS.item.y}, maxSpeed, Math.max(2,eatR-2), slowR);
       }else if(foodS.center){
@@ -196,7 +217,7 @@ export function step(dt, env){
     c.pos.x=clamp(c.pos.x+c.vel.x*dt,0,W); c.pos.y=clamp(c.pos.y+c.vel.y*dt,0,H);
     c.vel.x*=0.985; c.vel.y*=0.985;
 
-    // Essen (mit skaliertem eatR)
+    // Essen
     {
       let eatR = (CONFIG.food.itemRadius + radiusOf(c) + 2) * sMin;
       for(let k=foodItems.length-1;k>=0;k--){
