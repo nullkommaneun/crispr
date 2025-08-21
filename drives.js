@@ -1,50 +1,49 @@
 // drives.js – Dueling-Policy (Food/Mate/Wander) mit Online-Lernen,
-// Stamm-Bias, Duellfenster über dt-Integration (robust), Hunger-Failsafe,
-// schneller Early-Close und Diagnose-Trace.
+// Stamm-Bias, dt-basiertem Duellfenster, Hunger-Failsafe und Diagnose-Trace.
 
 import { on } from "./event.js";
 
 /* ===== Konfiguration ===== */
-const LS_W   = "drives_w_v1";
-const LS_B   = "drives_bias_v1";
-const LS_MISC= "drives_misc_v1";
+const LS_W    = "drives_w_v1";
+const LS_B    = "drives_bias_v1";
+const LS_MISC = "drives_misc_v1";
 
 const LR        = 0.10;   // Lernrate
 const L2        = 1e-4;   // L2-Regularisierung
 const MAX_ABS_W = 5;      // |w|-Clip
-const LR_BIAS   = 0.02;   // Stamm-Bias-Lernrate
+const LR_BIAS   = 0.02;   // Lernrate Stamm-Bias
 const BIAS_CLIP = 2.0;
 
-const WINDOW_SEC   = 0.6; // Entscheidungsfenster (kürzer)
-const EPS          = 0.10;// ε-Exploration
-const HUNGER_GATE  = 0.45;// Energie/Cap < 45% → Food erzwingen, falls sichtbar
-const EARLY_DE_ABS = 2.0; // Early-Close bei |ΔE| ≥ 2 (schnelles Feedback)
+const WINDOW_SEC   = 0.6; // Entscheidungsfenster
+const EPS          = 0.10;
+const HUNGER_GATE  = 0.45; // Energie/Cap < 45% → Food erzwingen
+const EARLY_DE_ABS = 2.0;  // Early-Close bei |ΔE| ≥ 2 oder Paarung
 
 /* ===== State ===== */
-let w      = loadJSON(LS_W)   ?? initW();
-let bStamm = loadJSON(LS_B)   ?? {};
-let misc   = loadJSON(LS_MISC)?? { duels:0, wins:0 };
+let w      = loadJSON(LS_W)    ?? initW();
+let bStamm = loadJSON(LS_B)    ?? {};
+let misc   = loadJSON(LS_MISC) ?? { duels:0, wins:0 };
 
-const mem = new Map();   // cellId -> {tAccum, a, b, chosen, e0, forced, ctx0, mated}
+const mem = new Map();  // cellId -> {tAccum,a,b,chosen,e0,forced,ctx0,mated}
 let TRACE_ON = true;
 const TRACE_MAX = 80;
 const trace = [];
 
 /* ===== Utils ===== */
-const clamp=(x,a,b)=>Math.max(a,Math.min(b,x));
-const sigmoid=(z)=>1/(1+Math.exp(-z));
-const dot=(a,b)=>{let s=0;for(let i=0;i<a.length;i++)s+=a[i]*b[i];return s;};
-const sub=(a,b)=>a.map((v,i)=>v-b[i]);
-const r2=(n)=>Math.abs(n)<1e-6?0:Math.round(n*100)/100;
+const clamp = (x,a,b)=> Math.max(a, Math.min(b,x));
+const sigmoid = (z)=> 1/(1+Math.exp(-z));
+const dot = (a,b)=>{ let s=0; for(let i=0;i<a.length;i++) s+=a[i]*b[i]; return s; };
+const sub = (a,b)=> a.map((v,i)=> v-b[i]);
+const r2  = (n)=> Math.abs(n)<1e-6 ? 0 : Math.round(n*100)/100;
 
 function save(){
-  try{localStorage.setItem(LS_W,JSON.stringify(w));}catch{}
-  try{localStorage.setItem(LS_B,JSON.stringify(bStamm));}catch{}
-  try{localStorage.setItem(LS_MISC,JSON.stringify(misc));}catch{}
+  try{ localStorage.setItem(LS_W, JSON.stringify(w)); }catch{}
+  try{ localStorage.setItem(LS_B, JSON.stringify(bStamm)); }catch{}
+  try{ localStorage.setItem(LS_MISC, JSON.stringify(misc)); }catch{}
 }
-function loadJSON(k){try{const s=localStorage.getItem(k);return s?JSON.parse(s):null;}catch{return null;}}
+function loadJSON(k){ try{ const s=localStorage.getItem(k); return s?JSON.parse(s):null; }catch{ return null; } }
 function initW(){
-  // φ-Länge 14 (siehe featuresForOption)
+  // φ-Länge 14
   return [
     0.0,  // Bias
     1.0,  // +EFF
@@ -55,7 +54,7 @@ function initW(){
     0.8,  // +Energie
    -0.4,  // -Alter
    -0.6,  // -Hazard
-   -0.6,  // distFood (näher besser)
+   -0.6,  // distFood
    -0.4,  // distMate
     0.1,  // neighDensity
     0.0,  // oneHot(Food)
@@ -63,19 +62,19 @@ function initW(){
   ];
 }
 
-/* ===== Events: Paarungen markieren (ohne absolute Zeit nötig) ===== */
+/* ===== Events: Paarung im laufenden Fenster markieren ===== */
 on("cells:born", (payload)=>{
-  const p = payload?.parents;
+  const p = payload && payload.parents;
   if(Array.isArray(p)){
     for(const id of p){
       const m = mem.get(id);
-      if(m) m.mated = true; // im aktuellen Fenster Paarung passiert
+      if(m) m.mated = true;
     }
   }
 });
 
 /* ===== Public API ===== */
-export function initDrives(){ /* aktuell nichts weiter nötig */ }
+export function initDrives(){ /* nichts weiter nötig */ }
 export function setTracing(on){ TRACE_ON = !!on; }
 export function getTraceText(lastN=24){
   const arr = trace.slice(-lastN);
@@ -96,8 +95,8 @@ export function getTraceText(lastN=24){
 }
 
 /** Primäre Option wählen; stabil bis Fenster-Ende. */
-export function getAction(cell, /*t ungenutzt*/, ctx){
-  let m = mem.get(cell.id);
+export function getAction(cell, _t, ctx){
+  const m = mem.get(cell.id);
   if(m && m.tAccum < WINDOW_SEC) return m.chosen;
 
   // Kandidaten
@@ -106,46 +105,42 @@ export function getAction(cell, /*t ungenutzt*/, ctx){
   if(opts.length===0) return "wander";
 
   // Scores
-  const feats={}, scores={};
+  const feats = {}, scores = {};
   for(const o of opts){ feats[o]=featuresForOption(cell,ctx,o); scores[o]=scoreOption(cell,feats[o]); }
   const sorted = opts.slice().sort((a,b)=> scores[b]-scores[a]);
+
   let a = sorted[0];
   let b = sorted[1] ?? (sorted[0]==="food" ? "mate" : "food");
-  let p = sigmoid((scores[a]??0) - (scores[b]??0));
+  let p = sigmoid((scores[a]||0)-(scores[b]||0));
   let chosen = (p>=0.5)? a : b;
   let forced = false;
 
   // Hunger-Failsafe
   const cap = 120 * (1 + 0.08*((cell.genome?.GRÖ??5) - 5));
-  const eFrac = clamp(cell.energy/cap,0,1);
+  const eFrac = clamp(cell.energy/cap, 0, 1);
   if(eFrac < HUNGER_GATE && C.food){
     chosen = "food"; forced = true;
-    if(b==="food") b = sorted.find(o=>o!=="food") || "wander";
+    if(b === "food") b = sorted.find(o=>o!=="food") || "wander";
     p = 0.75;
   }
 
-  mem.set(cell.id, {
-    tAccum: 0, a, b, chosen, e0: cell.energy, forced,
-    ctx0: snapshotCtxForTrace(ctx), mated:false
-  });
+  mem.set(cell.id, { tAccum:0, a, b, chosen, e0:cell.energy, forced, ctx0:snapshotCtxForTrace(ctx), mated:false });
   return chosen;
 }
 
-/** Nach jedem Physik-Tick aufrufen: dt aufs Fenster aufsummieren + ggf. Update. */
+/** Nach jedem Physik-Tick aufrufen: dt aufs Fenster addieren, ggf. Update. */
 export function afterStep(cell, dt, ctx){
   const m = mem.get(cell.id);
   if(!m) return;
 
   m.tAccum += dt;
+  const e1 = cell.energy, dE = e1 - m.e0;
+  const early = Math.abs(dE) >= EARLY_DE_ABS || m.mated;
 
-  const e1 = cell.energy, e0 = m.e0;
-  const dE = e1 - e0;
-  const doEarly = Math.abs(dE) >= EARLY_DE_ABS || m.mated;
+  if(m.tAccum < WINDOW_SEC && !early) return;
 
-  if(m.tAccum < WINDOW_SEC && !doEarly) return;
-
-  // winner/loser bestimmen
-  let winner = m.chosen, loser = (m.chosen===m.a ? m.b : m.a);
+  // Gewinner/Verlierer bestimmen
+  let winner = m.chosen, loser = (m.chosen===m.a? m.b : m.a);
   if(dE < 0) { const tmp=winner; winner=loser; loser=tmp; }
 
   const xa = featuresForOption(cell, ctx, winner);
@@ -154,7 +149,7 @@ export function afterStep(cell, dt, ctx){
   const p  = sigmoid(dot(w, x));
   const y  = 1;
 
-  // Gewichtsupdates
+  // Update
   for(let i=0;i<w.length;i++){
     w[i] += LR * ((y - p)*x[i] - L2*w[i]);
     if(w[i] >  MAX_ABS_W) w[i] =  MAX_ABS_W;
@@ -172,29 +167,30 @@ export function afterStep(cell, dt, ctx){
     trace.push({
       dur:m.tAccum, id:cell.id, name:cell.name, st:cell.stammId,
       opt:m.chosen, forced:m.forced, p,
-      e0, e1, dE,
+      e0:m.e0, e1, dE,
       dFood: ctx.foodDist ?? null, dMate: ctx.mateDist ?? null, haz: ctx.hazard ?? 0,
       win:winner, scoreDelta:(scA - scB)
     });
-    if(trace.length>TRACE_MAX) trace.shift();
+    if(trace.length > TRACE_MAX) trace.shift();
   }
 
-  mem.delete(cell.id); // neues Fenster starten beim nächsten getAction
+  mem.delete(cell.id);
 }
 
 /* ===== intern ===== */
 function candidates(cell, ctx){
   const C = { wander:true };
-  if(ctx.food && ctx.foodDist!=null) C.food=true;
-  if(cell.cooldown<=0 && ctx.mate && ctx.mateDist!=null) C.mate=true;
+  if(ctx.food && ctx.foodDist!=null) C.food = true;
+  if(cell.cooldown<=0 && ctx.mate && ctx.mateDist!=null) C.mate = true;
   return C;
 }
 
+// φ(c, ctx, option) – Länge 14
 function featuresForOption(cell, ctx, option){
   const g = cell.genome;
-  const z = (v)=> (v-5)/5;
+  const z = (v)=> (v - 5)/5;
 
-  const cap = 120 * (1 + 0.08*(g.GRÖ - 5));
+  const cap   = 120 * (1 + 0.08*(g.GRÖ - 5));
   const eFrac = clamp(cell.energy / cap, 0, 1);
   const ageN  = clamp(cell.age / 120, 0, 1);
   const hazard= clamp(ctx.hazard ?? 0, 0, 1);
