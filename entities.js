@@ -1,4 +1,5 @@
 // entities.js — Entities, Bewegung (Drives-Policy), flächen-/auflösungsstabil
+// Farbe der Zellen: nach Geschlecht (M = Blau, F = Magenta).
 import { CONFIG } from "./config.js";
 import { emit } from "./event.js";
 import { getAction as drivesGetAction, afterStep as drivesAfterStep } from "./drives.js";
@@ -20,9 +21,8 @@ function limitVec(x,y,max){ const L=len(x,y); if(L>max){ const s=max/(L||1e-6); 
 function rnd(a,b){ return a + Math.random()*(b-a); }
 function radiusOf(c){ return CONFIG.cell.radius*(0.7+0.1*(c.genome.GRÖ)); }
 function capEnergy(c){ return CONFIG.cell.energyMax*(1+0.08*(c.genome.GRÖ-5)); }
-
 function worldScales(){
-  const BASE_W=1024, BASE_H=640;
+  const BASE_H = 640, BASE_W = 1024;
   const sMin = Math.max(0.6, Math.min(W,H)/BASE_H);
   const areaScale = (W*H)/(BASE_W*BASE_H);
   return { sMin, areaScale };
@@ -37,6 +37,11 @@ export function getFoodItems(){ return foodItems; }
 
 export function getCells(){ return cells; }
 export function getStammCounts(){ const m={}; for(const c of cells){ m[c.stammId]=(m[c.stammId]||0)+1; } return m; }
+
+// Geschlechtsfarbe
+function sexColor(sex){
+  return sex === "M" ? CONFIG.colors.sexMale : CONFIG.colors.sexFemale;
+}
 
 export function createCell(opts={}){
   const id=nextCellId++;
@@ -54,15 +59,14 @@ export function createCell(opts={}){
   const cap = capEnergy({ genome:g });
 
   const cell = {
-    id,
-    name: opts.name || `Z${id}`,
-    sex,
-    stammId,
+    id, name: opts.name || `Z${id}`,
+    sex, stammId,
+    color: sexColor(sex),
+
     pos: opts.pos || { x: rnd(60, W-60), y: rnd(60, H-60) },
     vel: { x: 0, y: 0 },
     energy: Math.min(cap, opts.energy ?? rnd(60, cap)),
-    age: 0,
-    cooldown: 0,
+    age: 0, cooldown: 0,
     genome: g,
     wander:{ vx:0, vy:0 }
   };
@@ -70,9 +74,12 @@ export function createCell(opts={}){
   return cell;
 }
 
-export function killCell(id){ const i=cells.findIndex(c=>c.id===id); if(i>=0){ const c=cells[i]; cells.splice(i,1); emit("cells:died",c);} }
+export function killCell(id){
+  const i=cells.findIndex(c=>c.id===id);
+  if(i>=0){ const c=cells[i]; cells.splice(i,1); emit("cells:died",c); }
+}
 
-/* Startpopulation (unverändert) */
+/* Startpopulation */
 export function createAdamAndEve(){
   cells.length=0; stammMeta=new Map(); nextCellId=1;
   const cx=W*0.5, cy=H*0.5, gap=Math.min(W,H)*0.18;
@@ -94,7 +101,10 @@ function makeChild(A,E,k){
            vel:{x:0,y:0}, energy:cap*0.75, age:0, cooldown:0, genome:g, wander:{vx:0,vy:0} };
 }
 
-/* Steering-Hilfen */
+/* WICHTIG: Export bleibt bestehen (Engine importiert das) */
+export function applyEnvironment(_env){ /* aktuell no-op; wir lesen env live in step() */ }
+
+/* Steering */
 function steerSeekArrive(c,t,maxSpeed,stopR,slowR){
   const dx=t.x-c.pos.x, dy=t.y-c.pos.y; const d=len(dx,dy); if(d<stopR) return [0,0];
   let sp=maxSpeed; if(d<slowR) sp=maxSpeed*(d/slowR);
@@ -114,7 +124,7 @@ function updateWander(c,dt){
   const [ux,uy]=(len(c.vel.x,c.vel.y)>1e-3)?norm(c.vel.x,c.vel.y):[0,0]; return [c.wander.vx+0.2*ux, c.wander.vy+0.2*uy];
 }
 
-/* Food-Zielwahl */
+/* Food-Sensor */
 function senseFood(c, sense){
   let nearestItem=null, nd=Infinity; let cx=0, cy=0, n=0;
   for(const f of foodItems){
@@ -129,12 +139,11 @@ function senseFood(c, sense){
   return { item: nearestItem, center };
 }
 
-/* Hauptschritt mit Ökonomie-Sampling */
+/* Hauptschritt (mit Ökonomie-Sampling) */
 export function step(dt, env){
   const neighbors=cells;
   const { sMin } = worldScales();
 
-  // Tick-Beginn (für Ökonomie-Aggregation)
   metrics.beginTick();
 
   for(let i=cells.length-1;i>=0;i--){
@@ -191,7 +200,7 @@ export function step(dt, env){
     }
     ({fx,fy,rem}=addBudget(fx,fy,rem,fOpt[0],fOpt[1],1.0));
 
-    // Mini-Separation
+    // Separation
     const fSep=quickSeparation(c,neighbors,22*sMin);
     ({fx,fy,rem}=addBudget(fx,fy,rem,fSep[0],fSep[1],0.35));
 
@@ -202,8 +211,8 @@ export function step(dt, env){
     c.pos.x=clamp(c.pos.x+c.vel.x*dt,0,W); c.pos.y=clamp(c.pos.y+c.vel.y*dt,0,H);
     c.vel.x*=0.985; c.vel.y*=0.985;
 
-    // ===== Essen & Ökonomie-Sample =====
-    let eaten = 0; // aufgenommene Energie dieses Ticks
+    // Essen & Ökonomie-Sample
+    let eaten = 0;
     {
       const eatR = (CONFIG.food.itemRadius + radiusOf(c) + 2) * sMin;
       for(let k=foodItems.length-1;k>=0;k--){
@@ -217,33 +226,24 @@ export function step(dt, env){
       }
     }
 
-    // Energie/Umwelt – v²-Kosten skaliert
+    // Energie/Umwelt
     const sp=len(c.vel.x,c.vel.y);
     const baseDrain=CONFIG.cell.baseMetabolic*(0.6+0.1*g.MET)*dt;
     const moveDrain=(CONFIG.physics.moveCostK??0.0006)*(sp*sp)*dt / sMin;
-
     let envDmg=0; if(env?.acid?.enabled&&dEdge<env.acid.range)envDmg+=env.acid.dps*dt;
     if(env?.barb?.enabled&&dEdge<env.barb.range)envDmg+=env.barb.dps*dt;
     if(env?.nano?.enabled)envDmg+=env.nano.dps*dt;
-
     c.energy -= baseDrain + moveDrain + Math.max(0, envDmg * (1 - 0.06*(g.SCH-5)));
 
-    // Sample in die Ökonomie-Metrik
-    metrics.sampleEnergy({
-      intake: eaten,
-      base:   baseDrain,
-      move:   moveDrain,
-      env:    envDmg,
-      eating: eaten > 0
-    });
+    metrics.sampleEnergy({ intake:eaten, base:baseDrain, move:moveDrain, env:envDmg, eating:(eaten>0) });
 
-    // Lernen/Fenster schließen
+    // Lernen
     drivesAfterStep(c, dt, ctx);
 
     if(c.energy<=0 || c.age>CONFIG.cell.ageMax) killCell(c.id);
   }
 
-  // Tick-Ende: ~1/s verdichten, inventory übergeben
+  // Tick verdichten (~1/s)
   metrics.commitTick(dt, foodItems.length);
 }
 
