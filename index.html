@@ -54,9 +54,9 @@
   <div id="editorPanel" class="panel hidden"></div>
   <div id="envPanel" class="panel hidden"></div>
   <div id="dummyPanel" class="panel hidden"></div>
-  <div id="diagPanel" class="panel hidden"></div> <!-- <<< NEU -->
+  <div id="diagPanel" class="panel hidden"></div>
 
-  <!-- Error overlay -->
+  <!-- Error overlay (wird vom Bootstraper/Preflight benutzt) -->
   <div id="errorOverlay" class="hidden">
     <div class="errorCard">
       <h3>Fehler</h3>
@@ -65,7 +65,7 @@
     </div>
   </div>
 
-  <script type="module" src="./preflight.js"></script>
-  <script type="module" src="./engine.js"></script>
+  <!-- Robuster Boot-Loader -->
+  <script type="module" src="./bootstrap.js"></script>
 </body>
 </html>
