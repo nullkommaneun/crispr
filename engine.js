@@ -8,8 +8,6 @@ import { initTicker, setPerfMode as tickerPerf, pushFrame } from "./ticker.js";
 import { emit, on } from "./event.js";
 import { openDummyPanel, handleCanvasClickForDummy } from "./dummy.js";
 import { initDrives } from "./drives.js";
-
-// Environment ist jetzt ein Stub; wir holen einen neutralen State und ignorieren ihn in entities.
 import { getEnvState } from "./environment.js";
 
 let running=false, timescale=1, perfMode=false;
@@ -24,10 +22,11 @@ function resizeCanvas(){
   setWorldSize(canvas.width, canvas.height);
 }
 function bindUI(){
-  document.getElementById("btnStart").onclick = ()=>{ breadcrumb("ui:btn","Start"); start(); };
-  document.getElementById("btnPause").onclick = ()=>{ breadcrumb("ui:btn","Pause"); pause(); };
-  document.getElementById("btnReset").onclick = ()=>{ breadcrumb("ui:btn","Reset"); reset(); };
-  document.getElementById("btnEditor").onclick= ()=>{ breadcrumb("ui:btn","Editor"); openEditor(); };
+  document.getElementById("btnStart").onclick=()=>{ breadcrumb("ui:btn","Start"); start(); };
+  document.getElementById("btnPause").onclick=()=>{ breadcrumb("ui:btn","Pause"); pause(); };
+  document.getElementById("btnReset").onclick=()=>{ breadcrumb("ui:btn","Reset"); reset(); };
+  document.getElementById("btnEditor").onclick=()=>{ breadcrumb("ui:btn","Editor"); openEditor(); };
+  const btnGenea=document.getElementById("btnGenea"); if(btnGenea) btnGenea.onclick=()=>{ import("./genea.js").then(m=>m.openGenealogyPanel()); };
   const btnDummy=document.getElementById("btnDummy"); if(btnDummy) btnDummy.onclick=()=>{ breadcrumb("ui:btn","Dummy"); openDummyPanel(); };
   const btnDiag =document.getElementById("btnDiag");  if(btnDiag)  btnDiag.onclick =()=>{ breadcrumb("ui:btn","Diagnose"); import("./diag.js").then(m=>m.openDiagPanel()); };
 
@@ -35,7 +34,7 @@ function bindUI(){
   const fr=document.getElementById("foodrate");  fr.oninput=()=> setSpawnRate(parseFloat(fr.value));
   const pm=document.getElementById("perfmode");  pm.oninput=()=> setPerfMode(pm.checked);
 
-  const sp=document.getElementById("btnSpeed");  sp.onclick = ()=>{ cycleSpeed(); };
+  const sp=document.getElementById("btnSpeed"); sp.onclick=()=>{ cycleSpeed(); };
 
   const canvas=document.getElementById("world");
   canvas.addEventListener("click",(e)=>{ const r=canvas.getBoundingClientRect(); handleCanvasClickForDummy(e.clientX-r.left, e.clientY-r.top); });
@@ -53,9 +52,7 @@ function frame(now){
   acc += delta * timescale;
   const desiredSteps=Math.floor(acc/fixedDt), maxSteps=Math.min(60, Math.max(8, Math.ceil(timescale*1.2)));
   const steps=Math.min(desiredSteps, maxSteps);
-
-  // neutraler Env-State (wird in entities ignoriert)
-  const env = getEnvState();
+  const env=getEnvState(); // Stub (neutral)
 
   for(let s=0;s<steps;s++){
     entitiesStep(fixedDt, env, simTime);
@@ -80,14 +77,12 @@ export function boot(){
   bindUI(); draw();
   window.__APP_BOOTED = true;
 }
-
 export function start(){ if(!running){ running=true; lastTime=0; requestAnimationFrame(frame); } }
 export function pause(){ running=false; }
 export function reset(){ running=false; import("./food.js").then(m=>m.spawnClusters()); import("./entities.js").then(m=>{ m.createAdamAndEve(); }); draw(); }
 export function setTimescale(x){ timescale=Math.max(0.1, Math.min(50, x)); emit("ui:speed", timescale); }
 export function setPerfMode(on){ perfMode=!!on; rendererPerf(perfMode); tickerPerf(perfMode); }
 
-/* DOM-Ready Guard */
 (function ensureBoot(){
   if (document.readyState === "loading") window.addEventListener("DOMContentLoaded", boot);
   else try{ boot(); }catch(e){ console.error("boot() error", e); }
