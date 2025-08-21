@@ -87,20 +87,22 @@ function updateWander(c,dt){ const th=CONFIG.physics.wanderTheta??1.6, sg=CONFIG
   c.wander.vy += th*(0-c.wander.vy)*dt + sg*Math.sqrt(dt)*gauss();
   const [ux,uy]=(len(c.vel.x,c.vel.y)>1e-3)?norm(c.vel.x,c.vel.y):[0,0]; return [c.wander.vx+0.2*ux, c.wander.vy+0.2*uy]; }
 
-/* Ziele */
-function nearestFoodCenter(c,sense){
-  let best=[]; for(const f of foodItems){ const dx=f.x-c.pos.x, dy=f.y-c.pos.y; const d2=dx*dx+dy*dy; if(d2<sense*sense) best.push({f,d2}); }
-  if(best.length===0) return null; best.sort((a,b)=>a.d2-b.d2);
-  const take=best.slice(0,3).map(o=>o.f); const cx=take.reduce((s,f)=>s+f.x,0)/take.length; const cy=take.reduce((s,f)=>s+f.y,0)/take.length;
-  return { x:cx, y:cy, d:Math.hypot(cx-c.pos.x, cy-c.pos.y) };
-}
-function chooseMate(c,sense,arr){
-  if(c.cooldown>0) return null; let best=null, bestScore=-1e9, bestD=Infinity;
-  for(const o of arr){ if(o===c||o.sex===c.sex||o.cooldown>0) continue;
-    const dx=o.pos.x-c.pos.x, dy=o.pos.y-c.pos.y; const d2=dx*dx+dy*dy; if(d2>sense*sense) continue; const d=Math.sqrt(d2);
-    const geneScore=(o.genome.EFF*0.8+(10-o.genome.MET)*0.7+o.genome.SCH*0.2+o.genome.TEM*0.2);
-    const total=-0.05*d + geneScore; if(total>bestScore){ best=o; bestScore=total; bestD=d; } }
-  return best?{cell:best,d:bestD}:null;
+/* --- Food-Zielwahl: Item bevorzugt, Schwerpunkt als Fallback --- */
+function senseFood(c, sense){
+  let nearestItem=null, nd=Infinity;
+  // Schwerpunkt aus den 3 nächsten Items (falls vorhanden)
+  let accX=0, accY=0, n=0;
+  for(const f of foodItems){
+    const dx=f.x-c.pos.x, dy=f.y-c.pos.y; const d2=dx*dx+dy*dy;
+    if(d2 > sense*sense) continue;
+    const d=Math.sqrt(d2);
+    if(d < nd){ nd=d; nearestItem = { x:f.x, y:f.y, d }; }
+    // für Schwerpunkt: nimm bis zu 3
+    if(n < 3){ accX += f.x; accY += f.y; n++; }
+  }
+  if(n===0 && !nearestItem) return null;
+  const center = n? { x:accX/n, y:accY/n, d: Math.hypot(accX/n - c.pos.x, accY/n - c.pos.y) } : null;
+  return { item: nearestItem, center };
 }
 
 /* Hauptschritt – dt-basiertes Drives-Fenster */
@@ -115,23 +117,25 @@ export function step(dt, env){
     const maxSpeed=CONFIG.cell.baseSpeed*(0.7+0.08*g.TEM);
     const maxForce=(CONFIG.physics.maxForceBase??140)*(0.7+0.08*g.TEM);
 
-    const senseFood=CONFIG.cell.senseFood*(0.7+0.1*g.EFF);
-    const senseMate=CONFIG.cell.senseMate*(0.7+0.08*g.EFF);
+    const senseFoodR=CONFIG.cell.senseFood*(0.7+0.1*g.EFF);
+    const senseMateR=CONFIG.cell.senseMate*(0.7+0.08*g.EFF);
 
-    const food=nearestFoodCenter(c,senseFood);
-    const mate=chooseMate(c,senseMate,neighbors);
+    const foodS = senseFood(c, senseFoodR);
+    const mate   = chooseMate(c, senseMateR, neighbors);
 
     const dEdge=Math.min(c.pos.x,W-c.pos.x,c.pos.y,H-c.pos.y);
-    const hazard=(env && env.acid && env.acid.enabled ? clamp(1-dEdge/Math.max(env.acid.range,1),0,1):0)
-               + (env && env.barb && env.barb.enabled ? clamp(1-dEdge/Math.max(env.barb.range,1),0,1):0)
-               + (env && env.fence && env.fence.enabled? clamp(1-dEdge/Math.max(env.fence.range,1),0,1):0)
-               + (env && env.nano && env.nano.enabled ? 0.3 : 0);
+    const hazard=(env?.acid?.enabled?clamp(1-dEdge/Math.max(env.acid.range,1),0,1):0)
+               + (env?.barb?.enabled?clamp(1-dEdge/Math.max(env.barb.range,1),0,1):0)
+               + (env?.fence?.enabled?clamp(1-dEdge/Math.max(env.fence.range,1),0,1):0)
+               + (env?.nano?.enabled?0.3:0);
 
     let neigh=0; for(const o of neighbors){ if(o===c) continue; const dx=o.pos.x-c.pos.x, dy=o.pos.y-c.pos.y; if(dx*dx+dy*dy<60*60) neigh++; }
 
+    // baue kontext für Drives
     const ctx={ env,
-      food: food?{x:food.x,y:food.y}:null, foodDist:food?food.d:null,
-      mate: mate?mate.cell:null,            mateDist:mate?mate.d:null,
+      food: foodS ? {x:(foodS.item?.x ?? foodS.center?.x), y:(foodS.item?.y ?? foodS.center?.y)} : null,
+      foodDist: foodS ? (foodS.item?.d ?? foodS.center?.d) : null,
+      mate: mate?.cell??null, mateDist:mate?.d??null,
       hazard, neighCount:neigh, worldMin:Math.min(W,H)
     };
 
@@ -144,11 +148,30 @@ export function step(dt, env){
     const avoidW=(CONFIG.physics.wAvoid??1.15)*(0.6+0.7*clamp(hazard,0,1))*(0.9+0.03*g.SCH);
     ({fx,fy,rem}=addBudget(fx,fy,rem, fAvoid[0],fAvoid[1], avoidW));
 
-    // Primärvektor
+    // Primärvektor (Food bevorzugt Item; Mikro-Seek, wenn am Zentrum noch nichts gegessen wird)
     let fOpt=[0,0]; const slowR=Math.max(CONFIG.physics.slowRadius??120, CONFIG.cell.pairDistance*3);
-    if(option==="food" && food){ fOpt=steerSeekArrive(c,{x:food.x,y:food.y},maxSpeed,CONFIG.food.itemRadius+radiusOf(c)+2,slowR); }
-    else if(option==="mate" && mate){ fOpt=steerSeekArrive(c,{x:mate.cell.pos.x,y:mate.cell.pos.y},maxSpeed*0.9,CONFIG.cell.pairDistance*0.9,slowR); }
-    else { fOpt=updateWander(c,dt); }
+    if(option==="food" && foodS){
+      const eatR = CONFIG.food.itemRadius + radiusOf(c) + 2.0; // etwas großzügiger
+      let target = null;
+      if(foodS.item && foodS.item.d < 30){ // nahes Item vorhanden → direkt
+        target = {x:foodS.item.x, y:foodS.item.y};
+        const stop = Math.max(2, eatR-2);  // bis in den Sammelradius hinein
+        fOpt = steerSeekArrive(c, target, maxSpeed, stop, slowR);
+      }else if(foodS.center){
+        target = {x:foodS.center.x, y:foodS.center.y};
+        const stopCenter = Math.max(2, radiusOf(c)*0.25 + 1); // kleinerer Stop für Zentrum
+        fOpt = steerSeekArrive(c, target, maxSpeed, stopCenter, slowR);
+        // Mikro-Seek: nahe Zentrum, aber (noch) nicht essend? → auf Item feinfokussieren
+        if(foodS.item && foodS.center.d < 16){
+          const micro = steerSeekArrive(c, {x:foodS.item.x,y:foodS.item.y}, maxSpeed*0.7, Math.max(2, eatR-2), slowR*0.6);
+          fOpt[0] += micro[0]; fOpt[1] += micro[1];
+        }
+      }
+    }else if(option==="mate" && mate){
+      fOpt=steerSeekArrive(c,{x:mate.cell.pos.x,y:mate.cell.pos.y},maxSpeed*0.9, CONFIG.cell.pairDistance*0.9, slowR);
+    }else{
+      fOpt=updateWander(c,dt);
+    }
     ({fx,fy,rem}=addBudget(fx,fy,rem, fOpt[0],fOpt[1], 1.0));
 
     // Mini-Separation
@@ -163,29 +186,29 @@ export function step(dt, env){
     c.vel.x*=0.985; c.vel.y*=0.985;
 
     // Essen
-    const eatR=CONFIG.food.itemRadius+radiusOf(c)+0.5;
+    const eatR = CONFIG.food.itemRadius + radiusOf(c) + 2.0; // konsistent mit oben
     for(let k=foodItems.length-1;k>=0;k--){
       const f=foodItems[k]; const dx=f.x-c.pos.x, dy=f.y-c.pos.y;
-      if(dx*dx+dy*dy<eatR*eatR){
+      if(dx*dx+dy*dy < eatR*eatR){
         const take=CONFIG.cell.eatPerSecond*dt, got=Math.min(take,f.amount);
         c.energy=Math.min(capEnergy(c),c.energy+got);
         f.amount-=got; if(f.amount<=1) foodItems.splice(k,1);
       }
     }
 
-    // Energie/Umwelt
+    // Energie & Umwelt
     const sp=len(c.vel.x,c.vel.y);
     const baseDrain=CONFIG.cell.baseMetabolic*(0.6+0.1*g.MET)*dt;
     const moveDrain=(CONFIG.physics.moveCostK??0.0006)*sp*sp*dt;
     c.energy -= baseDrain + moveDrain;
 
-    let dmg=0; if(env && env.acid  && env.acid.enabled  && dEdge<env.acid.range)  dmg+=env.acid.dps*dt;
-    if(env && env.barb  && env.barb.enabled  && dEdge<env.barb.range)  dmg+=env.barb.dps*dt;
-    if(env && env.nano  && env.nano.enabled)                             dmg+=env.nano.dps*dt;
+    let dmg=0; if(env?.acid?.enabled && dEdge<env.acid.range) dmg+=env.acid.dps*dt;
+    if(env?.barb?.enabled && dEdge<env.barb.range) dmg+=env.barb.dps*dt;
+    if(env?.nano?.enabled) dmg+=env.nano.dps*dt;
     c.energy -= Math.max(0, dmg * (1 - 0.06*(g.SCH-5)));
 
-    // Zaunimpuls (vereinfacht)
-    if(env && env.fence && env.fence.enabled && dEdge<env.fence.range){
+    // Zaun (vereinfacht)
+    if(env?.fence?.enabled && dEdge<env.fence.range){
       const fxz=(c.pos.x===dEdge)?1:((W-c.pos.x)===dEdge?-1:0);
       const fyz=(c.pos.y===dEdge)?1:((H-c.pos.y)===dEdge?-1:0);
       c.vel.x += fxz*(env.fence.impulse||0);
@@ -197,6 +220,16 @@ export function step(dt, env){
 
     if(c.energy<=0 || c.age>CONFIG.cell.ageMax) killCell(c.id);
   }
+}
+
+/* Ziele (Mate) */
+function chooseMate(c,sense,arr){
+  if(c.cooldown>0) return null; let best=null, bestScore=-1e9, bestD=Infinity;
+  for(const o of arr){ if(o===c||o.sex===c.sex||o.cooldown>0) continue;
+    const dx=o.pos.x-c.pos.x, dy=o.pos.y-c.pos.y; const d2=dx*dx+dy*dy; if(d2>sense*sense) continue; const d=Math.sqrt(d2);
+    const geneScore=(o.genome.EFF*0.8+(10-o.genome.MET)*0.7+o.genome.SCH*0.2+o.genome.TEM*0.2);
+    const total=-0.05*d + geneScore; if(total>bestScore){ best=o; bestScore=total; bestD=d; } }
+  return best?{cell:best,d:bestD}:null;
 }
 
 /* Hilfen */
