@@ -1,8 +1,15 @@
 // editor.js — CRISPR-Editor: Links mit ±1-Buttons, Prognose-Score (TF.js oder Heuristik)
+// KORREKTUR: keine Namenskollision mit setAdvisorMode/getAdvisorMode (Importe umbenannt)
+
 import { getCells } from "./entities.js";
 import { emit, on } from "./event.js";
-// Advisor bleibt für Sortierung/Score in der Liste (falls vorhanden)
-import { setMode as setAdvisorMode, getMode as getAdvisorMode, scoreCell, sortCells } from "./advisor.js";
+// Advisor-API importieren — aber mit anderen Namen, damit unsere Exporte nicht kollidieren
+import {
+  setMode as advSetMode,
+  getMode as advGetMode,
+  scoreCell,
+  sortCells
+} from "./advisor.js";
 
 const panel = document.getElementById("editorPanel");
 
@@ -12,7 +19,6 @@ async function ensureModel(){
   if (window.__tfModel) return window.__tfModel;
   if (typeof tf === "undefined" || !tf?.loadLayersModel) return null;
   if (!modelPromise){
-    // Pfad für GitHub Pages: ./models/model.json
     modelPromise = tf.loadLayersModel("./models/model.json")
       .then(m => (window.__tfModel = m))
       .catch(e => { console.warn("TF model load failed:", e); return null; });
@@ -28,11 +34,10 @@ async function predictStability(genome){
       const y = m.predict(x);
       const p = (Array.isArray(y)? y[0] : y).dataSync()[0];
       x.dispose(); Array.isArray(y)? y.forEach(t=>t.dispose()) : y.dispose();
-      // clamp in 0..1
       return { p: Math.max(0, Math.min(1, p)), src: "Modell" };
     }
   }catch(e){ console.warn("predictStability error:", e); }
-  // Heuristik-Fallback (logistische Funktion)
+  // Heuristik-Fallback
   const s = 0.40*z(genome.EFF) + 0.28*z(genome.SCH) + 0.18*z(genome.TEM) - 0.42*z(genome.MET) + 0.06*z(genome["GRÖ"]);
   const p = 1/(1+Math.exp(-1.75*s));
   return { p, src: "Heuristik" };
@@ -76,14 +81,11 @@ function clampGene(v){ return Math.max(1, Math.min(10, v|0)); }
 // ==== Render ====
 let selectedId = null;
 
-export function openEditor(){
-  render();
-  // Modell im Hintergrund schon mal laden (zeigt schneller Werte)
-  ensureModel();
-}
+// Exporte (UI-Wrapper) – jetzt konfliktfrei:
+export function openEditor(){ render(); ensureModel(); }
 export function closeEditor(){ panel.classList.add("hidden"); }
-export function setAdvisorMode(mode){ try{ setAdvisorMode(mode); }catch{} }
-export function getAdvisorMode(){ try{ return getAdvisorMode(); }catch{ return "off"; } }
+export function setAdvisorMode(mode){ try{ advSetMode(mode); }catch{} }
+export function getAdvisorMode(){ try{ return advGetMode(); }catch{ return "off"; } }
 
 function render(){
   const cells = getCells();
@@ -145,31 +147,19 @@ function renderDetails(detailCol, cell){
       cell.genome[key] = clampGene(cell.genome[key] + delta);
       val.textContent = String(cell.genome[key]);
       emit("cell:edited",{id:cell.id, field:key, value:cell.genome[key]});
-      // Prognose neu rechnen
-      updatePrognose();
+      updatePrognose();  // sofort neu bewerten
     });
     div.append(wrap);
     detailCol.append(div);
   }
 
   // Prognose-Bereich
-  const progWrap = document.createElement("div");
-  progWrap.style.marginTop="10px";
-  const progLine = document.createElement("div");
-  progLine.className = "muted";
-  progLine.textContent = "Prognose-Score: —";
-  progWrap.append(progLine);
-
-  // kleine Fortschrittsleiste
-  const bar = document.createElement("div");
-  bar.style.height="6px"; bar.style.border="1px solid #2a3a46"; bar.style.borderRadius="6px"; bar.style.marginTop="6px";
-  const fill = document.createElement("div");
-  fill.style.height="100%"; fill.style.width="0%"; fill.style.borderRadius="6px";
+  const progWrap = document.createElement("div"); progWrap.style.marginTop="10px";
+  const progLine = document.createElement("div"); progLine.className = "muted"; progLine.textContent = "Prognose-Score: —";
+  const bar = document.createElement("div"); bar.style.height="6px"; bar.style.border="1px solid #2a3a46"; bar.style.borderRadius="6px"; bar.style.marginTop="6px";
+  const fill = document.createElement("div"); fill.style.height="100%"; fill.style.width="0%"; fill.style.borderRadius="6px";
   fill.style.background = "linear-gradient(90deg, #2ee56a, #27c7ff)";
-  bar.append(fill);
-  progWrap.append(bar);
-
-  detailCol.append(progWrap);
+  bar.append(fill); progWrap.append(progLine, bar); detailCol.append(progWrap);
 
   async function updatePrognose(){
     const { p, src } = await predictStability(cell.genome);
@@ -182,6 +172,7 @@ function renderDetails(detailCol, cell){
 
 function renderList(listCol){
   listCol.innerHTML = "";
+
   // Suche
   const searchWrap=document.createElement("div");
   searchWrap.style.position="sticky"; searchWrap.style.top="0"; searchWrap.style.background="var(--panel)";
@@ -190,8 +181,7 @@ function renderList(listCol){
   inp.type="text"; inp.placeholder="Suche Name/ID...";
   inp.style.width="100%"; inp.style.background="#0d1419"; inp.style.border="1px solid #2a3a46";
   inp.style.borderRadius="6px"; inp.style.color="var(--ink)"; inp.style.padding="6px 8px";
-  searchWrap.append(inp);
-  listCol.append(searchWrap);
+  searchWrap.append(inp); listCol.append(searchWrap);
 
   const cont=document.createElement("div"); cont.className="list"; listCol.append(cont);
 
@@ -205,13 +195,12 @@ function renderList(listCol){
     const item=document.createElement("div");
     item.className="cellItem editor-item";
     if(c.id===selectedId) item.classList.add("active");
-    // farbiger linker Balken -> nach Geschlecht (Zellenfarbe)
     item.style.borderLeft = `4px solid ${c.color || '#27c7ff'}`;
 
     // Advisor/Score (falls aktiv)
     let scText = "–";
     try{
-      const mode = getAdvisorMode();
+      const mode = advGetMode();
       if(mode!=="off"){
         const sc = scoreCell(c);
         if (sc!=null) scText = (Math.round(sc*10)/10).toFixed(1);
