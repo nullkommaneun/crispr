@@ -39,7 +39,7 @@
         <button id="btnEditor">CRISPR-Editor</button>
         <button id="btnEnv">Umwelt</button>
         <button id="btnDummy">Dummy</button>
-        <button id="btnDiag" title="Drives-Diagnose in die Zwischenablage kopieren">Diagnose</button>
+        <button id="btnDiag" title="Diagnose öffnen">Diagnose</button>
       </div>
     </div>
 
@@ -54,6 +54,7 @@
   <div id="editorPanel" class="panel hidden"></div>
   <div id="envPanel" class="panel hidden"></div>
   <div id="dummyPanel" class="panel hidden"></div>
+  <div id="diagPanel" class="panel hidden"></div> <!-- <<< NEU -->
 
   <!-- Error overlay -->
   <div id="errorOverlay" class="hidden">
@@ -64,9 +65,7 @@
     </div>
   </div>
 
-  <!-- (optional) Preflight-Diagnose -->
   <script type="module" src="./preflight.js"></script>
-  <!-- Engine -->
   <script type="module" src="./engine.js"></script>
 </body>
 </html>

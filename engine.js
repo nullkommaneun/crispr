@@ -10,7 +10,8 @@ import { openEnvPanel, getEnvState } from "./environment.js";
 import { initTicker, setPerfMode as tickerPerf, pushFrame } from "./ticker.js";
 import { emit, on } from "./event.js";
 import { openDummyPanel, handleCanvasClickForDummy } from "./dummy.js";
-import { initDrives, getTraceText } from "./drives.js";
+import { initDrives } from "./drives.js";
+import { openDiagPanel } from "./diag.js";   // <<< NEU
 
 let running = false;
 let timescale = 1;
@@ -21,7 +22,7 @@ let speedIdx = 0;
 
 let lastTime = 0, acc = 0;
 const fixedDt = 1 / 60;           // fixer Simulationsschritt (s)
-let simTime = 0;                   // >>> diese Sim-Zeit wird an entities.step übergeben
+let simTime = 0;                   // Sim-Zeit
 
 function resizeCanvas() {
   const canvas = document.getElementById("world");
@@ -43,13 +44,7 @@ function bindUI() {
   document.getElementById("btnEditor").onclick = ()=>{ breadcrumb("ui:btn","Editor"); openEditor(); };
   document.getElementById("btnEnv").onclick   = ()=>{ breadcrumb("ui:btn","Umwelt"); openEnvPanel(); };
   document.getElementById("btnDummy").onclick = ()=>{ breadcrumb("ui:btn","Dummy"); openDummyPanel(); };
-
-  const diag = document.getElementById("btnDiag");
-  if (diag) diag.onclick = async ()=>{
-    const txt = getTraceText(28);
-    try{ await navigator.clipboard.writeText(txt); }catch{}
-    console.log("DRIVES TRACE COPIED\n"+txt);
-  };
+  document.getElementById("btnDiag").onclick  = ()=>{ breadcrumb("ui:btn","Diagnose"); openDiagPanel(); }; // <<< NEU
 
   const mu = document.getElementById("mutation");
   mu.oninput = ()=> setMutationRate(parseFloat(mu.value));
@@ -103,7 +98,6 @@ function frame(now) {
   const env = getEnvState();
 
   for (let s = 0; s < steps; s++) {
-    // >>> HIER: Sim-Zeit fortschreiben und als 3. Parameter übergeben
     entitiesStep(fixedDt, env, simTime);
     reproductionStep(fixedDt);
     foodStep(fixedDt);
@@ -128,8 +122,7 @@ export function boot() {
   resizeCanvas();
   window.addEventListener("resize", resizeCanvas);
 
-  initDrives();                     // Drives initialisieren
-
+  initDrives();
   createAdamAndEve();
   applyEnvironment(getEnvState());
 
