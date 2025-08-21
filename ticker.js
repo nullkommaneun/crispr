@@ -21,8 +21,8 @@ export function updateSnapshot(){
   if(!el) return;
 
   const cells = getCells().length;
-  const food = getFoodItems().length;
-  const env  = getEnvState();
+  const food  = getFoodItems().length;
+  const env   = getEnvState();
   const activeEnv = Object.entries(env).filter(([_,v])=>v.enabled).map(([k])=>k).join(', ') || 'aus';
 
   const fps   = (lastFrameTimes.at(-1)?.fps ?? 0).toFixed(0);
@@ -35,6 +35,8 @@ export function updateSnapshot(){
   const kdist = (dri.cfg?.K_DIST ?? "-");
   const rpair = (dri.cfg?.R_PAIR ?? "-");
 
+  const sc = worldScaleInfo();
+
   el.innerHTML = `
     <span>Tempo: <b>×${speedLabel}</b></span>
     <span>FPS (Bildrate): <b>${fps}</b></span>
@@ -43,6 +45,7 @@ export function updateSnapshot(){
     <span>Food: <b>${food}</b></span>
     <span>Perf-Modus: <b>${perf?'An':'Aus'}</b></span>
     <span>Umwelt: <b>${activeEnv}</b></span>
+    <span>Scale: <b>s=${sc.sMin}</b>, <b>A=${sc.area}</b></span>
     <span>Drives: <b>${du}</b> / <b>${wr}%</b> (K=${kdist}, RP=${rpair})</span>
   `;
 }
@@ -54,7 +57,11 @@ export function setSpeedIndicator(x){
 
 /* helpers */
 function fmtK(n){ if(n==null) return "-"; if(n<1000) return String(n); const k=(n/1000).toFixed(1); return k.replace(/\.0$/,"")+"k"; }
-function safeDrives(){
-  try{ return getDrivesSnapshot() || { misc:{duels:0,wins:0}, cfg:{} }; }
-  catch{ return { misc:{duels:0,wins:0}, cfg:{} }; }
+function safeDrives(){ try{ return getDrivesSnapshot() || { misc:{duels:0,wins:0}, cfg:{} }; } catch{ return { misc:{duels:0,wins:0}, cfg:{} }; } }
+function worldScaleInfo(){
+  const w = document.getElementById("world");
+  const W = w?.width||1024, H = w?.height||640;
+  const sMin = (Math.min(W,H)/640).toFixed(2);
+  const area = (W*H/(1024*640)).toFixed(2);
+  return { sMin, area };
 }
