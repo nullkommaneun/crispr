@@ -11,7 +11,7 @@ import { initTicker, setPerfMode as tickerPerf, pushFrame } from "./ticker.js";
 import { emit, on } from "./event.js";
 import { openDummyPanel, handleCanvasClickForDummy } from "./dummy.js";
 import { initDrives } from "./drives.js";
-import { openDiagPanel } from "./diag.js";
+import { openDiagPanel } from "./diag.js"; // falls vorhanden; sonst entfernen
 
 let running = false;
 let timescale = 1;
@@ -23,6 +23,9 @@ let speedIdx = 0;
 let lastTime = 0, acc = 0;
 const fixedDt = 1 / 60;
 let simTime = 0;
+
+// Annealing-Takt (1x pro Sekunde Simzeit)
+let annealAccum = 0;
 
 function resizeCanvas() {
   const canvas = document.getElementById("world");
@@ -43,8 +46,8 @@ function bindUI() {
   document.getElementById("btnReset").onclick = ()=>{ breadcrumb("ui:btn","Reset"); reset(); };
   document.getElementById("btnEditor").onclick = ()=>{ breadcrumb("ui:btn","Editor"); openEditor(); };
   document.getElementById("btnEnv").onclick   = ()=>{ breadcrumb("ui:btn","Umwelt"); openEnvPanel(); };
-  document.getElementById("btnDummy").onclick = ()=>{ breadcrumb("ui:btn","Dummy"); openDummyPanel(); };
-  document.getElementById("btnDiag").onclick  = ()=>{ breadcrumb("ui:btn","Diagnose"); openDiagPanel(); };
+  const btnDummy = document.getElementById("btnDummy"); if (btnDummy) btnDummy.onclick = ()=>{ breadcrumb("ui:btn","Dummy"); openDummyPanel(); };
+  const btnDiag  = document.getElementById("btnDiag");  if (btnDiag)  btnDiag.onclick  = ()=>{ breadcrumb("ui:btn","Diagnose"); openDiagPanel(); };
 
   const mu = document.getElementById("mutation");
   mu.oninput = ()=> setMutationRate(parseFloat(mu.value));
@@ -81,6 +84,16 @@ function cycleSpeed(){
   updateSpeedButton();
 }
 
+function annealMutation(dt){
+  annealAccum += dt;
+  if (annealAccum < 1) return;    // nur 1x/Sekunde
+  annealAccum = 0;
+  // einfache Zeitstaffel: 0–30s -> 30%, 30–120s -> 12%, >120s -> 8%
+  if (simTime > 120) setMutationRate(8);
+  else if (simTime > 30) setMutationRate(12);
+  else setMutationRate(30);
+}
+
 function frame(now) {
   if (!running) return;
   now /= 1000;
@@ -103,6 +116,9 @@ function frame(now) {
     foodStep(fixedDt);
     simTime += fixedDt;
     acc -= fixedDt;
+
+    // Annealing 1x/Sekunde Simzeit
+    annealMutation(fixedDt);
   }
 
   if (Math.floor(acc / fixedDt) > maxSteps) {
