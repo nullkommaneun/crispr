@@ -111,3 +111,54 @@ button:hover{background:#1a2a35}
 
 /* Ticker (rechts) */
 #ticker{color:#9fb6c9;font-size:12px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+
+/* ===== Editor-Layout (zweispaltig) ===== */
+#editorPanel.panel{
+  width: min(720px, 96vw); /* breiter als Standard, damit 2 Spalten bequem passen */
+}
+
+#editorPanel .panel-body.editor-body{
+  /* Kein Scrolling auf dem Body – die Spalten scrollen eigenständig */
+  overflow: hidden;
+  display: grid;
+  grid-template-columns: 1fr 280px; /* links Details (flex), rechts Liste (fix) */
+  gap: 10px;
+  min-height: 0; /* wichtig, damit Child-Scrollbars greifen */
+}
+
+/* Spalten scrollen eigenständig */
+#editorPanel .editor-detail,
+#editorPanel .editor-list{
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid #2a3a46;
+  border-radius: 8px;
+  padding: 8px;
+  background: #0d1419;
+}
+
+/* Liste: etwas andere Optik und sticky-Suchfeld */
+#editorPanel .editor-list{
+  border-color: #253542;
+  padding: 0; /* Inhalt hat eigene Abstände */
+}
+#editorPanel .editor-list .list{
+  padding: 8px;
+}
+
+/* Listenitems + Selektionszustand */
+.editor-item.active{
+  outline: 2px solid #27c7ff55;
+  background: #0f1720;
+}
+
+/* Kleinere Screens: auf 1 Spalte fallen, Liste oben, Details unten */
+@media (max-width: 720px){
+  #editorPanel.panel{ width: min(96vw, 640px); }
+  #editorPanel .panel-body.editor-body{
+    grid-template-columns: 1fr;
+    grid-auto-rows: minmax(160px, auto);
+  }
+  #editorPanel .editor-list{ order: 1; }
+  #editorPanel .editor-detail{ order: 2; }
+}
