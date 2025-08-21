@@ -41,8 +41,16 @@ const sigmoid=(z)=>1/(1+Math.exp(-z));
 const dot=(a,b)=>{let s=0;for(let i=0;i<a.length;i++)s+=a[i]*b[i];return s;};
 const sub=(a,b)=>a.map((v,i)=>v-b[i]);
 const r2 =(n)=>Math.abs(n)<1e-6?0:Math.round(n*100)/100;
-function save(){ try{localStorage.setItem(LS_W,JSON.stringify(w));}catch{} try{localStorage.setItem(LS_B,JSON.stringify(bStamm));}catch{} try{localStorage.setItem(LS_MISC,JSON.stringify(misc));}catch{} }
-function loadJSON(k){ try{ const s=localStorage.getItem(k); return s?JSON.parse(s):null; }catch{ return null; } }
+
+function save(){
+  try{ localStorage.setItem(LS_W, JSON.stringify(w)); }catch{}
+  try{ localStorage.setItem(LS_B, JSON.stringify(bStamm)); }catch{}
+  try{ localStorage.setItem(LS_MISC, JSON.stringify(misc)); }catch{}
+}
+function loadJSON(key){
+  try{ const s = localStorage.getItem(key); return s ? JSON.parse(s) : null; }
+  catch{ return null; }
+}
 function initW(){
   // φ-Länge 14
   return [
@@ -104,7 +112,10 @@ export function getAction(cell, _t, ctx){
 
   // Scores
   const feats={}, scores={};
-  for(const o of opts){ feats[o]=featuresForOption(cell,ctx,o); scores[o]=dot(w,feats[o]) + (bStamm[String(cell.stammId??0)]||0); }
+  for(const o of opts){
+    feats[o]=featuresForOption(cell,ctx,o);
+    scores[o]=dot(w,feats[o]) + (bStamm[String(cell.stammId??0)]||0);
+  }
   const sorted=opts.slice().sort((a,b)=>scores[b]-scores[a]);
 
   let a=sorted[0], b=sorted[1] ?? (sorted[0]==="food"?"mate":"food");
@@ -204,6 +215,3 @@ function featuresForOption(cell, ctx, option){
   const isFood = option==="food"?1:0, isMate=option==="mate"?1:0;
   return [1.0,z(g.EFF),z(g.TEM),z(g.GRÖ),z(g.SCH),-z(g.MET), eFrac, -ageN, -hazard, dFood, dMate, neigh, isFood, isMate];
 }
-
-/* ===== Helpers ===== */
-function loadJSON(k){ try{const s=localStorage.getItem(k); return s?JSON.parse(s):null;}catch{return null;} }
