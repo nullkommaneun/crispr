@@ -1,6 +1,4 @@
-// preflight.js — Start-Diagnose (v2)
-// Zeigt nach kurzer Zeit ein Overlay, falls die App nicht gebootet hat.
-// Prüft DOM-IDs und Modul-Exporte (inkl. drives.js & diag.js).
+// preflight.js — Start-Diagnose (v3) mit Checks für metrics.js, drives.js, diag.js
 
 const BOOT_FLAG = "__APP_BOOTED";
 const OVERLAY_ID = "preflightOverlay";
@@ -45,8 +43,7 @@ function listMissingDom(){
     "editorPanel","envPanel","dummyPanel","diagPanel",
     "errorOverlay"
   ];
-  const missing = need.filter(id=>!document.getElementById(id));
-  return missing;
+  return need.filter(id=>!document.getElementById(id));
 }
 
 async function checkModule(path, expects){
@@ -58,7 +55,6 @@ async function checkModule(path, expects){
     return `✅ ${path}`;
   }catch(e){
     let msg = String(e && e.message || e);
-    // Ein paar häufige, verständlichere Hinweise
     if(/failed to fetch|404/i.test(msg)) msg += " (Pfad/Dateiname? GitHub Pages ist case-sensitiv)";
     return `❌ ${path}: Import/Parse fehlgeschlagen → ${msg}`;
   }
@@ -83,11 +79,15 @@ async function diagnose(){
     ["./renderer.js",      ["draw","setPerfMode"]],
     ["./editor.js",        ["openEditor","closeEditor","setAdvisorMode","getAdvisorMode"]],
     ["./environment.js",   ["openEnvPanel","getEnvState","setEnvState"]],
-    // Neue/erweiterte Checks:
-    ["./drives.js",        ["initDrives","getTraceText","getAction","afterStep","getDrivesSnapshot"]],
-    ["./diag.js",          ["openDiagPanel"]],
     ["./ticker.js",        ["initTicker","setPerfMode","pushFrame"]],
-    // Optional: Dummy-Tools (falls vorhanden, sonst wird es als Hinweis geloggt)
+    // Neue/erweiterte Checks:
+    ["./metrics.js",       [
+      "beginTick","sampleEnergy","commitTick","addSpawn",
+      "getEconSnapshot","getMateSnapshot","mateStart","mateEnd","getPopSnapshot"
+    ]],
+    ["./drives.js",        ["initDrives","getTraceText","getAction","afterStep","getDrivesSnapshot","setTracing"]],
+    ["./diag.js",          ["openDiagPanel"]],
+    // Optional:
     // ["./dummy.js",      ["openDummyPanel","handleCanvasClickForDummy"]],
   ];
 
@@ -128,3 +128,4 @@ ${report}`
 }
 
 document.addEventListener("DOMContentLoaded", armWatchdog);
+```0

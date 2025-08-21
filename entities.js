@@ -1,19 +1,18 @@
 // entities.js — Entities, Bewegung (Drives-Policy), flächen-/auflösungsstabil
-// Farbe: NICHT mehr nach Stamm, sondern nach Geschlecht (M/F).
-
 import { CONFIG } from "./config.js";
 import { emit } from "./event.js";
 import { getAction as drivesGetAction, afterStep as drivesAfterStep } from "./drives.js";
+import * as metrics from "./metrics.js";
 
 let W = CONFIG.world.width, H = CONFIG.world.height;
 
 const cells = [];
 const foodItems = [];
 
-let stammMeta = new Map(); // bleibt für Statistik erhalten
+let stammMeta = new Map();
 let nextCellId = 1;
 
-/* ===================== Utils ===================== */
+/* Utils */
 const clamp=(x,a,b)=>Math.max(a,Math.min(b,x));
 const len=(x,y)=>Math.hypot(x,y);
 function norm(x,y){ const L=len(x,y)||1e-6; return [x/L,y/L]; }
@@ -22,20 +21,14 @@ function rnd(a,b){ return a + Math.random()*(b-a); }
 function radiusOf(c){ return CONFIG.cell.radius*(0.7+0.1*(c.genome.GRÖ)); }
 function capEnergy(c){ return CONFIG.cell.energyMax*(1+0.08*(c.genome.GRÖ-5)); }
 
-// NEU: Geschlechtsfarbe
-function sexColor(sex){
-  return sex === "M" ? CONFIG.colors.sexMale : CONFIG.colors.sexFemale;
-}
-
-// Welt-Skalen relativ zu 1024×640 (Baseline)
 function worldScales(){
-  const BASE_W = 1024, BASE_H = 640;
-  const sMin = Math.max(0.6, Math.min(W,H)/BASE_H);      // min-Skalierung (Höhe als Referenz)
-  const areaScale = (W*H)/(BASE_W*BASE_H);               // Flächenfaktor
+  const BASE_W=1024, BASE_H=640;
+  const sMin = Math.max(0.6, Math.min(W,H)/BASE_H);
+  const areaScale = (W*H)/(BASE_W*BASE_H);
   return { sMin, areaScale };
 }
 
-/* ===================== Exporte ===================== */
+/* Exporte */
 export function worldSize(){ return {width:W,height:H}; }
 export function setWorldSize(w,h){ W=w; H=h; window.__WORLD_W=W; window.__WORLD_H=H; }
 
@@ -49,7 +42,7 @@ export function createCell(opts={}){
   const id=nextCellId++;
   const sex = opts.sex || (Math.random()<0.5 ? "M" : "F");
   const stammId = opts.stammId ?? 1;
-  if(!stammMeta.has(stammId)) stammMeta.set(stammId,{ id:stammId }); // Farbe nicht mehr hier
+  if(!stammMeta.has(stammId)) stammMeta.set(stammId,{ id:stammId });
 
   const g = opts.genome || {
     TEM:(opts.TEM??(2+(Math.random()*7|0))),
@@ -65,9 +58,6 @@ export function createCell(opts={}){
     name: opts.name || `Z${id}`,
     sex,
     stammId,
-    // Farbe NUR nach Geschlecht:
-    color: sexColor(sex),
-
     pos: opts.pos || { x: rnd(60, W-60), y: rnd(60, H-60) },
     vel: { x: 0, y: 0 },
     energy: Math.min(cap, opts.energy ?? rnd(60, cap)),
@@ -82,12 +72,11 @@ export function createCell(opts={}){
 
 export function killCell(id){ const i=cells.findIndex(c=>c.id===id); if(i>=0){ const c=cells[i]; cells.splice(i,1); emit("cells:died",c);} }
 
-/* ===================== Startpopulation ===================== */
+/* Startpopulation (unverändert) */
 export function createAdamAndEve(){
   cells.length=0; stammMeta=new Map(); nextCellId=1;
   const cx=W*0.5, cy=H*0.5, gap=Math.min(W,H)*0.18;
   const gA={TEM:6,GRÖ:5,EFF:6,SCH:5,MET:5}, gE={TEM:5,GRÖ:5,EFF:7,SCH:6,MET:4};
-
   const A=createCell({name:"Adam",sex:"M",stammId:1,genome:gA,pos:{x:cx-gap,y:cy},energy:capEnergy({genome:gA})*0.85});
   const E=createCell({name:"Eva", sex:"F",stammId:2,genome:gE,pos:{x:cx+gap,y:cy},energy:capEnergy({genome:gE})*0.85});
   for(let k=0;k<10;k++) cells.push(makeChild(A,E,k));
@@ -100,17 +89,12 @@ function makeChild(A,E,k){
            MET:mixGene(A.genome.MET,E.genome.MET)};
   const st=Math.random()<0.5?A.stammId:E.stammId; const cap=capEnergy({genome:g});
   const ang=(k/10)*Math.PI*2, r=Math.min(W,H)*0.08+Math.random()*20;
-  // Geschlecht & Farbe werden in createCell gesetzt, hier nur Datencontainer zurückgeben:
   return { id:nextCellId++, name:`C${1000+k}`, sex:(Math.random()<0.5?"M":"F"),
-           stammId:st, color:undefined,
-           pos:{x:W*0.5+Math.cos(ang)*r, y:H*0.5+Math.sin(ang)*r},
+           stammId:st, pos:{x:W*0.5+Math.cos(ang)*r, y:H*0.5+Math.sin(ang)*r},
            vel:{x:0,y:0}, energy:cap*0.75, age:0, cooldown:0, genome:g, wander:{vx:0,vy:0} };
 }
 
-/* ===================== Environment (no-op) ===================== */
-export function applyEnvironment(_env){}
-
-/* ===================== Steering ===================== */
+/* Steering-Hilfen */
 function steerSeekArrive(c,t,maxSpeed,stopR,slowR){
   const dx=t.x-c.pos.x, dy=t.y-c.pos.y; const d=len(dx,dy); if(d<stopR) return [0,0];
   let sp=maxSpeed; if(d<slowR) sp=maxSpeed*(d/slowR);
@@ -124,13 +108,13 @@ function steerWallAvoid(c){
 }
 function updateWander(c,dt){
   const th=CONFIG.physics.wanderTheta??1.6, sg=CONFIG.physics.wanderSigma??0.45;
-  const gauss=()=>{let u=0,v=0; while(u===0)u=Math.random(); while(v===0)v=Math.random(); return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);};
+  const gauss=()=>{let u=0,v=0; while(u===0) u=Math.random(); while(v===0) v=Math.random(); return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);};
   c.wander.vx += th*(0-c.wander.vx)*dt + sg*Math.sqrt(dt)*gauss();
   c.wander.vy += th*(0-c.wander.vy)*dt + sg*Math.sqrt(dt)*gauss();
   const [ux,uy]=(len(c.vel.x,c.vel.y)>1e-3)?norm(c.vel.x,c.vel.y):[0,0]; return [c.wander.vx+0.2*ux, c.wander.vy+0.2*uy];
 }
 
-/* Food-Sensor: immer Item bestimmen; Zentrum als Fallback */
+/* Food-Zielwahl */
 function senseFood(c, sense){
   let nearestItem=null, nd=Infinity; let cx=0, cy=0, n=0;
   for(const f of foodItems){
@@ -145,18 +129,19 @@ function senseFood(c, sense){
   return { item: nearestItem, center };
 }
 
-/* ===================== Hauptschritt ===================== */
+/* Hauptschritt mit Ökonomie-Sampling */
 export function step(dt, env){
   const neighbors=cells;
   const { sMin } = worldScales();
+
+  // Tick-Beginn (für Ökonomie-Aggregation)
+  metrics.beginTick();
 
   for(let i=cells.length-1;i>=0;i--){
     const c=cells[i];
     c.age += dt; c.cooldown=Math.max(0,c.cooldown-dt);
 
     const g=c.genome;
-
-    // Auflösungs-/flächenskalierte Sense/Speed/Force
     const senseFoodR=CONFIG.cell.senseFood*(0.7+0.1*g.EFF)*sMin;
     const senseMateR=CONFIG.cell.senseMate*(0.7+0.08*g.EFF)*sMin;
     const maxSpeed = CONFIG.cell.baseSpeed*(0.7+0.08*g.TEM)*sMin;
@@ -171,8 +156,8 @@ export function step(dt, env){
                + (env?.fence?.enabled?clamp(1-dEdge/Math.max(env.fence.range,1),0,1):0)
                + (env?.nano?.enabled?0.3:0);
 
-    // grobe Nachbardichte (Radius ~60px, skaliert)
-    let neigh=0; for(const o of neighbors){ if(o===c) continue; const dx=o.pos.x-c.pos.x, dy=o.pos.y-c.pos.y; if(dx*dx+dy*dy<(60*sMin)*(60*sMin)) neigh++; }
+    let neigh=0; for(const o of neighbors){ if(o===c) continue; const dx=o.pos.x-c.pos.x, dy=o.pos.y-c.pos.y;
+      if(dx*dx+dy*dy < (60*sMin)*(60*sMin)) neigh++; }
 
     const ctx={ env,
       food: foodS ? { x:(foodS.item?.x ?? foodS.center?.x), y:(foodS.item?.y ?? foodS.center?.y) } : null,
@@ -183,16 +168,16 @@ export function step(dt, env){
 
     const option = drivesGetAction(c, 0, ctx);
 
-    // Avoid (Priorität)
+    // Avoid
     let [fx,fy]=[0,0], rem=maxForce;
     const fAvoid=steerWallAvoid(c);
     const avoidW=(CONFIG.physics.wAvoid??1.15)*(0.6+0.7*clamp(hazard,0,1))*(0.9+0.03*g.SCH);
     ({fx,fy,rem}=addBudget(fx,fy,rem,fAvoid[0],fAvoid[1],avoidW));
 
-    // Primärvektor (mit sMin-angepasstem Sammelradius)
+    // Primärvektor
     let fOpt=[0,0]; const slowR=Math.max(CONFIG.physics.slowRadius??120, CONFIG.cell.pairDistance*3);
     if(option==="food" && foodS){
-      let eatR = (CONFIG.food.itemRadius + radiusOf(c) + 2) * sMin;
+      const eatR = (CONFIG.food.itemRadius + radiusOf(c) + 2) * sMin;
       if(foodS.item){
         fOpt = steerSeekArrive(c,{x:foodS.item.x,y:foodS.item.y}, maxSpeed, Math.max(2,eatR-2), slowR);
       }else if(foodS.center){
@@ -206,7 +191,7 @@ export function step(dt, env){
     }
     ({fx,fy,rem}=addBudget(fx,fy,rem,fOpt[0],fOpt[1],1.0));
 
-    // Mini-Separation (auflösungsstabil)
+    // Mini-Separation
     const fSep=quickSeparation(c,neighbors,22*sMin);
     ({fx,fy,rem}=addBudget(fx,fy,rem,fSep[0],fSep[1],0.35));
 
@@ -217,15 +202,17 @@ export function step(dt, env){
     c.pos.x=clamp(c.pos.x+c.vel.x*dt,0,W); c.pos.y=clamp(c.pos.y+c.vel.y*dt,0,H);
     c.vel.x*=0.985; c.vel.y*=0.985;
 
-    // Essen
+    // ===== Essen & Ökonomie-Sample =====
+    let eaten = 0; // aufgenommene Energie dieses Ticks
     {
-      let eatR = (CONFIG.food.itemRadius + radiusOf(c) + 2) * sMin;
+      const eatR = (CONFIG.food.itemRadius + radiusOf(c) + 2) * sMin;
       for(let k=foodItems.length-1;k>=0;k--){
         const f=foodItems[k]; const dx=f.x-c.pos.x, dy=f.y-c.pos.y;
         if(dx*dx+dy*dy<eatR*eatR){
           const take=CONFIG.cell.eatPerSecond*dt, got=Math.min(take,f.amount);
           c.energy=Math.min(capEnergy(c),c.energy+got);
-          f.amount-=got; if(f.amount<=1) foodItems.splice(k,1);
+          f.amount-=got; eaten += got;
+          if(f.amount<=1) foodItems.splice(k,1);
         }
       }
     }
@@ -234,29 +221,33 @@ export function step(dt, env){
     const sp=len(c.vel.x,c.vel.y);
     const baseDrain=CONFIG.cell.baseMetabolic*(0.6+0.1*g.MET)*dt;
     const moveDrain=(CONFIG.physics.moveCostK??0.0006)*(sp*sp)*dt / sMin;
-    c.energy -= baseDrain + moveDrain;
 
-    let dmg=0; if(env?.acid?.enabled&&dEdge<env.acid.range)dmg+=env.acid.dps*dt;
-    if(env?.barb?.enabled&&dEdge<env.barb.range)dmg+=env.barb.dps*dt;
-    if(env?.nano?.enabled)dmg+=env.nano.dps*dt;
-    c.energy -= Math.max(0, dmg * (1 - 0.06*(g.SCH-5)));
+    let envDmg=0; if(env?.acid?.enabled&&dEdge<env.acid.range)envDmg+=env.acid.dps*dt;
+    if(env?.barb?.enabled&&dEdge<env.barb.range)envDmg+=env.barb.dps*dt;
+    if(env?.nano?.enabled)envDmg+=env.nano.dps*dt;
 
-    // Zaun (vereinfacht)
-    if(env?.fence?.enabled && dEdge<env.fence.range){
-      const fxz=(c.pos.x===dEdge)?1:((W-c.pos.x)===dEdge?-1:0);
-      const fyz=(c.pos.y===dEdge)?1:((H-c.pos.y)===dEdge?-1:0);
-      c.vel.x += fxz*(env.fence.impulse||0);
-      c.vel.y += fyz*(env.fence.impulse||0);
-    }
+    c.energy -= baseDrain + moveDrain + Math.max(0, envDmg * (1 - 0.06*(g.SCH-5)));
 
-    // Lernen
+    // Sample in die Ökonomie-Metrik
+    metrics.sampleEnergy({
+      intake: eaten,
+      base:   baseDrain,
+      move:   moveDrain,
+      env:    envDmg,
+      eating: eaten > 0
+    });
+
+    // Lernen/Fenster schließen
     drivesAfterStep(c, dt, ctx);
 
     if(c.energy<=0 || c.age>CONFIG.cell.ageMax) killCell(c.id);
   }
+
+  // Tick-Ende: ~1/s verdichten, inventory übergeben
+  metrics.commitTick(dt, foodItems.length);
 }
 
-/* Ziele (Mate) */
+/* Mate-Ziel */
 function chooseMate(c,sense,arr){
   if(c.cooldown>0) return null; let best=null, bestScore=-1e9, bestD=Infinity;
   for(const o of arr){ if(o===c||o.sex===c.sex||o.cooldown>0) continue;
@@ -266,7 +257,7 @@ function chooseMate(c,sense,arr){
   return best?{cell:best,d:bestD}:null;
 }
 
-/* Hilfsfunktionen */
+/* Hilfen */
 function addBudget(fx,fy,rem,vx,vy,w){ const rx=vx*w, ry=vy*w; const m=Math.hypot(rx,ry); if(m<1e-6||rem<=0) return {fx,fy,rem};
   const allow=Math.min(m,rem), s=allow/m; return {fx:fx+rx*s, fy:fy+ry*s, rem:rem-allow}; }
 function quickSeparation(c,arr,r){ let sx=0,sy=0,n=0, rr=r*r; for(const o of arr){ if(o===c) continue; const dx=c.pos.x-o.pos.x, dy=c.pos.y-o.pos.y;
