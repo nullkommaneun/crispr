@@ -1,60 +1,64 @@
 /* =========================================================
-   CRISPR Genetics Lab - Post-Apocalyptic UI Theme
+   CRISPR Genetics Lab - Post-Apocalyptic UI Theme (v2)
    ========================================================= */
 
 /* ---------- Design Tokens ---------- */
 :root{
   /* Palette – Asche, Stahl, Rost, Neon-Toxin */
-  --bg:          #0b0f12;
+  --bg:          #0a0e11;
   --bg-2:        #0f1419;
   --panel:       #141a20;
-  --panel-top:   #16202a;
+  --panel-top:   #18232c;
   --ink:         #d1e7ff;
-  --ink-dim:     #a9bed1;
+  --ink-dim:     #b1c6d8;
   --muted:       #8aa0b3;
-  --grid:        #1a222a;
-  --vignette:    rgba(0,0,0,.35);
 
-  --accent:      #2ee56a; /* Matrix-Grün für Food / Highlights */
-  --brand:       #27c7ff; /* kaltes Neon-Blau */
-  --rust:        #c26f3a; /* Rost-Orange */
-  --warn:        #ff6b6b; /* Alarmrot */
+  --grid:        #1a222a;
+  --brand:       #27c7ff;   /* kaltes Neon-Blau */
+  --accent:      #2ee56a;   /* Matrix-Grün (Food / Highlights) */
+  --rust:        #c26f3a;   /* Rost-Orange */
+  --amber:       #caa15a;   /* Alt-Messing */
 
   --line-1:      #22303a;
   --line-2:      #2a3a46;
 
-  --topbar-h:    56px;     /* wird per JS dynamisch gesetzt */
+  --warn:        #ff6b6b;
+
+  --topbar-h:    56px;      /* JS setzt dynamisch */
+  --panel-bottom-gap: 88px; /* >>> Abstand zum unteren Rand (sichtbar!) */
   --radius:      12px;
+
   --shadow-1:    0 12px 32px rgba(0,0,0,.45);
   --shadow-2:    0 18px 48px rgba(0,0,0,.55);
 }
 
-/* ---------- Base Reset ---------- */
-*{ box-sizing: border-box; }
+/* ---------- Base / Background ---------- */
+*{ box-sizing:border-box; }
 html,body{
   margin:0; height:100%;
   color:var(--ink);
-  background:
-    radial-gradient(1200px 600px at 50% -10%, rgba(255,255,255,.04), transparent 60%),
-    radial-gradient(900px 500px at -10% 20%, rgba(255,255,255,.03), transparent 55%),
-    radial-gradient(900px 500px at 110% 30%, rgba(255,255,255,.035), transparent 55%),
-    linear-gradient(180deg, #0c1116, #090d10 60%, #070a0d);
   font:14px/1.45 system-ui, Segoe UI, Roboto, Helvetica, Arial;
+  background:
+    radial-gradient(1200px 700px at 50% -5%, rgba(255,255,255,.04), transparent 60%),
+    radial-gradient(1000px 600px at -10% 30%, rgba(194,111,58,.08), transparent 55%),  /* Rost-Schimmer links */
+    radial-gradient(1000px 600px at 110% 20%, rgba(39,199,255,.07), transparent 55%),   /* kaltes Licht rechts */
+    linear-gradient(180deg, #0c1116 0%, #0a0d10 55%, #070a0d 100%);
 }
 
-/* Subtle noise overlay (no image) */
+/* Subtle noise + Scanlines */
 body::before{
   content:"";
   position:fixed; inset:0; z-index:-1;
   background:
-    radial-gradient(40% 60% at 50% 20%, rgba(255,255,255,.03), transparent 60%),
-    repeating-linear-gradient(90deg, rgba(255,255,255,.015), rgba(255,255,255,.015) 1px, transparent 1px, transparent 3px),
-    repeating-linear-gradient(0deg, rgba(255,255,255,.012), rgba(255,255,255,.012) 1px, transparent 1px, transparent 3px);
+    repeating-linear-gradient(0deg, rgba(255,255,255,.018), rgba(255,255,white,.018) 1px, transparent 1px, transparent 3px),
+    repeating-linear-gradient(90deg, rgba(255,255,255,.012), rgba(255,255,255,.012) 1px, transparent 1px, transparent 4px),
+    radial-gradient(40% 60% at 45% 20%, rgba(255,255,255,.03), transparent 60%);
   mix-blend-mode: screen;
   pointer-events:none;
+  opacity:.9;
 }
 
-/* ---------- Controls: Buttons, Inputs ---------- */
+/* ---------- Controls ---------- */
 button{
   appearance:none;
   background:#15222c;
@@ -65,7 +69,7 @@ button{
   cursor:pointer;
   transition:transform .06s ease, background .12s ease, box-shadow .12s ease;
 }
-button:hover{ background:#1a2a35; box-shadow:0 0 0 1px rgba(39,199,255,.15) inset; }
+button:hover{ background:#1a2a35; box-shadow:0 0 0 1px rgba(39,199,255,.18) inset; }
 button:active{ transform:translateY(1px); }
 
 input[type="range"]{
@@ -97,7 +101,6 @@ input[type="range"]::-moz-range-thumb{
   box-shadow:0 0 0 2px rgba(39,199,255,.15);
 }
 
-/* Text Inputs (Search etc.) */
 input[type="text"]{
   background:#0d1419;
   border:1px solid var(--line-2);
@@ -107,7 +110,6 @@ input[type="text"]{
 }
 input[type="text"]::placeholder{ color:#6f8598; }
 
-/* Badges */
 .badge{
   display:inline-block;
   padding:2px 6px;
@@ -117,8 +119,6 @@ input[type="text"]::placeholder{ color:#6f8598; }
   color:#bde1ff;
   font-size:12px;
 }
-
-/* Simple rows */
 .row{ display:flex; align-items:center; justify-content:space-between; gap:8px; margin:8px 0; }
 .row > span:first-child{ color:var(--muted); }
 
@@ -129,7 +129,7 @@ input[type="text"]::placeholder{ color:#6f8598; }
   padding:8px 10px;
   background:
     linear-gradient(180deg, #0f151b, #0b0f12 70%),
-    radial-gradient(1200px 800px at 50% -300px, rgba(194,111,58,.08), transparent 60%);
+    radial-gradient(1000px 500px at 50% -120px, rgba(194,111,58,.10), transparent 60%);
   border-bottom:1px solid #0f1a22;
   box-shadow:0 6px 16px rgba(0,0,0,.35);
 }
@@ -144,9 +144,14 @@ input[type="text"]::placeholder{ color:#6f8598; }
 
 .controls label{ display:flex; gap:6px; align-items:center; color:var(--muted); }
 .controls input[type=range]{ width:120px; }
-.sep{ width:1px; height:22px; background:#253340; margin:0 4px; }
 
-/* ---------- World / Canvas ---------- */
+#topbar::after{
+  content:""; position:absolute; left:0; right:0; bottom:-1px; height:2px;
+  background:linear-gradient(90deg, transparent 0%, rgba(194,111,58,.35) 10%, rgba(39,199,255,.25) 40%, rgba(46,229,106,.25) 60%, transparent 100%);
+  pointer-events:none;
+}
+
+/* ---------- Canvas ---------- */
 #worldWrap{
   display:flex; justify-content:center; align-items:center;
   padding:6px;
@@ -155,30 +160,27 @@ input[type="text"]::placeholder{ color:#6f8598; }
 #world{
   width:100%; max-width:1200px; aspect-ratio:16/10;
   background:
-    radial-gradient(1200px 600px at 50% 30%, rgba(0,0,0,.35), transparent 60%),
-    radial-gradient(900px 500px at 10% 85%, rgba(194,111,58,.06), transparent 55%),
-    radial-gradient(900px 500px at 90% 15%, rgba(39,199,255,.05), transparent 55%),
-    linear-gradient(180deg, rgba(20,30,36,.9), rgba(12,16,20,.9)),
-    /* faint grid */
+    radial-gradient(1200px 650px at 50% 30%, rgba(0,0,0,.38), transparent 60%),
+    radial-gradient(900px 500px at 12% 86%, rgba(194,111,58,.10), transparent 55%),
+    radial-gradient(900px 500px at 88% 18%, rgba(39,199,255,.08), transparent 55%),
+    linear-gradient(180deg, rgba(20,30,36,.92), rgba(12,16,20,.92)),
     repeating-linear-gradient(0deg, transparent, transparent 30px, rgba(255,255,255,.03) 31px),
     repeating-linear-gradient(90deg, transparent, transparent 30px, rgba(255,255,255,.03) 31px);
   border:1px solid #17222c;
   border-radius:10px;
   display:block;
-  box-shadow: inset 0 0 120px rgba(0,0,0,.35);
+  box-shadow:inset 0 0 120px rgba(0,0,0,.35);
 }
 
-/* ---------- Panels: Einheitlich & zentriert ---------- */
+/* ---------- Panels (einheitlich, zentriert, Unterkante frei) ---------- */
 .panel{
   position:fixed;
-  left:50%;
-  transform:translateX(-50%);
+  left:50%; transform:translateX(-50%);
   top: calc(var(--topbar-h) + 16px);
   z-index:3000;
 
   width: min(820px, 96vw);
-  max-height: calc(100vh - var(--topbar-h) - 32px);
-
+  max-height: calc(100vh - var(--topbar-h) - var(--panel-bottom-gap)); /* <<< Abstand nach unten */
   background:var(--panel);
   border:1px solid var(--line-1);
   border-radius:var(--radius);
@@ -192,7 +194,9 @@ input[type="text"]::placeholder{ color:#6f8598; }
   position:sticky; top:0; z-index:1;
   display:flex; align-items:center; justify-content:space-between;
   gap:12px; padding:12px 14px 10px 14px;
-  background: linear-gradient(180deg, var(--panel-top), var(--panel));
+  background:
+    linear-gradient(180deg, var(--panel-top), var(--panel)),
+    repeating-linear-gradient(135deg, rgba(194,111,58,.08) 0 8px, transparent 8px 16px); /* feine Warnstreifen */
   border-bottom:1px solid var(--line-1);
 }
 .panel-header h2{ margin:0; font-size:16px; letter-spacing:.2px; }
@@ -221,7 +225,8 @@ input[type="text"]::placeholder{ color:#6f8598; }
 #editorPanel .editor-list{
   min-height:0; overflow:auto;
   border:1px solid var(--line-2);
-  border-radius:8px; background:#0d1419;
+  border-radius:8px;
+  background:#0d1419;
 }
 #editorPanel .editor-list{ border-color:#253542; padding:0; }
 #editorPanel .editor-list .list{ padding:8px; }
@@ -232,7 +237,10 @@ input[type="text"]::placeholder{ color:#6f8598; }
   width:100%; background:#0b1217; border:1px solid #2a3a46; color:var(--ink);
   border-radius:8px; padding:8px 10px;
 }
-#editorPanel .editor-list > div:first-child{ position:sticky; top:0; background:var(--panel); padding:8px; border-bottom:1px solid var(--line-1); }
+#editorPanel .editor-list > div:first-child{
+  position:sticky; top:0; background:var(--panel);
+  padding:8px; border-bottom:1px solid var(--line-1);
+}
 
 /* Listenitems */
 .cellItem{
@@ -244,7 +252,7 @@ input[type="text"]::placeholder{ color:#6f8598; }
 /* ---------- Error Overlay ---------- */
 #errorOverlay{
   position:fixed; inset:0; z-index:4000;
-  background:rgba(0,0,0,.55);
+  background:rgba(0,0,0,.58);
   display:none; align-items:center; justify-content:center;
 }
 #errorOverlay:not(.hidden){ display:flex; }
@@ -271,7 +279,7 @@ input[type="text"]::placeholder{ color:#6f8598; }
 *::-webkit-scrollbar-thumb:hover{ background: linear-gradient(180deg, #2c3f4b, #263641); }
 *::-webkit-scrollbar-track{ background: #0b1116; border-radius:999px; }
 
-/* ---------- Tiny Utility Accents ---------- */
+/* ---------- Utility Accents ---------- */
 .highlight{
   color:var(--accent);
   text-shadow:0 0 10px rgba(46,229,106,.35);
@@ -281,13 +289,7 @@ input[type="text"]::placeholder{ color:#6f8598; }
   text-shadow:0 0 12px rgba(39,199,255,.35);
 }
 
-/* ---------- Small Glow for Food (used by renderer rectangles) ---------- */
-.food-glow{
-  filter: drop-shadow(0 0 6px rgba(46,229,106,.45))
-          drop-shadow(0 0 14px rgba(46,229,106,.25));
-}
-
-/* ---------- Backdrop for Panels (optional, attach via JS if needed) ---------- */
+/* ---------- Optional Backdrop (wenn per JS hinzugefügt) ---------- */
 .backdrop{
   position:fixed; inset:0; z-index:2999;
   background: radial-gradient(1200px 800px at 50% 10%, rgba(0,0,0,.55), rgba(0,0,0,.75));
@@ -304,16 +306,9 @@ input[type="text"]::placeholder{ color:#6f8598; }
   #editorPanel .editor-detail{ order:2; }
 }
 
-/* ---------- Theming the Topbar toggles ---------- */
-label[title*="Performance"]{
+/* ---------- Perf-Toggle Badge ---------- */
+label[title*="Perf"]{
   padding:2px 6px; border-radius:8px; border:1px solid var(--line-2);
   background:#121a21;
 }
-label[title*="Performance"] input{ margin-right:6px; }
-
-/* ---------- Subtle rust accent line under topbar ---------- */
-#topbar::after{
-  content:""; position:absolute; left:0; right:0; bottom:-1px; height:2px;
-  background:linear-gradient(90deg, transparent 0%, rgba(194,111,58,.35) 8%, rgba(39,199,255,.25) 35%, rgba(46,229,106,.25) 65%, transparent 100%);
-  pointer-events:none;
-}
+label[title*="Perf"] input{ margin-right:6px; }
