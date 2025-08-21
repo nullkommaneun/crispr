@@ -3,16 +3,20 @@ import { getCells, createCell } from "./entities.js";
 import { emit } from "./event.js";
 import { CONFIG } from "./config.js";
 
-let mutationRate = 0.05; // 5% (Slider gibt 0..30 -> wir teilen durch 100)
+let mutationRate = 0.05; // 5% (Slider 0..30 -> /100)
 
 export function setMutationRate(pct){
   const p = Math.max(0, Number(pct) || 0) / 100;
   mutationRate = p;
 }
 
+export function getMutationRate(){  // <- für Diagnose-Panel
+  return mutationRate;
+}
+
 function mixGene(a, b){
   const base = (a + b) / 2;
-  // Mutation im Bereich ~±3 bei 100% Slider
+  // Mutation bis ~±3 bei 100% Slider
   const mut = (Math.random() * 2 - 1) * 3 * mutationRate;
   return Math.max(1, Math.min(10, Math.round(base + mut)));
 }
@@ -54,7 +58,7 @@ export function step(dt){
         A.cooldown = Math.max(1, CONFIG.cell.cooldown * (11 - A.genome.MET) / 10);
         B.cooldown = Math.max(1, CONFIG.cell.cooldown * (11 - B.genome.MET) / 10);
 
-        // Eltern-IDs für Drives-Lernen mitgeben
+        // Eltern-IDs für Drives-Lernen
         emit("cells:born", { child, parents: [A.id, B.id] });
       }
     }
