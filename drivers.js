@@ -1,6 +1,6 @@
 // drives.js – Dueling-Policy (Food/Mate/Wander) mit Online-Lernen,
 // Stamm-Bias, distanzbasiertem Entscheidungsfenster, Hunger-Failsafe
-// und Diagnose-Trace.
+// und Diagnose-Trace – *robust gegen Single-Option-Fenster*.
 
 import { on } from "./event.js";
 import { CONFIG } from "./config.js";
@@ -30,7 +30,7 @@ let w      = loadJSON(LS_W)    ?? initW();
 let bStamm = loadJSON(LS_B)    ?? {};
 let misc   = loadJSON(LS_MISC) ?? { duels:0, wins:0 };
 
-const mem = new Map();  // cellId -> {tAccum,tMax,a,b,chosen,e0,forced,ctx0,mated}
+const mem = new Map();  // cellId -> {tAccum,tMax,a,b,chosen,e0,forced,ctx0,mated,single}
 let TRACE_ON = true;
 const TRACE_MAX = 80;
 const trace = [];
@@ -116,21 +116,28 @@ export function getAction(cell, _t, ctx){
     feats[o]=featuresForOption(cell,ctx,o);
     scores[o]=dot(w,feats[o]) + (bStamm[String(cell.stammId??0)]||0);
   }
+  // Nur gültige Optionen vergleichen
   const sorted=opts.slice().sort((a,b)=>scores[b]-scores[a]);
 
-  let a=sorted[0], b=sorted[1] ?? (sorted[0]==="food"?"mate":"food");
-  let p=sigmoid((scores[a]||0)-(scores[b]||0));
-  let chosen=(p>=0.5)?a:b, forced=false;
+  let a=sorted[0], b=sorted[1] ?? sorted[0];   // << wenn nur 1 Option: b=a
+  let single = (a===b);
+  let p = single ? 0.5 : sigmoid((scores[a]||0)-(scores[b]||0));
+  let chosen = single ? a : (p>=0.5? a : b);
+  let forced=false;
 
   // Hunger-Failsafe
   const cap=120*(1+0.08*((cell.genome?.GRÖ??5)-5));
   const eFrac=clamp(cell.energy/cap,0,1);
-  if(eFrac<HUNGER_GATE && C.food){ chosen="food"; forced=true; if(b==="food") b=sorted.find(o=>o!=="food")||"wander"; p=0.75; }
+  if(eFrac<HUNGER_GATE && C.food){
+    chosen="food"; forced=true;
+    if(single) { b = "food"; } // formal
+    p=0.75;
+  }
 
   // Fenster-Dauer schätzen
   let tMax = 1.0;
   if(chosen==="food" && ctx.foodDist!=null){
-    const vEst = (CONFIG.cell.baseSpeed||35) * (0.7 + 0.08*(cell.genome?.TEM??5)) * 0.60; // konservativ
+    const vEst = (CONFIG.cell.baseSpeed||35) * (0.7 + 0.08*(cell.genome?.TEM??5)) * 0.60;
     tMax = clamp(ctx.foodDist / Math.max(1,vEst) + 0.35, WIN_MIN, WIN_MAX);
   }else if(chosen==="mate" && ctx.mateDist!=null){
     const vEst = (CONFIG.cell.baseSpeed||35) * (0.7 + 0.08*(cell.genome?.TEM??5)) * 0.60;
@@ -141,17 +148,29 @@ export function getAction(cell, _t, ctx){
     tAccum:0, tMax,
     a,b,chosen,e0:cell.energy,forced,
     ctx0:{ foodSeen: ctx.foodDist!=null, foodDist0: ctx.foodDist??null },
-    mated:false
+    mated:false, single
   });
   return chosen;
 }
 
-/** Nach jedem Tick: dt aufs Fenster, Reward = ΔE + K_DIST·distGain */
+/** Nach jedem Tick: dt aufs Fenster, Reward = ΔE + K_DIST·distGain (nur bei 2 Optionen) */
 export function afterStep(cell, dt, ctx){
   const m=mem.get(cell.id); if(!m) return;
   m.tAccum += dt;
 
   const e1=cell.energy, dE=e1 - m.e0;
+
+  // Nur lernrelevant, wenn wirklich zwei Optionen zur Wahl standen
+  if(m.single){
+    // rein „wander“-Fenster: nicht gegen wander „bestrafen“
+    if(m.tAccum >= (m.tMax??1) || Math.abs(dE)>=EARLY_DE_ABS || m.mated){
+      traceIt(m, cell, ctx, dE, /*winner=*/m.chosen, /*scoreDelta=*/0);
+      mem.delete(cell.id);
+    }
+    return;
+  }
+
+  // Distanz-Gewinn zu Food (wenn Food am Anfang sichtbar war)
   let distGain=0;
   if(m.ctx0.foodSeen){
     const d0 = (m.ctx0.foodDist0!=null)?m.ctx0.foodDist0:Infinity;
@@ -186,22 +205,11 @@ export function afterStep(cell, dt, ctx){
   misc.duels++; if(shaped>=0 || m.mated) misc.wins++; save();
 
   // Trace
-  if(TRACE_ON){
-    const scA=dot(w,xa), scB=dot(w,xb);
-    trace.push({
-      dur:m.tAccum, id:cell.id, name:cell.name, st:cell.stammId,
-      opt:m.chosen, forced:m.forced, p,
-      e0:m.e0, e1, dE:shaped,
-      dFoodNow: ctx.foodDist ?? null, dMate: ctx.mateDist ?? null, haz: ctx.hazard ?? 0,
-      win:winner, scoreDelta:(scA-scB)
-    });
-    if(trace.length>TRACE_MAX) trace.shift();
-  }
-
+  traceIt(m, cell, ctx, shaped, winner, dot(w,xa)-dot(w,xb));
   mem.delete(cell.id);
 }
 
-/* ===== Feature-Engineering ===== */
+/* ===== Feature-Engineering / Helpers ===== */
 function featuresForOption(cell, ctx, option){
   const g=cell.genome;
   const z=(v)=>(v-5)/5;
@@ -214,4 +222,16 @@ function featuresForOption(cell, ctx, option){
   const neigh=clamp((ctx.neighCount??0)/8,0,2);
   const isFood = option==="food"?1:0, isMate=option==="mate"?1:0;
   return [1.0,z(g.EFF),z(g.TEM),z(g.GRÖ),z(g.SCH),-z(g.MET), eFrac, -ageN, -hazard, dFood, dMate, neigh, isFood, isMate];
+}
+
+function traceIt(m, cell, ctx, shaped, winner, scoreDelta){
+  if(!TRACE_ON) return;
+  trace.push({
+    dur:m.tAccum, id:cell.id, name:cell.name, st:cell.stammId,
+    opt:m.chosen, forced:m.forced, p:0, // p der Δ-Features ist hier nicht aussagekräftig
+    e0:m.e0, e1:cell.energy, dE:shaped,
+    dFoodNow: ctx.foodDist ?? null, dMate: ctx.mateDist ?? null, haz: ctx.hazard ?? 0,
+    win:winner, scoreDelta
+  });
+  if(trace.length>TRACE_MAX) trace.shift();
 }
