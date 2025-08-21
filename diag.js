@@ -1,4 +1,4 @@
-// diag.js – Diagnose-Panel mit Codes für Drives (DRI) & Genetics (GEN)
+// diag.js – Diagnose-Panel: Drives & Genetics Codes + Metriken
 import { on } from "./event.js";
 import { getCells, getStammCounts } from "./entities.js";
 import { getDrivesSnapshot } from "./drives.js";
@@ -6,15 +6,21 @@ import { getMutationRate } from "./reproduction.js";
 
 const panel = document.getElementById("diagPanel");
 
-/* ------- util: crc32 + base64 ------- */
+/* === Utility: CRC32 + Base64 === */
 function crc32(str){
   let c=~0; for(let i=0;i<str.length;i++){ c ^= str.charCodeAt(i);
     for(let k=0;k<8;k++) c = (c>>>1) ^ (0xEDB88320 & (-(c&1))); }
   return (~c>>>0);
 }
 function b64encode(str){ return btoa(unescape(encodeURIComponent(str))); }
+function makeCode(prefix, obj){
+  const json = JSON.stringify(obj);
+  const b64  = b64encode(json);
+  const crc  = crc32(json).toString(16).padStart(8,"0");
+  return `${prefix}-${crc}-${b64}`;
+}
 
-/* ------- births buffer (für Genetics) ------- */
+/* === Geburten-Puffer für Genetics === */
 const births = [];
 on("cells:born", (payload)=>{
   births.push({
@@ -29,17 +35,16 @@ on("cells:born", (payload)=>{
   if(births.length > 50) births.shift();
 });
 
-/* ------- UI helpers ------- */
+/* === UI Helpers === */
 function buildHeader(title){
   const h = document.createElement("div");
   h.className = "panel-header";
   const t = document.createElement("h2"); t.textContent = title;
   const x = document.createElement("button"); x.className="closeX"; x.innerHTML="&times;";
   x.onclick = ()=> panel.classList.add("hidden");
-  h.append(t, x);
-  return h;
+  h.append(t, x); return h;
 }
-function card(title){
+function section(title){
   const box = document.createElement("div");
   box.style.border = "1px solid #22303a";
   box.style.borderRadius = "8px";
@@ -48,98 +53,75 @@ function card(title){
   const head = document.createElement("div");
   head.style.display="flex"; head.style.justifyContent="space-between"; head.style.alignItems="center";
   const h = document.createElement("b"); h.textContent = title;
-  head.append(h);
-  box.append(head);
+  head.append(h); box.append(head);
   return { box, head };
 }
-function monoField(value){
+function row(label, valueHTML){
+  const r = document.createElement("div"); r.className="row";
+  const l = document.createElement("span"); l.textContent = label;
+  const v = document.createElement("span"); v.innerHTML = valueHTML;
+  r.append(l,v); return r;
+}
+function codeField(value){
   const wrap = document.createElement("div");
-  wrap.style.display="grid"; wrap.style.gridTemplateColumns="1fr auto"; wrap.style.gap="8px"; wrap.style.marginTop="6px";
-  const area = document.createElement("textarea");
-  area.value = value; area.readOnly = true;
-  area.style.width="100%"; area.style.height="56px";
-  area.style.background = "#0b1217";
-  area.style.border = "1px solid #2a3a46";
-  area.style.borderRadius = "8px";
-  area.style.color = "#d8f0ff";
-  area.style.font = "12px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
+  wrap.style.display="grid";
+  wrap.style.gridTemplateColumns="1fr auto";
+  wrap.style.gap="8px"; wrap.style.marginTop="6px";
+  const ta = document.createElement("textarea");
+  ta.readOnly = true; ta.value = value;
+  ta.style.width="100%"; ta.style.height="56px";
+  ta.style.background="#0b1217"; ta.style.border="1px solid #2a3a46";
+  ta.style.borderRadius="8px"; ta.style.color="#d8f0ff";
+  ta.style.font="12px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
   const btn = document.createElement("button");
   btn.textContent="Code kopieren";
-  btn.onclick = async()=>{ try{ await navigator.clipboard.writeText(area.value); btn.textContent="Kopiert ✓"; setTimeout(()=>btn.textContent="Code kopieren", 1200);}catch{} };
-  wrap.append(area, btn);
+  btn.onclick = async()=>{ try{ await navigator.clipboard.writeText(ta.value); btn.textContent="Kopiert ✓"; setTimeout(()=>btn.textContent="Code kopieren", 1200);}catch{} };
+  wrap.append(ta, btn);
   return wrap;
 }
-function kv(label, value){
-  const row = document.createElement("div"); row.className = "row";
-  const l = document.createElement("span"); l.textContent = label;
-  const r = document.createElement("span"); r.innerHTML = value;
-  row.append(l, r);
-  return row;
-}
-function makeCode(prefix, obj){
-  const json = JSON.stringify(obj);
-  const b64  = b64encode(json);
-  const crc  = crc32(json).toString(16).padStart(8,"0");
-  return `${prefix}-${crc}-${b64}`;
-}
 
-/* ------- snapshots ------- */
+/* === Snapshots === */
+function drivesCode(){
+  const snap = getDrivesSnapshot(); // {misc,w,bStamm,cfg,recent}
+  const code = makeCode("MDC-DRI", { v:1, kind:"drives", ts:Date.now(), ...snap });
+  return { snap, code };
+}
 function geneticsSnapshot(){
   const cells = getCells();
+  const sample = cells.length ? cells : births.map(b=> ({ genome:b.child?.genome })).filter(x=>!!x.genome);
   const stamm = getStammCounts();
   const mu = getMutationRate(); // 0..1
 
   const genes = ["TEM","GRÖ","EFF","SCH","MET"];
-  const agg = {};
-  for(const g of genes){ agg[g] = { sum:0, sum2:0, n:0 }; }
-  for(const c of cells){
+  const agg = {}; for(const g of genes) agg[g]={sum:0,sum2:0,n:0};
+
+  for(const c of sample){
     for(const g of genes){
-      const v = c.genome[g];
-      agg[g].sum += v; agg[g].sum2 += v*v; agg[g].n++;
+      const v = c.genome[g]; agg[g].sum+=v; agg[g].sum2+=v*v; agg[g].n++;
     }
   }
-  const stats = {};
+  const stats={};
   for(const g of genes){
-    const a = agg[g]; const n = Math.max(1,a.n);
-    const mean = a.sum / n;
-    const var_ = Math.max(0, a.sum2/n - mean*mean);
-    const sd = Math.sqrt(var_);
-    stats[g] = { mean: Math.round(mean*100)/100, sd: Math.round(sd*100)/100 };
+    const a=agg[g]; const n=Math.max(1,a.n);
+    const mean=a.sum/n; const var_=Math.max(0, a.sum2/n - mean*mean);
+    stats[g]={ mean:Math.round(mean*100)/100, sd:Math.round(Math.sqrt(var_)*100)/100 };
   }
-
-  const snap = {
-    v:1, kind:"genetics", ts: Date.now(),
-    counts: { cells: cells.length, stamm },
-    mutationRate: mu,      // 0..1
-    stats,                 // {TEM:{mean,sd}, ...}
-    lastBirths: births.slice(-15) // kompaktes Geburtenfenster
-  };
-  return snap;
-}
-
-function drivesCode(){
-  const dri = getDrivesSnapshot(); // {misc,w,bStamm,cfg,recent}
   return {
-    code: makeCode("MDC-DRI", {
-      v:1, kind:"drives", ts: Date.now(),
-      misc: dri.misc, w: dri.w, bStamm: dri.bStamm, cfg: dri.cfg,
-      recent: dri.recent
-    }),
-    snap: dri
+    v:1, kind:"genetics", ts:Date.now(),
+    counts:{ cells: cells.length, stamm },
+    mutationRate: mu,
+    stats,
+    lastBirths: births.slice(-15)
   };
 }
 function geneticsCode(){
-  const gen = geneticsSnapshot();
-  return {
-    code: makeCode("MDC-GEN", gen),
-    snap: gen
-  };
+  const snap = geneticsSnapshot();
+  return { snap, code: makeCode("MDC-GEN", snap) };
 }
 
-/* ------- Public ------- */
+/* === Public === */
 export function openDiagPanel(){
-  panel.innerHTML = "";
-  panel.classList.remove("hidden");
+  panel.innerHTML=""; panel.classList.remove("hidden");
   panel.append(buildHeader("Diagnose"));
 
   const body = document.createElement("div");
@@ -148,64 +130,65 @@ export function openDiagPanel(){
 
   // Drives
   {
-    const { box } = card("Drives (Entscheidungslogik)");
-    const dri = drivesCode();
-    const wr = (dri.snap.misc.duels ? Math.round(100 * dri.snap.misc.wins / dri.snap.misc.duels) : 0);
-    const pools = Object.keys(dri.snap.bStamm||{}).length;
+    const { box } = section("Drives (Entscheidungslogik)");
+    const { snap, code } = drivesCode();
+    const wr = snap.misc.duels ? Math.round(100*snap.misc.wins/snap.misc.duels) : 0;
+    const pools = Object.keys(snap.bStamm||{}).length;
 
     box.append(
-      kv("Duels / Win-Rate", `<b>${dri.snap.misc.duels}</b> · <b>${wr}%</b>`),
-      kv("Pools (Stämme)", `${pools}`),
-      kv("Top-Bias", topBiasHTML(dri.snap.bStamm))
+      row("Duels / Win-Rate", `<b>${snap.misc.duels}</b> · <b>${wr}%</b>`),
+      row("Pools (Stämme)", `${pools}`),
+      row("Top-Bias", topBiasHTML(snap.bStamm))
     );
-    box.append(monoField(dri.code));
+    box.append(codeField(code));
     body.append(box);
   }
 
   // Genetics
   {
-    const { box } = card("Genetics (Population / Vererbung)");
-    const gen = geneticsCode();
-    const genes = gen.snap.stats;
+    const { box } = section("Genetics (Population / Vererbung)");
+    const { snap, code } = geneticsCode();
+    const kStämme = Object.keys(snap.counts.stamm||{}).length;
+
     box.append(
-      kv("Zellen / Stämme", `<b>${gen.snap.counts.cells}</b> · ${Object.keys(gen.snap.counts.stamm).length}`),
-      kv("Mutation", `${Math.round(gen.snap.mutationRate*100)}%`),
-      miniGeneTable(genes)
+      row("Zellen / Stämme", `<b>${snap.counts.cells}</b> · ${kStämme}`),
+      row("Mutation", `${Math.round(snap.mutationRate*100)}%`),
+      miniGeneStats(snap.stats)
     );
-    box.append(monoField(gen.code));
+    box.append(codeField(code));
     body.append(box);
   }
 
-  // Actions
+  // Footer
   const footer = document.createElement("div");
   footer.style.display="flex"; footer.style.gap="8px"; footer.style.marginTop="8px";
-  const copyAll = document.createElement("button");
-  copyAll.textContent="Beide Codes kopieren";
-  copyAll.onclick = async()=>{
+  const btnAll = document.createElement("button");
+  btnAll.textContent = "Beide Codes kopieren";
+  btnAll.onclick = async()=>{
     const dri = drivesCode().code;
     const gen = geneticsCode().code;
-    try{ await navigator.clipboard.writeText(`${dri}\n${gen}`); copyAll.textContent="Kopiert ✓"; setTimeout(()=>copyAll.textContent="Beide Codes kopieren", 1200);}catch{}
+    try{ await navigator.clipboard.writeText(`${dri}\n${gen}`); btnAll.textContent="Kopiert ✓"; setTimeout(()=>btnAll.textContent="Beide Codes kopieren",1200);}catch{}
   };
-  footer.append(copyAll);
+  footer.append(btnAll);
   body.append(footer);
 }
 
-/* ------- small formatters ------- */
-function topBiasHTML(biasMap){
-  if(!biasMap) return "–";
-  const arr = Object.entries(biasMap).map(([st,v])=>({st: Number(st), v}));
+/* === Formatierer === */
+function topBiasHTML(map){
+  if(!map) return "–";
+  const arr = Object.entries(map).map(([st,v])=>({st:Number(st),v}));
   arr.sort((a,b)=>Math.abs(b.v)-Math.abs(a.v));
-  const top = arr.slice(0,4).map(x=>`S${x.st}:${x.v>0?"+":""}${(Math.round(x.v*100)/100)}`).join(" · ");
-  return top || "–";
+  return (arr.slice(0,4).map(x=>`S${x.st}:${x.v>0?"+":""}${(Math.round(x.v*100)/100)}`).join(" · ")) || "–";
 }
-function miniGeneTable(stats){
+function miniGeneStats(stats){
   const wrap=document.createElement("div");
   wrap.style.borderTop="1px solid #22303a"; wrap.style.marginTop="6px"; wrap.style.paddingTop="6px";
-  const tbl=document.createElement("div"); tbl.style.display="grid"; tbl.style.gridTemplateColumns="auto auto auto auto auto"; tbl.style.gap="6px";
+  const grid=document.createElement("div");
+  grid.style.display="grid"; grid.style.gridTemplateColumns="repeat(5, minmax(80px, 1fr))"; grid.style.gap="6px";
   for(const g of ["TEM","GRÖ","EFF","SCH","MET"]){
-    const cell=document.createElement("div");
-    cell.innerHTML=`<span class="badge">${g}</span><div class="muted">μ ${stats[g].mean} · σ ${stats[g].sd}</div>`;
-    tbl.append(cell);
+    const c=document.createElement("div");
+    c.innerHTML = `<span class="badge">${g}</span><div class="muted">μ ${stats[g].mean} · σ ${stats[g].sd}</div>`;
+    grid.append(c);
   }
-  wrap.append(tbl); return wrap;
+  wrap.append(grid); return wrap;
 }

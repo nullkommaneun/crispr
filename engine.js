@@ -11,7 +11,7 @@ import { initTicker, setPerfMode as tickerPerf, pushFrame } from "./ticker.js";
 import { emit, on } from "./event.js";
 import { openDummyPanel, handleCanvasClickForDummy } from "./dummy.js";
 import { initDrives } from "./drives.js";
-import { openDiagPanel } from "./diag.js";   // <<< NEU
+import { openDiagPanel } from "./diag.js";   // Diagnose-Panel
 
 let running = false;
 let timescale = 1;
@@ -21,8 +21,8 @@ const SPEED_STEPS = [1, 5, 10, 50];
 let speedIdx = 0;
 
 let lastTime = 0, acc = 0;
-const fixedDt = 1 / 60;           // fixer Simulationsschritt (s)
-let simTime = 0;                   // Sim-Zeit
+const fixedDt = 1 / 60;
+let simTime = 0;
 
 function resizeCanvas() {
   const canvas = document.getElementById("world");
@@ -44,7 +44,7 @@ function bindUI() {
   document.getElementById("btnEditor").onclick = ()=>{ breadcrumb("ui:btn","Editor"); openEditor(); };
   document.getElementById("btnEnv").onclick   = ()=>{ breadcrumb("ui:btn","Umwelt"); openEnvPanel(); };
   document.getElementById("btnDummy").onclick = ()=>{ breadcrumb("ui:btn","Dummy"); openDummyPanel(); };
-  document.getElementById("btnDiag").onclick  = ()=>{ breadcrumb("ui:btn","Diagnose"); openDiagPanel(); }; // <<< NEU
+  document.getElementById("btnDiag").onclick  = ()=>{ breadcrumb("ui:btn","Diagnose"); openDiagPanel(); };
 
   const mu = document.getElementById("mutation");
   mu.oninput = ()=> setMutationRate(parseFloat(mu.value));

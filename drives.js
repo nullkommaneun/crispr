@@ -1,6 +1,6 @@
 // drives.js – Dueling-Policy (Food/Mate/Wander) mit Online-Lernen,
-// Stamm-Bias, distanzbasiertem Entscheidungsfenster, Hunger-Failsafe
-// und Diagnose-Trace – robust gegen Single-Option-Fenster.
+// Stamm-Bias, distanzbasiertem Entscheidungsfenster, Hunger-Failsafe,
+// Single-Option-Schutz und Diagnose-Trace.
 
 import { on } from "./event.js";
 import { CONFIG } from "./config.js";
@@ -10,25 +10,25 @@ const LS_W    = "drives_w_v1";
 const LS_B    = "drives_bias_v1";
 const LS_MISC = "drives_misc_v1";
 
-const LR        = 0.10;   // Lernrate
-const L2        = 1e-4;   // L2-Regularisierung
-const MAX_ABS_W = 5;
-const LR_BIAS   = 0.02;
-const BIAS_CLIP = 2.0;
+const LR          = 0.10;  // Lernrate
+const L2          = 1e-4;  // L2-Regularisierung
+const MAX_ABS_W   = 5;     // |w|-Clipping
+const LR_BIAS     = 0.02;
+const BIAS_CLIP   = 2.0;
 
-const WIN_MIN   = 0.70;   // s
-const WIN_MAX   = 2.00;   // s
-const EPS       = 0.10;   // ε-Exploration
-const HUNGER_GATE = 0.45; // Energie/Cap < 45% -> Food erzwingen
-const EARLY_DE_ABS = 2.0; // sofort schließen bei |ΔE| >= 2
-const K_DIST    = 0.60;   // Reward: Distanzgewinn→Energie-Äquivalent
+const WIN_MIN     = 0.70;  // s
+const WIN_MAX     = 2.00;  // s
+const EPS         = 0.10;  // ε-Exploration
+const HUNGER_GATE = 0.45;  // eFrac < 45% -> Food erzwingen
+const EARLY_DE_ABS= 2.0;   // sofort schließen bei |ΔE| >= 2
+const K_DIST      = 0.60;  // Reward: Distanzgewinn→Energie-Äquivalent
 
 /* ===== State ===== */
 let w      = loadJSON(LS_W)    ?? initW();
 let bStamm = loadJSON(LS_B)    ?? {};
 let misc   = loadJSON(LS_MISC) ?? { duels:0, wins:0 };
 
-const mem = new Map();  // cellId -> {tAccum,tMax,a,b,chosen,e0,forced,ctx0,mated,single}
+const mem = new Map(); // cellId -> {tAccum,tMax,a,b,chosen,e0,forced,ctx0,mated,single}
 let TRACE_ON = true;
 const TRACE_MAX = 80;
 const trace = [];
@@ -38,6 +38,7 @@ const clamp = (x,a,b)=> Math.max(a, Math.min(b,x));
 const sigmoid = (z)=> 1/(1+Math.exp(-z));
 const dot = (a,b)=>{ let s=0; for(let i=0;i<a.length;i++) s+=a[i]*b[i]; return s; };
 const sub = (a,b)=> a.map((v,i)=>v-b[i]);
+const rnd2 = (n)=> Math.abs(n)<1e-6?0:Math.round(n*100)/100;
 
 function save(){
   try{ localStorage.setItem(LS_W, JSON.stringify(w)); }catch{}
@@ -49,22 +50,23 @@ function loadJSON(key){
   catch{ return null; }
 }
 function initW(){
-  // φ-Länge 14
+  // φ-Reihenfolge: [Bias, +EFF, +TEM, +GRÖ, +SCH,  +MET(als z), +Energie, -Alter, -Hazard, distFood, distMate, neigh, 1{Food}, 1{Mate}]
+  // Wichtig: MET-Feature ist POSITIV z(MET) — Gewicht bleibt NEGATIV, damit hoher Verbrauch bestraft wird.
   return [
-    0.0,  // Bias
-    1.0,  // +EFF
-    0.7,  // +TEM
-    0.4,  // +GRÖ
-    0.3,  // +SCH
-   -0.9,  // -MET
-    0.8,  // +Energie
-   -0.4,  // -Alter
-   -0.6,  // -Hazard
-   -0.6,  // distFood
-   -0.4,  // distMate
-    0.1,  // neighDensity
-    0.0,  // oneHot(Food)
-    0.0   // oneHot(Mate)
+    0.0,   // Bias
+    1.0,   // +EFF
+    0.7,   // +TEM
+    0.4,   // +GRÖ
+    0.3,   // +SCH
+   -0.9,   //  z(MET)  (negatives Gewicht = Bestrafung hoher MET)
+    0.8,   // +Energie
+   -0.4,   // -Alter
+   -0.6,   // -Hazard
+   -0.8,   // distFood (höherer Abstand schlechter)
+   -0.4,   // distMate
+    0.1,   // neighDensity
+    2.0,   // isFood (starke Präferenz)
+    0.0    // isMate
   ];
 }
 
@@ -76,7 +78,7 @@ on("cells:born", (payload)=>{
 
 /* ===== Public API ===== */
 export function initDrives(){ /* NOP */ }
-export function setTracing(on){ TRACE_ON=!!on; }
+export function setTracing(on){ TRACE_ON = !!on; }
 export function getTraceText(lastN=24){
   const arr = trace.slice(-lastN);
   const wr  = misc.duels ? Math.round(100*misc.wins/misc.duels) : 0;
@@ -111,7 +113,7 @@ export function getAction(cell, _t, ctx){
   const sorted=opts.slice().sort((a,b)=>scores[b]-scores[a]);
 
   let a=sorted[0], b=sorted[1] ?? sorted[0];
-  let single = (a===b);
+  const single = (a===b);
   let p = single ? 0.5 : sigmoid((scores[a]||0)-(scores[b]||0));
   let chosen = single ? a : (p>=0.5? a : b);
   let forced=false;
@@ -121,7 +123,7 @@ export function getAction(cell, _t, ctx){
   const eFrac=clamp(cell.energy/cap,0,1);
   if(eFrac<HUNGER_GATE && C.food){ chosen="food"; forced=true; if(single) b="food"; p=0.75; }
 
-  // Fenster-Dauer schätzen
+  // Fenster-Dauer schätzen (distanzbasiert)
   let tMax = 1.0;
   if(chosen==="food" && ctx.foodDist!=null){
     const vEst = (CONFIG.cell.baseSpeed||35) * (0.7 + 0.08*(cell.genome?.TEM??5)) * 0.60;
@@ -189,6 +191,14 @@ export function afterStep(cell, dt, ctx){
   const st=String(cell.stammId??0);
   bStamm[st]=clamp((bStamm[st]||0)+LR_BIAS*(y-p), -BIAS_CLIP, BIAS_CLIP);
 
+  // Bias-Decay + Zero-Center (stabilisiert Skala)
+  const keys = Object.keys(bStamm);
+  if(keys.length){
+    for(const k of keys) bStamm[k] *= 0.999; // leichter Decay
+    const mean = keys.reduce((s,k)=> s + bStamm[k], 0) / keys.length;
+    for(const k of keys) bStamm[k] -= mean;  // re-centern
+  }
+
   misc.duels++; if(shaped>=0 || m.mated) misc.wins++; save();
 
   tracePush(m, cell, ctx, shaped, winner, dot(w,xa)-dot(w,xb));
@@ -219,12 +229,15 @@ function featuresForOption(cell, ctx, option){
   const ageN=clamp(cell.age/120,0,1);
   const hazard=clamp(ctx.hazard??0,0,1);
   const normD=(d)=>{ if(d==null) return 1; const base=Math.max(1,Math.min(ctx.worldMin??512,1024)); return clamp(d/base,0,1); };
+
+  const metZ = z(g.MET); // <<< MET als positives Feature; Gewicht negativ
+
   const dFood=normD(ctx.foodDist), dMate=normD(ctx.mateDist);
   const neigh=clamp((ctx.neighCount??0)/8,0,2);
   const isFood = option==="food"?1:0, isMate=option==="mate"?1:0;
-  return [1.0,z(g.EFF),z(g.TEM),z(g.GRÖ),z(g.SCH),-z(g.MET), eFrac, -ageN, -hazard, dFood, dMate, neigh, isFood, isMate];
+
+  return [1.0, z(g.EFF), z(g.TEM), z(g.GRÖ), z(g.SCH), metZ, eFrac, -ageN, -hazard, dFood, dMate, neigh, isFood, isMate];
 }
-function rnd2(n){ return Math.abs(n)<1e-6?0:Math.round(n*100)/100; }
 function tracePush(m, cell, ctx, shaped, winner, scoreDelta){
   if(!TRACE_ON) return;
   trace.push({

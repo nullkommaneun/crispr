@@ -1,4 +1,4 @@
-// reproduction.js
+// reproduction.js – Paarung & Mutation (mit Diagnose-Export getMutationRate)
 import { getCells, createCell } from "./entities.js";
 import { emit } from "./event.js";
 import { CONFIG } from "./config.js";
@@ -9,8 +9,7 @@ export function setMutationRate(pct){
   const p = Math.max(0, Number(pct) || 0) / 100;
   mutationRate = p;
 }
-
-export function getMutationRate(){  // <- für Diagnose-Panel
+export function getMutationRate(){  // für Diagnose-Panel
   return mutationRate;
 }
 

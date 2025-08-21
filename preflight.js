@@ -1,7 +1,14 @@
-// preflight.js
-const OVERLAY_ID = "preflightOverlay";
+// preflight.js — Start-Diagnose (v2)
+// Zeigt nach kurzer Zeit ein Overlay, falls die App nicht gebootet hat.
+// Prüft DOM-IDs und Modul-Exporte (inkl. drives.js & diag.js).
+
 const BOOT_FLAG = "__APP_BOOTED";
+const OVERLAY_ID = "preflightOverlay";
 const TIMEOUT_MS = 2200;
+
+const runtimeErrors = [];
+window.addEventListener("error", (e)=> runtimeErrors.push(`window.error: ${e.message}`));
+window.addEventListener("unhandledrejection", (e)=> runtimeErrors.push(`unhandledrejection: ${e.reason}`));
 
 function ensureOverlay(){
   let el = document.getElementById(OVERLAY_ID);
@@ -10,8 +17,8 @@ function ensureOverlay(){
   el.id = OVERLAY_ID;
   el.style.cssText = `
     position:fixed; inset:0; z-index:9000; display:none;
-    background:rgba(0,0,0,.72); color:#fff;
-    font:14px/1.5 system-ui,Segoe UI,Roboto,Helvetica,Arial;
+    background:rgba(0,0,0,.72); color:#d1e7ff;
+    font:14px/1.45 system-ui, Segoe UI, Roboto, Helvetica, Arial;
   `;
   el.innerHTML = `
     <div style="max-width:840px;margin:8vh auto;background:#1a232b;border:1px solid #33414c;border-radius:12px;padding:16px;box-shadow:0 12px 30px rgba(0,0,0,.4)">
@@ -26,16 +33,18 @@ function ensureOverlay(){
   document.getElementById("pfClose").onclick = ()=> el.style.display="none";
   return el;
 }
-
 function showOverlay(text){
   const el = ensureOverlay();
   const body = el.querySelector("#pfBody");
   body.textContent = text.trim();
   el.style.display = "block";
 }
-
 function listMissingDom(){
-  const need = ["topbar","world","ticker","editorPanel","envPanel"];
+  const need = [
+    "topbar","world","ticker",
+    "editorPanel","envPanel","dummyPanel","diagPanel",
+    "errorOverlay"
+  ];
   const missing = need.filter(id=>!document.getElementById(id));
   return missing;
 }
@@ -43,59 +52,65 @@ function listMissingDom(){
 async function checkModule(path, expects){
   try{
     const m = await import(path);
+    if(!expects || expects.length===0) return `✅ ${path}`;
     const miss = expects.filter(x=> !(x in m));
     if(miss.length) return `❌ ${path}: fehlt Export ${miss.join(", ")}`;
     return `✅ ${path}`;
   }catch(e){
-    return `❌ ${path}: Import/Parse fehlgeschlagen → ${String(e.message||e)}`;
+    let msg = String(e && e.message || e);
+    // Ein paar häufige, verständlichere Hinweise
+    if(/failed to fetch|404/i.test(msg)) msg += " (Pfad/Dateiname? GitHub Pages ist case-sensitiv)";
+    return `❌ ${path}: Import/Parse fehlgeschlagen → ${msg}`;
   }
 }
-
-// Sammle Fehler aus dem Fenster (auch Modul-Promise)
-const runtimeErrors = [];
-window.addEventListener("error", (e)=> runtimeErrors.push(`window.error: ${e.message}`));
-window.addEventListener("unhandledrejection", (e)=> runtimeErrors.push(`unhandledrejection: ${e.reason}`));
 
 async function diagnose(){
   const lines = [];
 
-  // 1) DOM-IDs?
+  // DOM
   const missingDom = listMissingDom();
-  if(missingDom.length){
-    lines.push(`⚠️ Fehlende DOM-IDs: ${missingDom.join(", ")}`);
-  }else{
-    lines.push("✅ DOM-Struktur OK");
-  }
+  if(missingDom.length) lines.push(`⚠️ Fehlende DOM-IDs: ${missingDom.join(", ")}`);
+  else lines.push("✅ DOM-Struktur OK");
 
-  // 2) Module & Exporte prüfen (ohne engine.js)
+  // Module & Exporte
   const checks = [
-    ["./event.js",           ["on","off","emit"]],
-    ["./config.js",          ["CONFIG"]],
-    ["./errorManager.js",    ["initErrorManager","report"]],
-    ["./entities.js",        ["step","createAdamAndEve","setWorldSize","applyEnvironment","getCells","getFoodItems"]],
-    ["./reproduction.js",    ["step","setMutationRate"]],
-    ["./food.js",            ["step","setSpawnRate","spawnClusters"]],
-    ["./renderer.js",        ["draw","setPerfMode"]],
-    ["./editor.js",          ["openEditor","closeEditor","setAdvisorMode","getAdvisorMode"]],
-    ["./environment.js",     ["openEnvPanel","getEnvState","setEnvState"]],
-    ["./advisor.js",         ["setMode","getMode","scoreCell","sortCells"]],
-    ["./ticker.js",          ["initTicker","setPerfMode","pushFrame"]],
+    ["./event.js",         ["on","off","emit"]],
+    ["./config.js",        ["CONFIG"]],
+    ["./errorManager.js",  ["initErrorManager","report"]],
+    ["./entities.js",      ["step","createAdamAndEve","setWorldSize","applyEnvironment","getCells","getFoodItems"]],
+    ["./reproduction.js",  ["step","setMutationRate","getMutationRate"]],
+    ["./food.js",          ["step","setSpawnRate","spawnClusters"]],
+    ["./renderer.js",      ["draw","setPerfMode"]],
+    ["./editor.js",        ["openEditor","closeEditor","setAdvisorMode","getAdvisorMode"]],
+    ["./environment.js",   ["openEnvPanel","getEnvState","setEnvState"]],
+    // Neue/erweiterte Checks:
+    ["./drives.js",        ["initDrives","getTraceText","getAction","afterStep","getDrivesSnapshot"]],
+    ["./diag.js",          ["openDiagPanel"]],
+    ["./ticker.js",        ["initTicker","setPerfMode","pushFrame"]],
+    // Optional: Dummy-Tools (falls vorhanden, sonst wird es als Hinweis geloggt)
+    // ["./dummy.js",      ["openDummyPanel","handleCanvasClickForDummy"]],
   ];
-  for(const [path,expects] of checks){
+
+  for(const [path, expects] of checks){
     lines.push(await checkModule(path, expects));
   }
 
-  // 3) Runtime-Fehler, falls vorhanden
   if(runtimeErrors.length){
     lines.push("\nLaufzeitfehler:");
     for(const r of runtimeErrors) lines.push(`• ${r}`);
   }
 
+  lines.push(
+    "\nHinweise:",
+    "- Prüfe Groß/Kleinschreibung von Dateinamen auf GitHub Pages.",
+    "- Stelle sicher, dass *alle* oben mit ❌ markierten Module existieren und die Exporte enthalten.",
+    `- Lade die Seite mit anderem Querystring (z. B. ?ts=${Date.now()}).`
+  );
+
   return lines.join("\n");
 }
 
 function armWatchdog(){
-  const t0 = performance.now();
   setTimeout(async ()=>{
     if(!window[BOOT_FLAG]){
       const report = await diagnose();
@@ -106,12 +121,7 @@ Wahrscheinliche Ursache: Ein ES-Modul konnte nicht geladen werden
 (fehlende Datei, falscher Export, Groß/Kleinschreibung, veraltete Datei).
 
 Diagnose:
-${report}
-
-Hinweise:
-- Prüfe Groß/Kleinschreibung von Dateinamen auf GitHub Pages.
-- Stelle sicher, dass *alle* oben mit ❌ markierten Module existieren und die Exporte enthalten.
-- Lade die Seite mit anderem Querystring (z. B. ?ts=${Date.now()}).`
+${report}`
       );
     }
   }, TIMEOUT_MS);
