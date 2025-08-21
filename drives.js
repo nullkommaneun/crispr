@@ -1,6 +1,6 @@
 // drives.js – Dueling-Policy (Food/Mate/Wander) mit Online-Lernen,
 // Stamm-Bias, distanzbasiertem Entscheidungsfenster, Hunger-Failsafe,
-// Single-Option-Schutz und Diagnose-Trace.
+// Single-Option-Schutz, Paarungs-Bonus und Diagnose-Trace.
 
 import { on } from "./event.js";
 import { CONFIG } from "./config.js";
@@ -22,6 +22,7 @@ const EPS         = 0.10;  // ε-Exploration
 const HUNGER_GATE = 0.45;  // eFrac < 45% -> Food erzwingen
 const EARLY_DE_ABS= 2.0;   // sofort schließen bei |ΔE| >= 2
 const K_DIST      = 0.60;  // Reward: Distanzgewinn→Energie-Äquivalent
+const R_PAIR      = 10;    // **NEU** Paarungsbonus (Reward)
 
 /* ===== State ===== */
 let w      = loadJSON(LS_W)    ?? initW();
@@ -50,22 +51,22 @@ function loadJSON(key){
   catch{ return null; }
 }
 function initW(){
-  // φ-Reihenfolge: [Bias, +EFF, +TEM, +GRÖ, +SCH,  +MET(als z), +Energie, -Alter, -Hazard, distFood, distMate, neigh, 1{Food}, 1{Mate}]
-  // Wichtig: MET-Feature ist POSITIV z(MET) — Gewicht bleibt NEGATIV, damit hoher Verbrauch bestraft wird.
+  // φ-Reihenfolge: [Bias, +EFF, +TEM, +GRÖ, +SCH, +MET(z), +Energie, -Alter, -Hazard, distFood, distMate, neigh, 1{Food}, 1{Mate}]
+  // MET-Feature positiv (z), Gewicht negativ -> hoher Verbrauch wird bestraft.
   return [
     0.0,   // Bias
     1.0,   // +EFF
     0.7,   // +TEM
     0.4,   // +GRÖ
     0.3,   // +SCH
-   -0.9,   //  z(MET)  (negatives Gewicht = Bestrafung hoher MET)
+   -0.9,   //  z(MET)
     0.8,   // +Energie
    -0.4,   // -Alter
    -0.6,   // -Hazard
-   -0.8,   // distFood (höherer Abstand schlechter)
+   -0.9,   // **distFood** etwas stärker bestrafen
    -0.4,   // distMate
     0.1,   // neighDensity
-    2.0,   // isFood (starke Präferenz)
+    2.0,   // isFood
     0.0    // isMate
   ];
 }
@@ -130,7 +131,7 @@ export function getAction(cell, _t, ctx){
     tMax = clamp(ctx.foodDist / Math.max(1,vEst) + 0.35, WIN_MIN, WIN_MAX);
   }else if(chosen==="mate" && ctx.mateDist!=null){
     const vEst = (CONFIG.cell.baseSpeed||35) * (0.7 + 0.08*(cell.genome?.TEM??5)) * 0.60;
-    tMax = clamp(ctx.mateDist / Math.max(1,vEst) + 0.35, WIN_MIN, WIN_MAX);
+    tMax = clamp(ctx.mateDist / Math.max(1,vEst) + 0.35 + 0.25, WIN_MIN, WIN_MAX); // **Mate-Fenster leicht länger**
   }
 
   mem.set(cell.id, {
@@ -142,7 +143,7 @@ export function getAction(cell, _t, ctx){
   return chosen;
 }
 
-/** Nach jedem Tick: dt aufs Fenster, Reward = ΔE + K_DIST·distGain (nur bei 2 Optionen) */
+/** Nach jedem Tick: dt aufs Fenster, Reward = ΔE + K_DIST·distGain [+ R_PAIR], nur bei 2 Optionen */
 export function afterStep(cell, dt, ctx){
   const m=mem.get(cell.id); if(!m) return;
   m.tAccum += dt;
@@ -166,7 +167,8 @@ export function afterStep(cell, dt, ctx){
     const dN = (ctx.foodDist      !=null)?ctx.foodDist      :Infinity;
     distGain = Math.max(0, d0 - dN);
   }
-  const shaped = dE + K_DIST*distGain;
+  let shaped = dE + K_DIST*distGain;
+  if (m.mated) shaped += R_PAIR; // **Paarungs-Bonus**
 
   const early = Math.abs(dE)>=EARLY_DE_ABS || m.mated;
   const timeUp= m.tAccum >= (m.tMax??1);
@@ -191,12 +193,12 @@ export function afterStep(cell, dt, ctx){
   const st=String(cell.stammId??0);
   bStamm[st]=clamp((bStamm[st]||0)+LR_BIAS*(y-p), -BIAS_CLIP, BIAS_CLIP);
 
-  // Bias-Decay + Zero-Center (stabilisiert Skala)
+  // **Bias-Decay & Zero-Center** etwas kräftiger
   const keys = Object.keys(bStamm);
   if(keys.length){
-    for(const k of keys) bStamm[k] *= 0.999; // leichter Decay
+    for(const k of keys) bStamm[k] *= 0.998; // vorher 0.999
     const mean = keys.reduce((s,k)=> s + bStamm[k], 0) / keys.length;
-    for(const k of keys) bStamm[k] -= mean;  // re-centern
+    for(const k of keys) bStamm[k] -= mean;
   }
 
   misc.duels++; if(shaped>=0 || m.mated) misc.wins++; save();
@@ -212,7 +214,7 @@ export function getDrivesSnapshot(){
       misc: (misc || {duels:0,wins:0}),
       w: Array.isArray(w) ? [...w] : [],
       bStamm: {...bStamm},
-      cfg: { WIN_MIN, WIN_MAX, EPS, HUNGER_GATE, EARLY_DE_ABS, K_DIST },
+      cfg: { WIN_MIN, WIN_MAX, EPS, HUNGER_GATE, EARLY_DE_ABS, K_DIST, R_PAIR },
       recent: [...trace].slice(-12)
     };
   }catch(e){
@@ -230,7 +232,7 @@ function featuresForOption(cell, ctx, option){
   const hazard=clamp(ctx.hazard??0,0,1);
   const normD=(d)=>{ if(d==null) return 1; const base=Math.max(1,Math.min(ctx.worldMin??512,1024)); return clamp(d/base,0,1); };
 
-  const metZ = z(g.MET); // <<< MET als positives Feature; Gewicht negativ
+  const metZ = z(g.MET); // MET als positives Feature; Gewicht in w negativ
 
   const dFood=normD(ctx.foodDist), dMate=normD(ctx.mateDist);
   const neigh=clamp((ctx.neighCount??0)/8,0,2);

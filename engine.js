@@ -11,7 +11,7 @@ import { initTicker, setPerfMode as tickerPerf, pushFrame } from "./ticker.js";
 import { emit, on } from "./event.js";
 import { openDummyPanel, handleCanvasClickForDummy } from "./dummy.js";
 import { initDrives } from "./drives.js";
-import { openDiagPanel } from "./diag.js";   // Diagnose-Panel
+import { openDiagPanel } from "./diag.js";
 
 let running = false;
 let timescale = 1;

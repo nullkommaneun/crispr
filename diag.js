@@ -134,11 +134,13 @@ export function openDiagPanel(){
     const { snap, code } = drivesCode();
     const wr = snap.misc.duels ? Math.round(100*snap.misc.wins/snap.misc.duels) : 0;
     const pools = Object.keys(snap.bStamm||{}).length;
+    const cfg = snap.cfg || {};
 
     box.append(
       row("Duels / Win-Rate", `<b>${snap.misc.duels}</b> · <b>${wr}%</b>`),
       row("Pools (Stämme)", `${pools}`),
-      row("Top-Bias", topBiasHTML(snap.bStamm))
+      row("Top-Bias", topBiasHTML(snap.bStamm)),
+      row("Params", `K_DIST=${cfg.K_DIST ?? "–"} · R_PAIR=${cfg.R_PAIR ?? "–"} · WIN=[${cfg.WIN_MIN ?? "–"}, ${cfg.WIN_MAX ?? "–"}]`)
     );
     box.append(codeField(code));
     body.append(box);
