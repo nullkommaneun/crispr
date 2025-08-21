@@ -17,12 +17,12 @@ const LR_BIAS     = 0.02;
 const BIAS_CLIP   = 2.0;
 
 const WIN_MIN     = 0.70;  // s
-const WIN_MAX     = 2.30;  // **angehoben** (vorher 2.00)
-const EPS         = 0.10;  // ε-Exploration
+const WIN_MAX     = 2.50;  // ↑ längere Obergrenze für große Flächen
+const EPS         = 0.08;  // ↓ etwas weniger Exploration
 const HUNGER_GATE = 0.45;  // eFrac < 45% -> Food erzwingen
 const EARLY_DE_ABS= 2.0;   // sofort schließen bei |ΔE| >= 2
-const K_DIST      = 0.80;  // **angehoben** (vorher 0.60) – Distanzgewinn zählt mehr
-const R_PAIR      = 12;    // **angehoben** (vorher 10) – Paarungsbonus
+const K_DIST      = 0.90;  // ↑ Distanzgewinn stärker belohnen
+const R_PAIR      = 12;    // Mate-Bonus
 
 /* ===== State ===== */
 let w      = loadJSON(LS_W)    ?? initW();
@@ -51,23 +51,23 @@ function loadJSON(key){
   catch{ return null; }
 }
 function initW(){
-  // φ-Reihenfolge: [Bias, +EFF, +TEM, +GRÖ, +SCH, +MET(z), +Energie, -Alter, -Hazard, distFood, distMate, neigh, 1{Food}, 1{Mate}]
+  // φ: [Bias, +EFF, +TEM, +GRÖ, +SCH, +MET(z), +Energie, -Alter, -Hazard, distFood, distMate, neigh, isFood, isMate]
   // MET-Feature positiv (z), Gewicht negativ -> hoher Verbrauch wird bestraft.
   return [
-    0.0,   // Bias
-    1.0,   // +EFF
-    0.7,   // +TEM
-    0.4,   // +GRÖ
-    0.3,   // +SCH
-   -0.9,   //  z(MET)
-    0.8,   // +Energie
-   -0.4,   // -Alter
-   -0.6,   // -Hazard
-   -0.9,   // **distFood** (stärker)
-   -0.4,   // distMate
-    0.1,   // neighDensity
-    2.0,   // isFood
-    0.0    // isMate
+    0.0,  // Bias
+    1.0,  // +EFF
+    0.7,  // +TEM
+    0.4,  // +GRÖ
+    0.3,  // +SCH
+   -0.9,  // z(MET)
+    0.8,  // +Energie
+   -0.4,  // -Alter
+   -0.6,  // -Hazard
+   -0.9,  // distFood (stärker)
+   -0.4,  // distMate
+    0.1,  // neigh
+    2.0,  // isFood
+    0.0   // isMate
   ];
 }
 
@@ -113,6 +113,12 @@ export function getAction(cell, _t, ctx){
   let p = single ? 0.5 : sigmoid((scores[a]||0)-(scores[b]||0));
   let chosen = single ? a : (p>=0.5? a : b), forced=false;
 
+  // ε-Exploration (nur wenn beide Optionen vorhanden sind)
+  if(!single && Math.random() < EPS){
+    chosen = (chosen===a ? b : a);
+    p = 0.5;
+  }
+
   // Hunger-Failsafe
   const cap=120*(1+0.08*((cell.genome?.GRÖ??5)-5));
   const eFrac=clamp(cell.energy/cap,0,1);
@@ -135,8 +141,7 @@ export function getAction(cell, _t, ctx){
 
 /** Nach jedem Tick: dt aufs Fenster, Reward = ΔE + K_DIST·distGain [+ R_PAIR], nur bei 2 Optionen */
 export function afterStep(cell, dt, ctx){
-  const m=mem.get(cell.id); if(!m) return;
-  m.tAccum += dt;
+  const m=mem.get(cell.id); if(!m) return; m.tAccum+=dt;
 
   const e1=cell.energy, dE=e1 - m.e0;
 
@@ -186,9 +191,9 @@ export function afterStep(cell, dt, ctx){
   // Bias-Decay & Zero-Center (stabiler)
   const keys = Object.keys(bStamm);
   if(keys.length){
-    for(const k of keys) bStamm[k] *= 0.998; // etwas stärkerer Decay
+    for(const k of keys) bStamm[k] *= 0.998;
     const mean = keys.reduce((s,k)=> s + bStamm[k], 0) / keys.length;
-    for(const k of keys) bStamm[k] -= mean;  // re-centern
+    for(const k of keys) bStamm[k] -= mean;
   }
 
   misc.duels++; if(shaped>=0 || m.mated) misc.wins++; save();
