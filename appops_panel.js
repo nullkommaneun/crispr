@@ -3,7 +3,6 @@ import { startCollectors, getAppOpsSnapshot, runModuleMatrix, generateOps } from
 
 const panel = document.getElementById("diagPanel");
 
-// kleine UI-Helfer
 function buildHeader(title){
   const h=document.createElement("div"); h.className="panel-header";
   const t=document.createElement("h2"); t.textContent=title;

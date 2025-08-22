@@ -1,99 +1,235 @@
-// bootstrap.js — robuster Boot-Loader mit direkter Fehleranzeige
-// Ziel: Wenn Engine/Module nicht laden, sofort ein Overlay mit echter Ursache zeigen.
+// appops.js — sammelt App-Telemetrie & generiert MDC-OPS Vorschläge
+// Läuft nur im Browser; keine Server-Abhängigkeiten.
 
-const BOOT_FLAG = "__APP_BOOTED";
-const START_TIMEOUT_MS = 2500;
+import { on } from "./event.js";
 
-// ---- kleines Overlay (unabhängig von preflight/errorManager)
-function ensureOverlay(){
-  let el = document.getElementById("errorOverlay");
-  if(!el){
-    el = document.createElement("div");
-    el.id = "errorOverlay";
-    el.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.72);display:none;z-index:9000;color:#d1e7ff";
-    el.innerHTML = `
-      <div class="errorCard" style="max-width:840px;margin:8vh auto;background:#1a232b;border:1px solid #33414c;border-radius:12px;padding:16px;box-shadow:0 12px 30px rgba(0,0,0,.4)">
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px">
-          <h3 style="margin:0;font-size:18px">Start-Diagnose</h3>
-          <button id="errorClose" style="background:#23313b;border:1px solid #3a4c5a;color:#d8f0ff;border-radius:8px;padding:6px 10px;cursor:pointer">Schließen</button>
-        </div>
-        <pre id="errorText" style="white-space:pre-wrap;margin-top:8px"></pre>
-      </div>`;
-    document.body.appendChild(el);
-    const btn = document.getElementById("errorClose");
-    btn.onclick = ()=>{ el.classList.add("hidden"); el.style.display="none"; };
+// ---------- interner State ----------
+const state = {
+  started: false,
+  perf: {
+    raf: { last: 0, frames: 0, jankCount: 0, jankSumMs: 0, samples: [] }, // {t, fps}
+    longTasks: { count: 0, totalMs: 0 }
+  },
+  engine: {
+    frames: 0,
+    cappedFrames: 0,      // desiredSteps > maxSteps?
+    backlogRatio: 0       // gleitender Anteil cappedFrames
+  },
+  layout: {
+    reflowCount: 0,
+    lastHeights: []
+  },
+  resources: {
+    scannedAt: 0,
+    total: 0,
+    largest: []           // [{name,sizeKB,type,duration}]
+  },
+  modules: {
+    lastReport: null      // String-Liste der Modul-Checks (wie Preflight)
   }
-  return el;
-}
-function showError(msg){
-  const el = ensureOverlay();
-  const txt = document.getElementById("errorText");
-  txt.textContent = msg;
-  el.classList.remove("hidden");
-  el.style.display = "block";
-}
+};
 
-// ---- Mini-Polyfills (ältere Browser)
-(function polyfills(){
-  if(!Array.prototype.at){
-    Object.defineProperty(Array.prototype, "at", {
-      value: function at(n){ n = Math.trunc(n) || 0; if(n<0) n += this.length; if(n<0 || n>=this.length) return undefined; return this[n]; },
-      configurable: true
-    });
-  }
-})();
-
-// ---- Preflight zusätzlich laden (für modulare Tiefendiagnose, nicht kritisch)
-async function tryLoadPreflight(){
-  try { await import("./preflight.js"); } catch(e){ /* ignorieren, Bootstraper zeigt ohnehin Fehler */ }
-}
-
-// ---- Engine laden
-(async function boot(){
-  // Preflight „armieren“ (optional)
-  tryLoadPreflight();
-
-  // Canvas/Topbar-Height im CSS verankern (UI sieht sonst „tot“ aus)
-  document.addEventListener("DOMContentLoaded", ()=>{
-    const topbar = document.getElementById("topbar");
-    if (topbar) {
-      const h = topbar.offsetHeight || 56;
-      document.documentElement.style.setProperty("--topbar-h", h + "px");
+// ---------- FPS & Jank via RAF ----------
+function startRafSampler(){
+  const raf = state.perf.raf;
+  function loop(t){
+    if(raf.last){
+      const dt = t - raf.last;
+      const fps = 1000 / Math.max(1, dt);
+      raf.samples.push({ t: performance.now(), fps });
+      if (dt > 50) { raf.jankCount++; raf.jankSumMs += (dt-16.7); }
+      if (raf.samples.length > 240) raf.samples.shift();
     }
-  });
+    raf.last = t; raf.frames++;
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+}
 
-  // Versuch: Engine importieren
+// ---------- Long Tasks ----------
+function startLongTaskObserver(){
   try{
-    await import("./engine.js");
+    const po = new PerformanceObserver((list)=>{
+      list.getEntries().forEach(e=>{
+        if (e.entryType === "longtask") {
+          state.perf.longTasks.count++;
+          state.perf.longTasks.totalMs += e.duration || 0;
+        }
+      });
+    });
+    po.observe({ entryTypes: ["longtask"] });
+  }catch{}
+}
+
+// ---------- Engine Backlog (aus engine.js via Event) ----------
+on("appops:frame", (e)=>{
+  // e: { desired, max, steps, delta, timescale }
+  state.engine.frames++;
+  if ((e?.desired ?? 0) > (e?.max ?? 0)) state.engine.cappedFrames++;
+  const f = state.engine.frames || 1;
+  state.engine.backlogRatio = state.engine.cappedFrames / f;
+});
+
+// ---------- Topbar Reflows ----------
+function startTopbarObserver(){
+  const el = document.getElementById("topbar");
+  if(!el) return;
+  try{
+    const ro = new ResizeObserver(()=>{
+      state.layout.reflowCount++;
+      const h = el.offsetHeight || 0;
+      const arr = state.layout.lastHeights;
+      if(!arr.length || arr[arr.length-1] !== h){
+        arr.push(h);
+        if(arr.length > 10) arr.shift();
+      }
+    });
+    ro.observe(el);
+  }catch{}
+}
+
+// ---------- Resource Audit ----------
+function scanResources(){
+  try{
+    const entries = performance.getEntriesByType("resource");
+    const list = [];
+    let total = 0;
+    for(const e of entries){
+      const size = e.transferSize || e.encodedBodySize || 0;
+      const sizeKB = Math.round(size/1024);
+      total += sizeKB;
+      list.push({
+        name: (e.name||"").split("/").slice(-2).join("/"),
+        sizeKB,
+        type: e.initiatorType || "res",
+        duration: Math.round((e.duration||0))
+      });
+    }
+    list.sort((a,b)=> b.sizeKB - a.sizeKB);
+    state.resources.largest = list.slice(0,12);
+    state.resources.total = total;
+    state.resources.scannedAt = Date.now();
+  }catch{}
+}
+
+// ---------- Modul-Check (wie Preflight, aber on-demand) ----------
+async function checkModule(path, expects){
+  try{
+    const m = await import(path + `?v=${Date.now()}`); // Cache-Buster
+    if(!expects?.length) return `✅ ${path}`;
+    const miss = expects.filter(x=> !(x in m));
+    return miss.length ? `❌ ${path}: fehlt Export ${miss.join(", ")}` : `✅ ${path}`;
   }catch(e){
-    const msg = String(e && e.message || e);
-    showError(
-`Engine konnte nicht geladen werden.
+    let msg = String(e?.message || e);
+    if(/failed to fetch|404/i.test(msg)) msg += " (Pfad/Case?)";
+    return `❌ ${path}: Import/Parse fehlgeschlagen → ${msg}`;
+  }
+}
 
-Ursache:
-${msg}
+export async function runModuleMatrix(){
+  const lines = [];
+  const checks = [
+    ["./event.js",         ["on","off","emit"]],
+    ["./config.js",        ["CONFIG"]],
+    ["./errorManager.js",  ["initErrorManager","report"]],
+    ["./entities.js",      ["step","createAdamAndEve","setWorldSize","applyEnvironment","getCells","getFoodItems"]],
+    ["./reproduction.js",  ["step","setMutationRate","getMutationRate"]],
+    ["./food.js",          ["step","setSpawnRate","spawnClusters"]],
+    ["./renderer.js",      ["draw","setPerfMode"]],
+    ["./editor.js",        ["openEditor","closeEditor","setAdvisorMode","getAdvisorMode"]],
+    ["./environment.js",   ["getEnvState","setEnvState","openEnvPanel"]],
+    ["./ticker.js",        ["initTicker","setPerfMode","pushFrame"]],
+    ["./genealogy.js",     ["getNode","getParents","getChildren","getSubtree","searchByNameOrId","exportJSON","getStats","getAll"]],
+    ["./genea.js",         ["openGenealogyPanel"]],
+    ["./metrics.js",       [
+      "beginTick","sampleEnergy","commitTick","addSpawn",
+      "getEconSnapshot","getMateSnapshot","mateStart","mateEnd","getPopSnapshot","getDriftSnapshot"
+    ]],
+    ["./drives.js",        ["initDrives","getTraceText","getAction","afterStep","getDrivesSnapshot","setTracing"]],
+    ["./diag.js",          ["openDiagPanel"]]
+  ];
+  for(const [p, exp] of checks){
+    lines.push(await checkModule(p, exp));
+  }
+  state.modules.lastReport = lines.join("\n");
+  return state.modules.lastReport;
+}
 
-Tipps:
-- Existiert ./engine.js (korrekter Pfad, exakte Groß-/Kleinschreibung)?
-- Wurde kürzlich eine neue Datei eingefügt (z. B. metrics.js/diag.js) und noch nicht hochgeladen?
-- Älterer Browser? (Aktualisieren; optional chaining '?.'/'??' wird teils nicht unterstützt)`
+// ---------- Start Collector ----------
+export function startCollectors(){
+  if(state.started) return;
+  state.started = true;
+  startRafSampler();
+  startLongTaskObserver();
+  startTopbarObserver();
+  scanResources();
+  setInterval(scanResources, 15000);
+}
+
+// ---------- Snapshots ----------
+export function getAppOpsSnapshot(){
+  const s = state.perf.raf.samples;
+  const fpsNow = s.length ? s[s.length-1].fps : 0;
+  const fpsAvg = s.length ? (s.reduce((a,b)=>a+b.fps,0)/s.length) : 0;
+  const jank = state.perf.raf.jankCount;
+  const jankMs = Math.round(state.perf.raf.jankSumMs);
+
+  const frames = state.engine.frames || 1;
+  const capRatio = state.engine.backlogRatio || 0;
+
+  const reflows = state.layout.reflowCount;
+  const heights = [...state.layout.lastHeights];
+
+  const res = state.resources;
+
+  return {
+    v: 1, kind: "appops",
+    perf: { fpsNow: Math.round(fpsNow), fpsAvg: Math.round(fpsAvg), jank, jankMs,
+      longTasks: { count: state.perf.longTasks.count, totalMs: Math.round(state.perf.longTasks.totalMs) } },
+    engine: { frames, capRatio: Math.round(capRatio*100)/100 },
+    layout: { reflows, heights },
+    resources: { scannedAt: res.scannedAt, totalKB: res.total, largest: res.largest },
+    modules: { last: state.modules.lastReport }
+  };
+}
+
+// ---------- OPS-Vorschläge (heuristisch) ----------
+export function generateOps(){
+  const s = getAppOpsSnapshot();
+  const ops = { v: 1, title: "Auto-OPS Vorschläge", goals: [], changes: [], accept: [] };
+
+  // Vorschlag 1: Preflight manuell (?pf=1)
+  ops.changes.push({
+    file: "preflight.js",
+    op: "append",
+    code:
+"// === Dev-Hook: manuelle Preflight-Anzeige mit ?pf=1 ===\n(function devHook(){\n  try{\n    const q=new URLSearchParams(location.search);\n    if(q.get('pf')==='1') diagnose().then(r=>showOverlay('Manuelle Diagnose (pf=1):\\n\\n'+r));\n  }catch{}\n})();\n"
+  });
+  ops.goals.push("Preflight jederzeit manuell abrufbar (?pf=1)");
+
+  // Vorschlag 2: Ticker throttle & kompakter (bei Jank/Reflow)
+  if (s.perf.jank > 5 || s.layout.reflows > 5) {
+    ops.changes.push(
+      { file: "ticker.js", op: "patch", find: "setInterval\\(updateSnapshot, 5000\\);", replace: "setInterval(updateSnapshot, 7000);" },
+      { file: "style.css", op: "append", code: "/* Ticker kompakter */\n#ticker{ row-gap:0px !important; }\n#ticker span{ line-height: 1.15; }\n" }
     );
-    return;
+    ops.goals.push("Ticker ruhiger/kompakter zur Reflow-Reduktion");
   }
 
-  // Watchdog: Falls Engine importiert, aber boot() nie gesetzt hat (__APP_BOOTED)
-  setTimeout(()=>{
-    if(!window[BOOT_FLAG]){
-      showError(
-`Die Anwendung scheint nicht gestartet zu sein (Boot-Flag fehlt nach ${START_TIMEOUT_MS}ms).
+  // Vorschlag 3: Spatial-Hash Scaffold, wenn Backlog > 15%
+  if ((s.engine.capRatio||0) > 0.15) {
+    ops.changes.push(
+      { file: "grid.js", op: "replace", code:
+"// Uniform-Grid Scaffold – wird im nächsten Schritt produktiv genutzt\nexport function createGrid(cellSize, width, height){\n  const cols = Math.max(1, Math.ceil(width / cellSize));\n  const rows = Math.max(1, Math.ceil(height/ cellSize));\n  const buckets = new Map();\n  function key(ix,iy){ return ix+\",\"+iy; }\n  function clear(){ buckets.clear(); }\n  function insert(x,y, payload){ const ix=Math.floor(x/cellSize), iy=Math.floor(y/cellSize); const k=key(ix,iy); if(!buckets.has(k)) buckets.set(k,[]); buckets.get(k).push(payload); }\n  function queryCircle(x,y,r){ const minX=Math.floor((x-r)/cellSize), maxX=Math.floor((x+r)/cellSize); const minY=Math.floor((y-r)/cellSize), maxY=Math.floor((y+r)/cellSize); const out=[]; for(let iy=minY; iy<=maxY; iy++){ for(let ix=minX; ix<=maxX; ix++){ const k=key(ix,iy); const arr=buckets.get(k); if(arr) out.push(...arr); } } return out; }\n  return { cellSize, cols, rows, clear, insert, queryCircle };\n}\n" },
+      { file: "entities.js", op: "patch", find: "export function step(dt, _env, _t){", replace: "export function step(dt, _env, _t){ /* grid scaffold: befüllt im nächsten Schritt produktiv */" }
+    );
+    ops.goals.push("Vorbereitung schneller Nachbarn-/Food-Lookups (Spatial Hash Scaffold)");
+  }
 
-Mögliche Ursachen:
-- Ein Modul wirft beim Import/Start einen Fehler (z. B. diag.js/metrics.js/ticker.js).
-- Ein Syntax-Feature wird vom Browser nicht unterstützt (optional chaining '?.', nullish '??').
+  ops.accept.push("App-Ops Panel erzeugt gültige OPS; Backlog/Jank/Reflows sinken nach Anwendung der Vorschläge (wo zutreffend).");
+  return JSON.stringify(ops, null, 2);
+}
 
-Hinweis:
-- Das separat geladene 'preflight.js' zeigt weitere Modul-Checks, wenn es geladen werden konnte.`
-      );
-    }
-  }, START_TIMEOUT_MS);
-})();
+// (zusätzliche Absicherung – benannte Exporte sicherstellen)
+export default {};
+export { startCollectors, getAppOpsSnapshot, runModuleMatrix, generateOps };
