@@ -1,4 +1,4 @@
-// genealogy.js — lückenloser Stammbaum: Eltern/Kind-Beziehungen, Generationen, Export
+// genealogy.js — Stammbaumdaten (Eltern/Kind, Generationen), Events, Export
 import { on } from "./event.js";
 
 const nodes = new Map(); // id -> node
@@ -11,7 +11,6 @@ function ensureNode(id){
   }
   return nodes.get(id);
 }
-
 function computeGen(childId){
   const n = nodes.get(childId);
   if(!n) return 0;
@@ -25,9 +24,7 @@ function computeGen(childId){
   return g;
 }
 
-// Events binden
 on("cells:born", (payload)=>{
-  // payload: { child, parents:[idA,idB] } – child enthält genome, sex, stammId, name, evtl. pos/energy (ignorieren)
   try{
     const t = Date.now();
     const cid = payload?.child?.id;
@@ -53,7 +50,6 @@ on("cells:died", (cell)=>{
     const n = ensureNode(cell?.id);
     n.diedAt = Date.now();
     n.ageAtDeath = cell?.age ?? null;
-    // sex/stamm/genome ggf. nachtragen (falls Node ein Platzhalter war)
     if(n.sex==null && cell?.sex!=null) n.sex = cell.sex;
     if(n.stammId==null && cell?.stammId!=null) n.stammId = cell.stammId;
     if(!n.genome && cell?.genome) n.genome = cell.genome;
@@ -64,7 +60,6 @@ on("cells:died", (cell)=>{
 export function getNode(id){ return nodes.get(id) || null; }
 export function getParents(id){ const n=nodes.get(id); return n ? (n.parents||[]).map(pid=>nodes.get(pid)||null) : []; }
 export function getChildren(id){ const n=nodes.get(id); return n ? Array.from(n.children||[]).map(cid=>nodes.get(cid)||null) : []; }
-
 export function getStats(){
   let count=0, roots=0, leaves=0, maxGen=0, alive=0;
   for(const n of nodes.values()){
@@ -76,53 +71,38 @@ export function getStats(){
   }
   return { nodes:count, roots, leaves, maxGen, alive };
 }
-
-// Teilbaum um Fokus: 'up' Generationen Vorfahren, 'down' Generationen Nachfahren
 export function getSubtree(focusId, up=4, down=4){
-  const include = new Set();
-  const edges = [];
-
-  function addPathUp(id, depth){
-    if(depth<0 || id==null) return;
-    if(!include.has(id)) include.add(id);
-    const n = nodes.get(id); if(!n) return;
-    for(const pid of (n.parents||[])){
-      if(pid==null) continue;
-      edges.push({ from:pid, to:id }); // von Eltern zu Kind
-      addPathUp(pid, depth-1);
-    }
-  }
-  function addPathDown(id, depth){
-    if(depth<0 || id==null) return;
-    if(!include.has(id)) include.add(id);
+  const include = new Set(), edges = [];
+  function addUp(id,d){ if(d<0||id==null) return; include.add(id);
     const n=nodes.get(id); if(!n) return;
-    for(const cid of (n.children||[])){
-      edges.push({ from:id, to:cid });
-      addPathDown(cid, depth-1);
+    for(const pid of (n.parents||[])){ if(pid==null) continue; edges.push({from:pid,to:id}); addUp(pid,d-1); } }
+  function addDown(id,d){ if(d<0||id==null) return; include.add(id);
+    const n=nodes.get(id); if(!n) return;
+    for(const cid of (n.children||[])){ edges.push({from:id,to:cid}); addDown(cid,d-1); } }
+  addUp(focusId,up); addDown(focusId,down);
+  return { nodes:[...include].map(id=>nodes.get(id)).filter(Boolean), edges };
+}
+// NEU: gesamte Population
+export function getAll(){
+  const arr = Array.from(nodes.values());
+  const edges = [];
+  for(const n of arr){
+    if(n.children && n.children.size){
+      for(const cid of n.children) edges.push({from:n.id, to:cid});
     }
   }
-
-  addPathUp(focusId, up);
-  addPathDown(focusId, down);
-
-  const subNodes = Array.from(include).map(id=>nodes.get(id)).filter(Boolean);
-  return { nodes: subNodes, edges };
+  return { nodes: arr, edges };
 }
-
 export function searchByNameOrId(q){
   if(!q) return [];
-  const s = String(q).toLowerCase();
-  const out = [];
+  const s = String(q).toLowerCase(); const out = [];
   for(const n of nodes.values()){
     if(String(n.id)===s || (n.name && n.name.toLowerCase().includes(s))) out.push(n);
   }
-  // jüngste zuerst
   out.sort((a,b)=> (b.bornAt||0) - (a.bornAt||0));
   return out.slice(0,25);
 }
-
 export function exportJSON(){
-  // kompaktes Exportformat
   const list = [];
   for(const n of nodes.values()){
     list.push({

@@ -25,6 +25,8 @@ async function diagnose(){
     ]],
     ["./drives.js",        ["initDrives","getTraceText","getAction","afterStep","getDrivesSnapshot","setTracing"]],
     ["./diag.js",          ["openDiagPanel"]],
+    ["./genealogy.js", ["getNode","getParents","getChildren","getSubtree","searchByNameOrId","exportJSON","getStats","getAll"]],
+["./genea.js", ["openGenealogyPanel"]],
   ];
 
   for(const [path, expects] of checks){
