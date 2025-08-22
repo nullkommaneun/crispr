@@ -174,7 +174,6 @@ function chooseMateGrid(c, senseR, grid){
     if (dist2 > rr) continue;
     const d = Math.sqrt(dist2);
 
-    // Gene-Score + Kreuzungsbonus
     const geneScore = (o.genome.EFF*0.8 + (10 - o.genome.MET)*0.7 + o.genome.SCH*0.2 + o.genome.TEM*0.2);
     const crossBonus = (o.stammId !== c.stammId) ? 0.3 : 0.0;
 
@@ -246,18 +245,15 @@ export function step(dt, _env, _t){
     // Primär
     let fOpt=[0,0]; const slowR=Math.max(CONFIG.physics.slowRadius??120, CONFIG.cell.pairDistance*3);
     if(option==="food" && foodS){
-      const eatR = (CONFIG.food.itemRadius + radiusOf(c) + 2) * sMin, eatR2=eatR*eatr;
-      // Tippfehler korrigieren
-    } // Dieser Block wird weiter unten korrekt implementiert
-    // KORREKT:
-    if(option==="food" && foodS){
       const eatR = (CONFIG.food.itemRadius + radiusOf(c) + 2) * sMin, eatR2=eatR*eatR;
+
       if(foodS.item){
         fOpt = steerSeekArrive(c,{x:foodS.item.x,y:foodS.item.y}, maxSpeed, Math.max(2,eatR-2), slowR);
       }else{
         const stopCenter = Math.max(2, (radiusOf(c)*0.25 + 1) * sMin);
         fOpt = steerSeekArrive(c,{x:foodS.center.x,y:foodS.center.y}, maxSpeed, stopCenter, slowR);
       }
+
       // Essen (nur lokale Buckets)
       let eaten=0;
       const localFood = g.queryCircle(c.pos.x, c.pos.y, eatR);
