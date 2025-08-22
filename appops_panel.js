@@ -1,5 +1,12 @@
-// appops_panel.js — App-Optimierer-Panel inkl. „Timings“-Karte & Smart-Hints (Confidence)
-import { startCollectors, getAppOpsSnapshot, runModuleMatrix, generateOps, getSmartHints } from "./appops.js";
+// appops_panel.js — App-Optimierer-Panel inkl. „Timings“-Karte & Smart-Hints (Confidence + Copy per Hint)
+import {
+  startCollectors,
+  getAppOpsSnapshot,
+  runModuleMatrix,
+  generateOps,
+  getSmartHints,
+  buildOpsForHint
+} from "./appops.js";
 
 const panel = document.getElementById("diagPanel");
 
@@ -19,12 +26,18 @@ function section(title){
   head.append(h); box.append(head); return {box,head};
 }
 function row(label, html){ const r=document.createElement("div"); r.className="row"; const l=document.createElement("span"); l.textContent=label; const v=document.createElement("span"); v.innerHTML=html; r.append(l,v); return r; }
+function copy(text, btn){
+  navigator.clipboard.writeText(text).then(()=>{
+    if(btn){ const old=btn.textContent; btn.textContent="Kopiert ✓"; setTimeout(()=>btn.textContent=old, 1200); }
+  }).catch(()=>{ if(btn){ const old=btn.textContent; btn.textContent="Fehler"; setTimeout(()=>btn.textContent=old, 1200);} });
+}
 function codeField(value){
-  const wrap=document.createElement("div"); wrap.style.display="grid"; wrap.style.gridTemplateColumns="1fr auto"; wrap.style.gap="8px"; wrap.style.marginTop="6px";
+  const wrap=document.createElement("div");
+  wrap.style.display="grid"; wrap.style.gridTemplateColumns="1fr auto"; wrap.style.gap="8px"; wrap.style.marginTop="6px";
   const ta=document.createElement("textarea"); ta.readOnly=true; ta.value=value;
   ta.style.width="100%"; ta.style.height="120px"; ta.style.background="#0b1217"; ta.style.border="1px solid #2a3a46"; ta.style.borderRadius="8px"; ta.style.color="#d8f0ff"; ta.style.font="12px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
   const btn=document.createElement("button"); btn.textContent="OPS kopieren";
-  btn.onclick=async()=>{ try{ await navigator.clipboard.writeText(ta.value); btn.textContent="Kopiert ✓"; setTimeout(()=>btn.textContent="OPS kopieren",1200);}catch{} };
+  btn.onclick=()=> copy(ta.value, btn);
   wrap.append(ta,btn); return wrap;
 }
 
@@ -101,30 +114,32 @@ export function openAppOpsPanel(){
     body.append(box);
   }
 
-  // Smart-Vorschläge (Confidence)
+  // Smart-Vorschläge (Confidence) + Copy je Hint
   {
     const { box } = section("Smart-Vorschläge (Confidence)");
-    const ul = document.createElement("div");
+    const wrap = document.createElement("div");
     const hints = getSmartHints();
+
     if (!hints.length) {
-      ul.textContent = "Keine situativen Vorschläge – alles stabil.";
+      wrap.textContent = "Keine situativen Vorschläge – alles stabil.";
     } else {
       for (const h of hints) {
-        const rowDiv = document.createElement("div"); rowDiv.className="row";
-        rowDiv.innerHTML = `<span>${h.title}</span><span><b>${h.confidence}%</b></span>`;
-        const reason = document.createElement("div");
-        reason.className = "muted"; reason.style.margin = "2px 0 8px 0";
-        reason.textContent = h.reason || "";
-        ul.append(rowDiv, reason);
+        const head = document.createElement("div"); head.className="row";
+        head.innerHTML = `<span>${h.title}</span><span><b>${h.confidence}%</b></span>`;
+        const reason = document.createElement("div"); reason.className="muted"; reason.style.margin = "2px 0 6px 0"; reason.textContent = h.reason || "";
+        const btn = document.createElement("button"); btn.textContent = "OPS kopieren";
+        btn.onclick = ()=> copy(buildOpsForHint(h), btn);
+        wrap.append(head, reason, btn);
       }
     }
-    box.append(ul);
+
+    box.append(wrap);
     body.append(box);
   }
 
-  // OPS JSON
+  // Sammel-OPS (JSON)
   {
-    const { box } = section("Vorschläge (MDC-OPS JSON)");
+    const { box } = section("Alle Vorschläge (MDC-OPS JSON)");
     const opsJSON = generateOps();
     box.append(codeField(opsJSON));
     body.append(box);

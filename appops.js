@@ -9,15 +9,14 @@ const state = {
   layout:{ reflowCount:0, lastHeights:[] },
   resources:{ scannedAt:0, total:0, largest:[] },
   modules:{ lastReport:null },
-  timings:{ ent:0, repro:0, food:0, draw:0, alpha:0.2 }, // EMA
+  timings:{ ent:0, repro:0, food:0, draw:0, alpha:0.2 },
   features:{ preflightHook:false, tfInline:false, swActive:false, mobile:false }
 };
 
-/* ---------- Helfer ---------- */
 const clamp = (x,min=0,max=1)=> Math.max(min, Math.min(max, x));
 const isMobileUA = ()=> /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent||"");
 
-/* ---------- RAF Sampler (FPS/Jank) ---------- */
+/* RAF / Jank */
 function startRafSampler(){
   const r=state.perf.raf;
   function loop(t){
@@ -31,8 +30,7 @@ function startRafSampler(){
   }
   requestAnimationFrame(loop);
 }
-
-/* ---------- Long Tasks ---------- */
+/* Long Tasks */
 function startLongTaskObserver(){
   try{
     const po=new PerformanceObserver(list=>{
@@ -43,16 +41,14 @@ function startLongTaskObserver(){
     po.observe({ entryTypes:["longtask"] });
   }catch{}
 }
-
-/* ---------- Engine Backlog ---------- */
+/* Engine Backlog */
 on("appops:frame",(e)=>{
   state.engine.frames++;
   if((e?.desired??0)>(e?.max??0)) state.engine.cappedFrames++;
   const f=state.engine.frames||1;
   state.engine.backlogRatio = state.engine.cappedFrames / f;
 });
-
-/* ---------- Micro-Profiler (EMA) ---------- */
+/* Micro-Profiler (EMA) */
 on("appops:timings",(t)=>{
   const a=state.timings.alpha;
   state.timings.ent   = state.timings.ent  *(1-a) + (t.ent  ||0)*a;
@@ -60,8 +56,7 @@ on("appops:timings",(t)=>{
   state.timings.food  = state.timings.food *(1-a) + (t.food ||0)*a;
   state.timings.draw  = state.timings.draw *(1-a) + (t.draw ||0)*a;
 });
-
-/* ---------- Topbar Reflows ---------- */
+/* Topbar Reflows */
 function startTopbarObserver(){
   const el=document.getElementById("topbar"); if(!el) return;
   try{
@@ -74,8 +69,7 @@ function startTopbarObserver(){
     ro.observe(el);
   }catch{}
 }
-
-/* ---------- Resource Audit ---------- */
+/* Resource Audit */
 function scanResources(){
   try{
     const entries=performance.getEntriesByType("resource");
@@ -89,27 +83,21 @@ function scanResources(){
     state.resources={ scannedAt:Date.now(), total, largest:list.slice(0,12) };
   }catch{}
 }
-
-/* ---------- Feature-Scan (Preflight-Hook, TF inline, SW) ---------- */
+/* Feature-Scan */
 async function scanFeatures(){
-  // Preflight-Hook: preflight.js laden und nach Hook-Signatur suchen
   try{
     const res = await fetch("./preflight.js", { cache:"no-store" });
     const txt = await res.text();
     state.features.preflightHook = /Manuelle Diagnose \(pf=1\)|devHook\(\)/.test(txt);
   }catch{ state.features.preflightHook = false; }
-  // TF inline im DOM?
   state.features.tfInline = !!document.querySelector('script[src*="@tensorflow/tfjs"]');
-  // Service Worker aktiv?
   state.features.swActive = !!(navigator.serviceWorker && navigator.serviceWorker.controller);
-  // Mobile Heuristik
-  state.features.mobile = isMobileUA() || (window.matchMedia && window.matchMedia("(max-width: 768px)").matches);
+  state.features.mobile   = isMobileUA() || (window.matchMedia && window.matchMedia("(max-width: 768px)").matches);
 }
-
-/* ---------- Modulmatrix ---------- */
+/* Modulmatrix */
 async function checkModule(path, expects){
   try{
-    const m=await import(path+`?v=${Date.now()}`); // Cache-Buster
+    const m=await import(path+`?v=${Date.now()}`);
     if(!expects?.length) return `✅ ${path}`;
     const miss=expects.filter(x=> !(x in m));
     return miss.length? `❌ ${path}: fehlt Export ${miss.join(", ")}` : `✅ ${path}`;
@@ -142,16 +130,14 @@ export async function runModuleMatrix(){
   state.modules.lastReport = lines.join("\n");
   return state.modules.lastReport;
 }
-
-/* ---------- Start ---------- */
+/* Start */
 export function startCollectors(){
   if(state.started) return; state.started=true;
   startRafSampler(); startLongTaskObserver(); startTopbarObserver(); scanResources(); scanFeatures();
   setInterval(scanResources, 15000);
   setInterval(scanFeatures, 20000);
 }
-
-/* ---------- Snapshot (inkl. Timings & Features) ---------- */
+/* Snapshot */
 export function getAppOpsSnapshot(){
   const s=state.perf.raf.samples;
   const fpsNow=s.length? s[s.length-1].fps : 0;
@@ -169,7 +155,7 @@ export function getAppOpsSnapshot(){
   };
 }
 
-/* ---------- Smart-Hints (Confidence & Begründung) ---------- */
+/* -------- Smart-Hints (Confidence & Begründung) -------- */
 export function getSmartHints(){
   const s = getAppOpsSnapshot();
   const hints = [];
@@ -178,22 +164,19 @@ export function getSmartHints(){
   const cap = s.engine.capRatio || 0; // 0..1
   const t = s.timings || { ent:0, repro:0, food:0, draw:0 };
 
-  // 0) Preflight baseline NUR wenn Hook fehlt
   if (!s.features.preflightHook) {
     hints.push({
       id:"preflight",
       title:"Preflight-Hook (?pf=1)",
       confidence: 85,
-      reason: "Schneller manueller Diagnosezugriff; aktuell nicht im preflight.js gefunden.",
-      changes:[
-        { file: "preflight.js", op:"append",
-          code:"// === Dev-Hook: manuelle Preflight-Anzeige mit ?pf=1 ===\n(function devHook(){\n  try{\n    const q=new URLSearchParams(location.search);\n    if(q.get('pf')==='1') diagnose().then(r=>showOverlay('Manuelle Diagnose (pf=1):\\n\\n'+r));\n  }catch{}\n})();\n"
-        }
-      ]
+      reason:"Schneller manueller Diagnosezugriff; aktuell nicht im preflight.js gefunden.",
+      changes:[{
+        file:"preflight.js", op:"append",
+        code:"// === Dev-Hook: manuelle Preflight-Anzeige mit ?pf=1 ===\n(function devHook(){\n  try{\n    const q=new URLSearchParams(location.search);\n    if(q.get('pf')==='1') diagnose().then(r=>showOverlay('Manuelle Diagnose (pf=1):\\n\\n'+r));\n  }catch{}\n})();\n"
+      }]
     });
   }
 
-  // 1) Ticker beruhigen
   if (jank > 5 || reflows > 5) {
     const jankScore = clamp((jank-5)/10);
     const reflowScore = clamp((reflows-5)/10);
@@ -210,21 +193,17 @@ export function getSmartHints(){
     });
   }
 
-  // 2) Draw teuer?
   if (t.draw > 8) {
-    const conf = Math.round(100*clamp((t.draw-8)/8)); // 8..16ms
+    const conf = Math.round(100*clamp((t.draw-8)/8));
     hints.push({
       id:"drawpad",
       title:"Renderer: Culling-Pad im Perf-Mode senken",
       confidence: conf,
       reason:`Draw-Detektor: draw≈${t.draw}ms. Kleinerer Puffer im Perf-Mode reduziert Overdraw.`,
-      changes:[
-        { file:"renderer.js", op:"patch", find:"const pad = 24;", replace:"const pad = perfMode ? 12 : 24;" }
-      ]
+      changes:[{ file:"renderer.js", op:"patch", find:"const pad = 24;", replace:"const pad = perfMode ? 12 : 24;" }]
     });
   }
 
-  // 3) Engine-Backlog hoch / Entities teuer?
   if (cap > 0.15 || t.ent > 8) {
     const capScore = clamp((cap-0.15)/0.25);
     const entScore = clamp((t.ent-8)/8);
@@ -243,31 +222,27 @@ export function getSmartHints(){
     });
   }
 
-  // 4) Lazy TF.js – wenn TF inline geladen wird
   if (s.features.tfInline) {
     hints.push({
       id:"lazyTF",
       title:"Editor: TF.js lazy laden (Initial-Load entlasten)",
       confidence: 70,
-      reason:"TF.js wird bereits beim Seitenstart geladen. Besser: nur beim Öffnen des Editors importieren.",
+      reason:"TF.js wird beim Seitenstart geladen. Besser: nur bei Bedarf im Editor importieren.",
       changes:[
-        {
-          file:"index.html", op:"patch",
+        { file:"index.html", op:"patch",
           find:'<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.16.0/dist/tf.min.js"></script>',
           replace:'<!-- TF.js lazy via editor.js -->'
         },
-        {
-          file:"editor.js", op:"patch",
+        { file:"editor.js", op:"patch",
           find:"async function ensureModel(){",
           replace:
-"async function ensureModel(){\n  // Lazy: TF nur bei Bedarf nachladen\n  if (typeof tf === 'undefined'){ try{ await import('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.16.0/dist/tf.min.js'); }catch(e){ console.warn('TF import failed', e); return null; } }\n  if (!window.__tfModel){\n    try{ window.__tfModel = await tf.loadLayersModel('./models/model.json'); }\n    catch(e){ console.warn('TF model load failed:', e); return null; }\n  }\n  return window.__tfModel;\n}\n"
+"async function ensureModel(){\n  // Lazy: TF nur bei Bedarf nachladen\n  if (typeof tf === 'undefined'){\n    try{ await import('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.16.0/dist/tf.min.js'); }\n    catch(e){ console.warn('TF import failed', e); return null; }\n  }\n  if (!window.__tfModel){\n    try{ window.__tfModel = await tf.loadLayersModel('./models/model.json'); }\n    catch(e){ console.warn('TF model load failed:', e); return null; }\n  }\n  return window.__tfModel;\n}\n"
         }
       ]
     });
   }
 
-  // 5) Auto-PerfMode Empfehlung (Mobile + niedrige FPS)
-  const fpsAvg = s.perf.fpsAvg || 0;
+  const fpsAvg = (getAppOpsSnapshot().perf.fpsAvg||0);
   if ((s.features.mobile && fpsAvg < 50) || fpsAvg < 40) {
     const base = s.features.mobile ? 0.7 : 0.5;
     const conf = Math.round(100*clamp(base + clamp((50 - fpsAvg)/30)));
@@ -277,10 +252,10 @@ export function getSmartHints(){
       confidence: conf,
       reason:`Heuristik: mobile=${s.features.mobile}, fpsAvg≈${Math.round(fpsAvg)}. Initial Perf-Mode reduziert Draw/Overhead.`,
       changes:[
-        {
-          file:"engine.js", op:"patch",
+        { file:"engine.js", op:"patch",
           find:"setPerfMode(pm.checked);",
-          replace:"// Auto-PerfMode: Mobile oder niedrige FPS → initial aktivieren\n  const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent||'');\n  setPerfMode(isMobile ? true : pm.checked);"
+          replace:
+"// Auto-PerfMode: Mobile oder niedrige FPS → initial aktivieren\n  const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent||'');\n  setPerfMode(isMobile ? true : pm.checked);"
         }
       ]
     });
@@ -289,7 +264,26 @@ export function getSmartHints(){
   return hints;
 }
 
-/* ---------- Smart-OPS Generator (JSON) ---------- */
+/* --------- JSON-Erzeuger --------- */
+export function buildOpsForHint(hint){
+  const h = hint;
+  const ops = {
+    v: 1,
+    title: `Auto-OPS Vorschlag: ${h.title}`,
+    goals: [h.title],
+    changes: [...(h.changes||[])],
+    accept: ["OPS kopieren, einspielen, reload; Kennzahlen (Jank/Backlog/Draw) sollten sich verbessern."],
+    notes: `Confidence ${h.confidence}% — ${h.reason||""}`
+  };
+  return JSON.stringify(ops, null, 2);
+}
+export function generateOpsForHintId(id){
+  const hint = getSmartHints().find(h=>h.id===id);
+  if(!hint) return '{"v":1,"title":"OPS","goals":[],"changes":[],"accept":["Hint nicht gefunden"]}';
+  return buildOpsForHint(hint);
+}
+
+/* --------- Sammel-OPS (alle Hints) --------- */
 export function generateOps(){
   const hints = getSmartHints();
   const ops = { v: 1, title: "Auto-OPS Vorschläge", goals: [], changes: [], accept: [] };
