@@ -1,10 +1,12 @@
 // entities.js — Entities & Bewegung (Umwelt deaktiviert); Gen-Drift & Ökonomie-Stats
 // Farbe: nach Geschlecht (M/F). Altersgrenze dynamisch nach Genetik & Vitalität.
+// STUFE 2: Spatial-Hash produktiv für Food-/Nachbarn-/Mate-Queries
 
 import { CONFIG } from "./config.js";
 import { emit } from "./event.js";
 import { getAction as drivesGetAction, afterStep as drivesAfterStep } from "./drives.js";
 import * as metrics from "./metrics.js";
+import { createGrid } from "./grid.js";
 
 let W = CONFIG.world.width, H = CONFIG.world.height;
 
@@ -17,6 +19,7 @@ let nextCellId = 1;
 /* ============ Utils ============ */
 const clamp=(x,a,b)=>Math.max(a,Math.min(b,x));
 const len=(x,y)=>Math.hypot(x,y);
+const d2=(x1,y1,x2,y2)=>{ const dx=x2-x1, dy=y2-y1; return dx*dx+dy*dy; };
 function norm(x,y){ const L=len(x,y)||1e-6; return [x/L,y/L]; }
 function limitVec(x,y,max){ const L=len(x,y); if(L>max){ const s=max/(L||1e-6); return [x*s,y*s]; } return [x,y]; }
 function rnd(a,b){ return a + Math.random()*(b-a); }
@@ -34,7 +37,7 @@ function sexColor(sex){ return sex==="M" ? CONFIG.colors.sexMale : CONFIG.colors
 
 /* ============ Exporte ============ */
 export function worldSize(){ return {width:W,height:H}; }
-export function setWorldSize(w,h){ W=w; H=h; window.__WORLD_W=W; window.__WORLD_H=H; }
+export function setWorldSize(w,h){ W=w; H=h; window.__WORLD_W=W; window.__WORLD_H=H; /* Grid wird im Step bei Bedarf erneuert */ }
 
 export function addFoodItem(f){ foodItems.push(f); }
 export function getFoodItems(){ return foodItems; }
@@ -122,19 +125,75 @@ function updateWander(c,dt){
   const [ux,uy]=(len(c.vel.x,c.vel.y)>1e-3)?norm(c.vel.x,c.vel.y):[0,0]; return [c.wander.vx+0.2*ux, c.wander.vy+0.2*uy];
 }
 
-/* Food-Sensor */
-function senseFood(c, sense){
-  let nearestItem=null, nd=Infinity; let cx=0, cy=0, n=0;
-  for(const f of foodItems){
-    const dx=f.x-c.pos.x, dy=f.y-c.pos.y; const d2=dx*dx+dy*dy;
-    if(d2> sense*sense) continue;
-    const d=Math.sqrt(d2);
-    if(d<nd){ nd=d; nearestItem={x:f.x,y:f.y,d}; }
-    if(n<3){ cx+=f.x; cy+=f.y; n++; }
+/* ============ Spatial Grid – Instanzverwaltung ============ */
+let grid = null;
+let gridMeta = { cellSize: 0, W: 0, H: 0 };
+
+function ensureGrid(sMin){
+  const baseSense = CONFIG.cell?.senseFood || 110;
+  const desired = Math.max(80, Math.round(baseSense * sMin));          // 80..~170 typischerweise
+  if (!grid || gridMeta.cellSize !== desired || gridMeta.W !== W || gridMeta.H !== H){
+    grid = createGrid(desired, W, H);
+    gridMeta = { cellSize: desired, W, H };
   }
-  const center = n? {x:cx/n, y:cy/n, d: Math.hypot(cx/n-c.pos.x, cy/n-c.pos.y)} : null;
+  return grid;
+}
+
+/* ============ Grid-basierte Queries ============ */
+function senseFoodGrid(c, senseR, grid){
+  // Kandidaten aus Buckets sammeln
+  const cand = grid.queryCircle(c.pos.x, c.pos.y, senseR);
+  let nearestItem=null, nd2=Infinity; let cx=0, cy=0, n=0;
+  const r2 = senseR*senseR;
+
+  for(const p of cand){
+    if(p?.type !== "food") continue;
+    const f = p.obj;
+    const dist2 = d2(c.pos.x,c.pos.y,f.x,f.y);
+    if (dist2 > r2) continue;
+    if (dist2 < nd2){ nd2 = dist2; nearestItem = { x:f.x, y:f.y, d: Math.sqrt(dist2) }; }
+    if (n < 3){ cx += f.x; cy += f.y; n++; }
+  }
+
+  const center = n ? { x: cx/n, y: cy/n, d: Math.hypot(cx/n - c.pos.x, cy/n - c.pos.y) } : null;
   if(!nearestItem && !center) return null;
   return { item: nearestItem, center };
+}
+
+function quickSeparationGrid(c, r, grid){
+  const cand = grid.queryCircle(c.pos.x, c.pos.y, r);
+  let sx=0, sy=0, n=0, rr=r*r;
+  for(const p of cand){
+    if(p?.type !== "cell") continue;
+    const o = p.obj;
+    if (o === c) continue;
+    const dx = c.pos.x - o.pos.x, dy = c.pos.y - o.pos.y;
+    const d2v = dx*dx + dy*dy;
+    if (d2v === 0 || d2v > rr) continue;
+    const d = Math.sqrt(d2v);
+    sx += dx/d; sy += dy/d; n++;
+  }
+  return n ? [sx/n, sy/n] : [0,0];
+}
+
+function chooseMateGrid(c, senseR, grid){
+  if(c.cooldown > 0) return null;
+  const cand = grid.queryCircle(c.pos.x, c.pos.y, senseR);
+  let best=null, bestScore=-1e9, bestD=Infinity, rr=senseR*senseR;
+
+  for(const p of cand){
+    if(p?.type !== "cell") continue;
+    const o = p.obj;
+    if (o === c || o.sex === c.sex || o.cooldown > 0) continue;
+    const dist2 = d2(c.pos.x,c.pos.y,o.pos.x,o.pos.y);
+    if (dist2 > rr) continue;
+    const d = Math.sqrt(dist2);
+    const geneScore = (o.genome.EFF*0.8 + (10 - o.genome.MET)*0.7 + o.genome.SCH*0.2 + o.genome.TEM*0.2);
+    const total = -0.05*d + geneScore;
+    if (total > bestScore){ best = o; bestScore = total; bestD = d; }
+  }
+
+  return best ? { cell: best, d: bestD } : null;
 }
 
 /* ============ Langlebigkeits-Funktion ============ */
@@ -158,10 +217,17 @@ function effectiveAgeLimit(c){
   return base * (1 + boost);
 }
 
-/* ============ Hauptschritt (Scaffold-Hook gesetzt) ============ */
-export function step(dt, _env, _t){ /* grid scaffold: befüllt im nächsten Schritt produktiv */
-  const neighbors=cells;
+/* ============ Hauptschritt (mit Grid-Switch) ============ */
+export function step(dt, _env, _t){
   const { sMin } = worldScales();
+
+  // 1) Grid anlegen / prüfen & befüllen
+  const g = ensureGrid(sMin);
+  g.clear();
+  // Food einfüllen
+  for (const f of foodItems) g.insert(f.x, f.y, { type:"food", obj:f });
+  // Zellen einfüllen
+  for (const c of cells)     g.insert(c.pos.x, c.pos.y, { type:"cell", obj:c });
 
   metrics.beginTick();
 
@@ -169,17 +235,26 @@ export function step(dt, _env, _t){ /* grid scaffold: befüllt im nächsten Schr
     const c=cells[i];
     c.age += dt; c.cooldown=Math.max(0,c.cooldown-dt);
 
-    const g=c.genome;
-    const senseFoodR=CONFIG.cell.senseFood*(0.7+0.1*g.EFF)*sMin;
-    const senseMateR=CONFIG.cell.senseMate*(0.7+0.08*g.EFF)*sMin;
-    const maxSpeed = CONFIG.cell.baseSpeed*(0.7+0.08*g.TEM)*sMin;
-    const maxForce = (CONFIG.physics.maxForceBase??140)*(0.7+0.08*g.TEM)*sMin;
+    const gnm=c.genome;
+    const senseFoodR=CONFIG.cell.senseFood*(0.7+0.1*gnm.EFF)*sMin;
+    const senseMateR=CONFIG.cell.senseMate*(0.7+0.08*gnm.EFF)*sMin;
+    const maxSpeed =  CONFIG.cell.baseSpeed*(0.7+0.08*gnm.TEM)*sMin;
+    const maxForce = (CONFIG.physics.maxForceBase??140)*(0.7+0.08*gnm.TEM)*sMin;
 
-    const foodS = senseFood(c, senseFoodR);
-    const mate  = chooseMate(c, senseMateR, neighbors);
+    // 2) Grid-basierte Suchen
+    const foodS = senseFoodGrid(c, senseFoodR, g);
+    const mate  = chooseMateGrid(c, senseMateR, g);
 
-    // grobe Nachbardichte
-    let neigh=0; for(const o of neighbors){ if(o===c) continue; const dx=o.pos.x-c.pos.x, dy=o.pos.y-c.pos.y; if(dx*dx+dy*dy<(60*sMin)*(60*sMin)) neigh++; }
+    // Nachbardichte (60*sMin) – Grid-basiert
+    let neigh=0;{
+      const R = 60*sMin, R2=R*R;
+      const local = g.queryCircle(c.pos.x, c.pos.y, R);
+      for(const p of local){
+        if(p?.type!=="cell") continue;
+        const o=p.obj; if(o===c) continue;
+        if(d2(c.pos.x,c.pos.y,o.pos.x,o.pos.y) <= R2) neigh++;
+      }
+    }
 
     const ctx={ env:{},
       food: foodS ? { x:(foodS.item?.x ?? foodS.center?.x), y:(foodS.item?.y ?? foodS.center?.y) } : null,
@@ -193,8 +268,7 @@ export function step(dt, _env, _t){ /* grid scaffold: befüllt im nächsten Schr
     // Avoid
     let [fx,fy]=[0,0], rem=maxForce;
     const fAvoid=steerWallAvoid(c);
-    const avoidW=(CONFIG.physics.wAvoid??1.15);
-    ({fx,fy,rem}=addBudget(fx,fy,rem,fAvoid[0],fAvoid[1],avoidW));
+    ({fx,fy,rem}=addBudget(fx,fy,rem,fAvoid[0],fAvoid[1], (CONFIG.physics.wAvoid??1.15)));
 
     // Primärvektor
     let fOpt=[0,0]; const slowR=Math.max(CONFIG.physics.slowRadius??120, CONFIG.cell.pairDistance*3);
@@ -213,8 +287,8 @@ export function step(dt, _env, _t){ /* grid scaffold: befüllt im nächsten Schr
     }
     ({fx,fy,rem}=addBudget(fx,fy,rem,fOpt[0],fOpt[1],1.0));
 
-    // Mini-Separation
-    const fSep=quickSeparation(c,neighbors,22*sMin);
+    // Separation – Grid
+    const fSep=quickSeparationGrid(c, 22*sMin, g);
     ({fx,fy,rem}=addBudget(fx,fy,rem,fSep[0],fSep[1],0.35));
 
     // Integration
@@ -228,20 +302,27 @@ export function step(dt, _env, _t){ /* grid scaffold: befüllt im nächsten Schr
     let eaten = 0;
     {
       const eatR = (CONFIG.food.itemRadius + radiusOf(c) + 2) * sMin;
-      for(let k=foodItems.length-1;k>=0;k--){
-        const f=foodItems[k]; const dx=f.x-c.pos.x, dy=f.y-c.pos.y;
-        if(dx*dx+dy*dy<eatR*eatR){
-          const take=CONFIG.cell.eatPerSecond*dt, got=Math.min(take,f.amount);
-          c.energy=Math.min(capEnergy(c),c.energy+got);
-          f.amount-=got; eaten += got;
-          if(f.amount<=1) foodItems.splice(k,1);
+      const eatR2 = eatR*eatR;
+      // statt über alle Items: nur lokale Buckets
+      const localFood = g.queryCircle(c.pos.x, c.pos.y, eatR);
+      for(const p of localFood){
+        if(p?.type!=="food") continue;
+        const f=p.obj;
+        if (d2(c.pos.x,c.pos.y,f.x,f.y) > eatR2) continue;
+        const take=CONFIG.cell.eatPerSecond*dt, got=Math.min(take,f.amount);
+        c.energy=Math.min(capEnergy(c),c.energy+got);
+        f.amount-=got; eaten += got;
+        if(f.amount<=1){
+          // Entferne aus globaler Liste; Grid wird im nächsten Tick neu aufgebaut
+          const idx = foodItems.indexOf(f);
+          if (idx>=0) foodItems.splice(idx,1);
         }
       }
     }
 
     // ===== Energie (keine Umwelt) =====
     const sp=len(c.vel.x,c.vel.y);
-    const baseDrain=CONFIG.cell.baseMetabolic*(0.6+0.1*g.MET)*dt;
+    const baseDrain=CONFIG.cell.baseMetabolic*(0.6+0.1*gnm.MET)*dt;
     const moveDrain=(CONFIG.physics.moveCostK??0.0006)*(sp*sp)*dt / sMin;
 
     c.energy -= baseDrain + moveDrain;
@@ -253,7 +334,6 @@ export function step(dt, _env, _t){ /* grid scaffold: befüllt im nächsten Schr
       let dv = 0;
       if (eFrac >= (L.energyGood ?? 0.60)) dv += (L.vitalityRate ?? 0.6) * dt;
       else if (eFrac <= (L.energyBad ?? 0.25)) dv -= (L.vitalityRate ?? 0.6) * dt;
-      // hazard ist 0 (Umwelt aus)
       c.vitality = clamp((c.vitality ?? 0) + dv, -1, 1);
     }
 
@@ -277,20 +357,10 @@ export function step(dt, _env, _t){ /* grid scaffold: befüllt im nächsten Schr
   }
 }
 
-/* Mate-Ziel */
-function chooseMate(c,sense,arr){
-  if(c.cooldown>0) return null; let best=null, bestScore=-1e9, bestD=Infinity;
-  for(const o of arr){ if(o===c||o.sex===c.sex||o.cooldown>0) continue;
-    const dx=o.pos.x-c.pos.x, dy=o.pos.y-c.pos.y; const d2=dx*dx+dy*dy; if(d2>sense*sense) continue; const d=Math.sqrt(d2);
-    const geneScore=(o.genome.EFF*0.8+(10-o.genome.MET)*0.7+o.genome.SCH*0.2+o.genome.TEM*0.2);
-    const total=-0.05*d + geneScore; if(total>bestScore){ best=o; bestScore=total; bestD=d; } }
-  return best?{cell:best,d:bestD}:null;
-}
-
 /* Hilfsfunktionen */
 function addBudget(fx,fy,rem,vx,vy,w){ const rx=vx*w, ry=vy*w; const m=Math.hypot(rx,ry); if(m<1e-6||rem<=0) return {fx,fy,rem};
   const allow=Math.min(m,rem), s=allow/m; return {fx:fx+rx*s, fy:fy+ry*s, rem:rem-allow}; }
-function quickSeparation(c,arr,r){ let sx=0,sy=0,n=0, rr=r*r; for(const o of arr){ if(o===c) continue; const dx=c.pos.x-o.pos.x, dy=c.pos.y-o.pos.y;
-  const d2=dx*dx+dy*dy; if(d2>rr||d2===0) continue; const d=Math.sqrt(d2); sx+=dx/d; sy+=dy/d; n++; } return n? [sx/n,sy/n]:[0,0]; }
 
 export { radiusOf as __radiusForDebug };
+
+// (Mate-Funktion wird jetzt grid-basiert in chooseMateGrid benutzt)
