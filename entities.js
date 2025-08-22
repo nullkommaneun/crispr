@@ -1,5 +1,8 @@
 // entities.js — Entities & Bewegung (Spatial-Hash aktiv)
-// Neuerungen:
+// Neuerungen (dieser Patch):
+//  - senseFood +15 % (größerer Nahrungssensor)
+//  - eatPerSecond +25 % (schnelleres Fressen)
+//  - baseMetabolic −10 % global (geringere Grundkosten)
 //  - Kreuzungsbonus bei Partnerwahl: +0.3, wenn stammId verschieden
 //  - Juvenil-Schutz: baseMetabolic ×0.8 für Age < 15 s
 
@@ -126,7 +129,7 @@ export function getGridCellSize(){ return gridMeta.cellSize || null; }
 
 function ensureGrid(sMin){
   const baseSense = CONFIG.cell?.senseFood || 110;
-  const desiredBase = baseSense * sMin * gridScaleFactor;
+  const desiredBase = baseSense * 1.15 * sMin * gridScaleFactor; // +15 % Sensorik
   const desired = Math.max(80, Math.round(desiredBase));
   if (!grid || gridMeta.cellSize !== desired || gridMeta.W !== W || gridMeta.H !== H){
     grid = createGrid(desired, W, H);
@@ -213,7 +216,7 @@ export function step(dt, _env, _t){
     c.age += dt; c.cooldown=Math.max(0,c.cooldown-dt);
 
     const gnm=c.genome;
-    const senseFoodR=CONFIG.cell.senseFood*(0.7+0.1*gnm.EFF)*sMin;
+    const senseFoodR=CONFIG.cell.senseFood*(1.15)*(0.7+0.1*gnm.EFF)*sMin; // +15 % Sensorik
     const senseMateR=CONFIG.cell.senseMate*(0.7+0.08*gnm.EFF)*sMin;
     const maxSpeed =  CONFIG.cell.baseSpeed*(0.7+0.08*gnm.TEM)*sMin;
     const maxForce = (CONFIG.physics.maxForceBase??140)*(0.7+0.08*gnm.TEM)*sMin;
@@ -254,13 +257,14 @@ export function step(dt, _env, _t){
         fOpt = steerSeekArrive(c,{x:foodS.center.x,y:foodS.center.y}, maxSpeed, stopCenter, slowR);
       }
 
-      // Essen (nur lokale Buckets)
+      // Essen (nur lokale Buckets) – +25 % Intake
       let eaten=0;
       const localFood = g.queryCircle(c.pos.x, c.pos.y, eatR);
       for(const p of localFood){
         if(p?.type!=="food") continue; const f=p.obj;
         if (d2(c.pos.x,c.pos.y,f.x,f.y) > eatR2) continue;
-        const take=CONFIG.cell.eatPerSecond*dt, got=Math.min(take,f.amount);
+        const take=CONFIG.cell.eatPerSecond * 1.25 * dt; // +25 %
+        const got=Math.min(take,f.amount);
         c.energy=Math.min(capEnergy(c),c.energy+got); f.amount-=got; eaten+=got;
         if(f.amount<=1){ const idx=foodItems.indexOf(f); if(idx>=0) foodItems.splice(idx,1); }
       }
@@ -283,9 +287,9 @@ export function step(dt, _env, _t){
     c.pos.x=clamp(c.pos.x+c.vel.x*dt,0,W); c.pos.y=clamp(c.pos.y+c.vel.y*dt,0,H);
     c.vel.x*=0.985; c.vel.y*=0.985;
 
-    // Energie (Juvenil-Schutz + Grundkosten)
+    // Energie (global −10 % Grundumsatz + Juvenil-Schutz)
     const sp=len(c.vel.x,c.vel.y);
-    let baseDrain=CONFIG.cell.baseMetabolic*(0.6+0.1*gnm.MET)*dt;
+    let baseDrain=CONFIG.cell.baseMetabolic * 0.9 * (0.6+0.1*gnm.MET) * dt; // −10 %
     if (c.age < 15) baseDrain *= 0.8; // Juvenil-Schutz
     const moveDrain=(CONFIG.physics.moveCostK??0.0006)*(sp*sp)*dt / sMin;
     c.energy -= baseDrain + moveDrain;

@@ -1,26 +1,26 @@
-// food.js — Cluster-basierter Food-Spawner (Gauß), jetzt mit global +15% Spawnrate
-// API: step(dt), setSpawnRate(perSec), spawnClusters(n?)
+// food.js — Cluster-basierter Food-Spawner (Gauß)
+// Patch: Spread (σ) −15 % → enger um die Cluster zentriert
 
 import { worldSize, addFoodItem } from "./entities.js";
 import { emit } from "./event.js";
 
 const CLUSTERS = [];
-let ratePerSec = 6;         // UI-Basis (wird per setSpawnRate gesetzt)
-const SPAWN_BOOST = 1.15;   // +15% global
+let ratePerSec = 6;         // wird via setSpawnRate(x) gesetzt (UI-Basis)
+const SPAWN_BOOST = 1.15;   // globaler Boost (falls gewünscht, hier 1.15 aktiv)
 
 let acc = 0;
 
-// Cluster-Params
+// Cluster-Params (σ von 42 → 36, also −15 %)
 const CFG = {
   nClusters: 3,
   drift: 18,             // px/s
-  spread: 42,            // Gauß σ
+  spread: 36,            // Gauß σ (vorher 42)
   itemRadius: 2,
   decay: 0.000,          // optionaler Zerfall
 };
 
 export function setSpawnRate(perSec){
-  // Anwenderwert * globaler Boost
+  // Anwenderwert * optionaler globaler Boost
   ratePerSec = Math.max(0, +perSec || 0) * SPAWN_BOOST;
 }
 
@@ -72,7 +72,7 @@ export function step(dt){
     const c = CLUSTERS.length ? CLUSTERS[(Math.random()*CLUSTERS.length)|0] : null;
     if (!c) continue;
 
-    // Gauß-Offset
+    // Gauß-Offset (mit engerem σ)
     const ox = gauss(0, CFG.spread);
     const oy = gauss(0, CFG.spread);
 
@@ -84,9 +84,6 @@ export function step(dt){
   }
 
   // optionaler Zerfall (derzeit 0)
-  if (CFG.decay > 0){
-    // könnte FoodItems reduzieren; wird hier nicht benötigt
-  }
 }
 
 // Initiale Cluster
