@@ -3,12 +3,14 @@
 <head>
   <meta charset="utf-8" />
   <title>CRISPR Genetics Lab</title>
+  <!-- Double-Tap-Zoom & Pinch abschalten (bei Bedarf wieder ändern) -->
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
   <link rel="stylesheet" href="./style.css">
-  <!-- TensorFlow.js (für Prognose im Editor) -->
+  <!-- TensorFlow.js (für den Editor-Prognose-Score) -->
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.16.0/dist/tf.min.js"></script>
 </head>
 <body>
+  <!-- TOPBAR -->
   <div id="topbar">
     <div class="controls">
       <div class="group">
@@ -51,15 +53,18 @@
     <div id="ticker"></div>
   </div>
 
+  <!-- SPIELFLÄCHE -->
   <div id="worldWrap">
     <canvas id="world" width="1024" height="640"></canvas>
   </div>
 
+  <!-- PANELS -->
   <div id="editorPanel" class="panel hidden"></div>
   <div id="envPanel" class="panel hidden"></div>
   <div id="dummyPanel" class="panel hidden"></div>
   <div id="diagPanel" class="panel hidden"></div>
 
+  <!-- Fehler-Overlay (Bootstrap/Preflight verwenden das) -->
   <div id="errorOverlay" class="hidden">
     <div class="errorCard">
       <h3>Fehler</h3>
@@ -68,17 +73,9 @@
     </div>
   </div>
 
-  <!-- Preflight separat (damit ?pf=1 immer funktioniert) -->
+  <!-- WICHTIG: Preflight separat laden, damit ?pf=1 IMMER funktioniert -->
   <script type="module" src="./preflight.js"></script>
-  <!-- Boot-Loader -->
+  <!-- Boot-Loader (lädt engine.js etc.) -->
   <script type="module" src="./bootstrap.js"></script>
-  <!-- Service Worker Registrierung (PWA) -->
-  <script>
-    if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => {
-        navigator.serviceWorker.register('./sw.js').catch(()=>{});
-      });
-    }
-  </script>
 </body>
 </html>
