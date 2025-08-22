@@ -1,4 +1,4 @@
-// genea.js — Vollansicht-Stammbaum mit zwei Scroll-Slidern (oben/ rechts)
+// genea.js — Vollansicht-Stammbaum mit zwei Scroll-Slidern (oben/rechts) + "Fit"-Button
 import { getAll, getStats, exportJSON } from "./genealogy.js";
 
 const panel = document.getElementById("diagPanel");
@@ -28,10 +28,11 @@ export function openGenealogyPanel(){
   hSlider.type="range"; hSlider.min="0"; hSlider.max="100"; hSlider.step="1"; hSlider.value="50";
   hSlider.style.flex="1";
 
-  const btnCenter = document.createElement("button"); btnCenter.textContent="Zentrieren";
-  const btnExport = document.createElement("button"); btnExport.textContent="Export JSON";
+  const btnCenter = document.createElement("button"); btnCenter.textContent = "Zentrieren";
+  const btnFit    = document.createElement("button"); btnFit.textContent    = "Fit";
+  const btnExport = document.createElement("button"); btnExport.textContent = "Export JSON";
 
-  topBar.append(hSlider, btnCenter, btnExport);
+  topBar.append(hSlider, btnCenter, btnFit, btnExport);
   body.append(topBar);
 
   // ======= Canvas + vertikaler Slider rechts =======
@@ -53,7 +54,7 @@ export function openGenealogyPanel(){
 
   const vSlider = document.createElement("input");
   vSlider.type="range"; vSlider.min="0"; vSlider.max="100"; vSlider.step="1"; vSlider.value="0";
-  // vertikal drehen
+  vSlider.classList.add("vscroll"); // touch-action: pan-y (siehe CSS)
   vSlider.style.transform = "rotate(-90deg)";
   vSlider.style.width = "520px";   // entspricht Canvas-Höhe
   vSlider.style.height = "26px";
@@ -121,7 +122,6 @@ export function openGenealogyPanel(){
   function syncSliders(){
     const maxHX = Math.max(0, bbox.w - cv.width/scale);
     const maxHY = Math.max(0, bbox.h - cv.height/scale);
-    // map viewX/Y -> 0..100
     const hx = maxHX>0 ? ( (viewX - bbox.x) / maxHX )*100 : 0;
     const hy = maxHY>0 ? ( (viewY - bbox.y) / maxHY )*100 : 0;
     hSlider.value = String(Math.max(0, Math.min(100, Math.round(hx))));
@@ -145,6 +145,16 @@ export function openGenealogyPanel(){
     viewY = (bbox.y + bbox.h/2) - (cv.height/scale)/2;
     syncSliders(); draw();
   };
+
+  // === Fit-Handler: gesamte BBox in den Frame einpassen ===
+  btnFit.onclick = ()=>{
+    const scaleFit = Math.min(1, Math.min(cv.width/bbox.w, cv.height/bbox.h));
+    scale = scaleFit;
+    viewX = (bbox.x + bbox.w/2) - (cv.width/scale)/2;
+    viewY = (bbox.y + bbox.h/2) - (cv.height/scale)/2;
+    syncSliders(); draw();
+  };
+
   btnExport.onclick = ()=>{
     const blob=new Blob([ JSON.stringify(exportJSON(),null,2) ], {type:"application/json"});
     const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="genealogy.json"; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
@@ -173,7 +183,6 @@ export function openGenealogyPanel(){
     for(const e of data.edges){
       const a = positions.get(e.from), b = positions.get(e.to);
       if(!a||!b) continue;
-      // schnell clippen
       if (!rectIntersectsLine(vis, a[0],a[1], b[0],b[1])) continue;
       ctx.beginPath();
       ctx.moveTo(a[0], a[1]+18);
@@ -206,7 +215,6 @@ export function openGenealogyPanel(){
   }
 
   function rectIntersectsLine(rect, x1,y1, x2,y2){
-    // schneller Test: beide Punkte außerhalb auf derselben Seite → nein
     const minX=Math.min(x1,x2), maxX=Math.max(x1,x2), minY=Math.min(y1,y2), maxY=Math.max(y1,y2);
     if (maxX < rect.x || minX > rect.x+rect.w || maxY < rect.y || minY > rect.y+rect.h) return false;
     return true;

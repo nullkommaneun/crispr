@@ -1,3 +1,4 @@
+import { getEnvState } from "./environment.js"; // falls du später wieder ENV nutzt
 import { getCells, getFoodItems } from "./entities.js";
 import { getDrivesSnapshot } from "./drives.js";
 
@@ -6,7 +7,8 @@ let el, perf=false, speedLabel=1;
 export function initTicker(){
   el = document.getElementById("ticker");
   updateSnapshot();
-  setInterval(updateSnapshot, 5000);
+  // ruhiger: alle 7s
+  setInterval(updateSnapshot, 7000);
 }
 export function setPerfMode(on){ perf=!!on; }
 
@@ -36,18 +38,22 @@ export function updateSnapshot(){
 
   el.innerHTML = `
     <span>Tempo: <b>×${speedLabel}</b></span>
-    <span>FPS (Bildrate): <b>${fps}</b></span>
-    <span>Sim-Schritt (s): <b>${avgDt}</b></span>
+    <span>FPS: <b>${fps}</b></span>
+    <span>Sim-dt: <b>${avgDt}</b></span>
     <span>Zellen: <b>${cells}</b></span>
     <span>Food: <b>${food}</b></span>
-    <span>Perf-Modus: <b>${perf?'An':'Aus'}</b></span>
+    <span>Perf: <b>${perf?'An':'Aus'}</b></span>
     <span>Scale: <b>s=${sc.sMin}</b>, <b>A=${sc.area}</b></span>
     <span>Drives: <b>${du}</b> / <b>${wr}%</b> (K=${kdist}, RP=${rpair}, E=${eps})</span>
   `;
 }
 
-export function setSpeedIndicator(x){ speedLabel = x; updateSnapshot(); }
+export function setSpeedIndicator(x){
+  speedLabel = x;
+  updateSnapshot();
+}
 
+/* helpers */
 function fmtK(n){ if(n==null) return "-"; if(n<1000) return String(n); const k=(n/1000).toFixed(1); return k.replace(/\.0$/,"")+"k"; }
 function safeDrives(){ try{ return getDrivesSnapshot() || { misc:{duels:0,wins:0}, cfg:{} }; } catch{ return { misc:{duels:0,wins:0}, cfg:{} }; } }
 function worldScaleInfo(){

@@ -50,3 +50,15 @@ async function diagnose(){
   return lines.join("\n");
 }
 // … Rest des Files unverändert …
+
+// === Dev-Hook: manuelle Preflight-Anzeige mit ?pf=1 ===
+(function devHook(){
+  try{
+    const q = new URLSearchParams(location.search);
+    if (q.get("pf") === "1") {
+      diagnose().then(report => {
+        showOverlay("Manuelle Diagnose (pf=1):\n\n" + report);
+      });
+    }
+  }catch{}
+})();

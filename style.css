@@ -208,3 +208,6 @@ input[type="text"]::placeholder{ color:#6f8598; }
   button{ padding:4px 7px; font-size:12px; }
   #ticker{ font-size:10.5px; }
 }
+/* Ticker kompakter (höhere Dichte) */
+#ticker{ row-gap: 0px !important; }
+#ticker span{ line-height: 1.15; }
