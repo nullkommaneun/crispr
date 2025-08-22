@@ -7,11 +7,9 @@ const OVERLAY_ID = "preflightOverlay";
 const TIMEOUT_MS = 2200;
 
 /* ========= Runtime-Fehlerpuffer (robust) ========= */
-// Einheitliche Fehlerablage – auch wenn dieses Script mehrfach geladen würde
 if (!window.__pfRuntimeErrors) window.__pfRuntimeErrors = [];
 const runtimeErrors = window.__pfRuntimeErrors;
 
-// Laufzeitfehler sammeln (global)
 window.addEventListener("error", (e) => {
   try { runtimeErrors.push(`window.error: ${e?.message || e}`); } catch {}
 });
@@ -19,7 +17,7 @@ window.addEventListener("unhandledrejection", (e) => {
   try { runtimeErrors.push(`unhandledrejection: ${e?.reason || e}`); } catch {}
 });
 
-/* ========= Overlay-Helfer ========= */
+/* ========= Overlay ========= */
 function ensureOverlay(){
   let el = document.getElementById(OVERLAY_ID);
   if (el) return el;
@@ -75,18 +73,16 @@ async function checkModule(path, expects){
   }
 }
 
-/* ========= Diagnose-Kern ========= */
+/* ========= Diagnose ========= */
 async function diagnose(){
   const lines = [];
 
-  // DOM
   try{
     const missingDom = listMissingDom();
     if(missingDom.length) lines.push(`⚠️ Fehlende DOM-IDs: ${missingDom.join(", ")}`);
     else lines.push("✅ DOM-Struktur OK");
   }catch{ lines.push("⚠️ DOM-Check nicht ausführbar."); }
 
-  // Module & Exporte (an Projektstand angepasst)
   const checks = [
     ["./event.js",         ["on","off","emit"]],
     ["./config.js",        ["CONFIG"]],
@@ -107,14 +103,12 @@ async function diagnose(){
     ["./drives.js",        ["initDrives","getTraceText","getAction","afterStep","getDrivesSnapshot","setTracing"]],
     ["./diag.js",          ["openDiagPanel"]],
   ];
-
   for(const [path, expects] of checks){
     lines.push(await checkModule(path, expects));
   }
 
-  // Laufzeitfehler (robust lesen)
   try{
-    const errs = Array.isArray(window.__pfRuntimeErrors) ? window.__pfRuntimeErrors : (Array.isArray(runtimeErrors) ? runtimeErrors : []);
+    const errs = Array.isArray(window.__pfRuntimeErrors) ? window.__pfRuntimeErrors : [];
     if(errs.length){
       lines.push("\nLaufzeitfehler:");
       for(const r of errs) lines.push(`• ${r}`);
@@ -125,14 +119,14 @@ async function diagnose(){
 
   lines.push(
     "\nHinweise:",
-    "- Prüfe Groß/Kleinschreibung von Dateinamen (Pages ist case-sensitiv).",
-    "- Setze Cache-Buster (z. B. ?ts=" + Date.now() + ") beim Neuladen."
+    "- Prüfe Groß/Kleinschreibung von Dateinamen.",
+    "- Neuladen mit Cache-Buster (z. B. ?ts=" + Date.now() + ")."
   );
 
   return lines.join("\n");
 }
 
-/* ========= Watchdog: App nicht gestartet? ========= */
+/* ========= Watchdog ========= */
 function armWatchdog(){
   setTimeout(async ()=>{
     if(!window[BOOT_FLAG]){
@@ -149,11 +143,9 @@ ${report}`
     }
   }, TIMEOUT_MS);
 }
-
-/* ========= Auto-Start ========= */
 document.addEventListener("DOMContentLoaded", armWatchdog);
 
-/* ========= Dev-Hook: manuelle Preflight-Anzeige mit ?pf=1 ========= */
+/* ========= Manueller Trigger: ?pf=1 ========= */
 (function devHook(){
   try{
     const q = new URLSearchParams(location.search);
