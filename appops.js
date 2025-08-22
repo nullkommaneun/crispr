@@ -1,4 +1,6 @@
-// appops.js — Smart-Ops v2: Learned Confidence (session-basiert), Feature-Scan, Hints mit Begründung
+// appops.js — Smart-Ops v2 + Lazy-Assets-Hinweis
+// Telemetrie, Feature-Scan, Learned Confidence (pro Device-Profil), Hints mit Begründung
+
 import { on } from "./event.js";
 
 /* ====================== STATE ====================== */
@@ -16,6 +18,8 @@ const state = {
 /* session learning storages (localStorage) */
 const LS_LAST   = "smartops.lastSession";
 const LS_LEARN  = "smartops.learn";
+const LS_PROFILE= "smartops.profile";
+
 const clamp = (x,min=0,max=1)=> Math.max(min, Math.min(max, x));
 const isMobileUA = ()=> /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent||"");
 
@@ -81,6 +85,9 @@ function scanResources(){
     state.resources={ scannedAt:Date.now(), total, largest:list.slice(0,12) };
   }catch{}
 }
+
+/* ====================== FEATURE-/ASSET-SCAN ====================== */
+// Preflight-Hook vorhanden? TF inline? SW aktiv? Mobile?
 async function scanFeatures(){
   try{
     const res = await fetch("./preflight.js", { cache:"no-store" });
@@ -89,6 +96,14 @@ async function scanFeatures(){
   state.features.tfInline = !!document.querySelector('script[src*="@tensorflow/tfjs"]');
   state.features.swActive = !!(navigator.serviceWorker && navigator.serviceWorker.controller);
   state.features.mobile   = isMobileUA() || (window.matchMedia && window.matchMedia("(max-width: 768px)").matches);
+}
+// Große Ressourcen (für Lazy-Hinweis)
+function heavyAssets(){
+  const res = performance.getEntriesByType('resource')||[];
+  return res
+    .filter(e=> (e.transferSize||e.encodedBodySize||0) > 200*1024)
+    .map(e=>({ name:(e.name||"").split('/').slice(-2).join('/'), sizeKB:Math.round((e.transferSize||e.encodedBodySize)/1024) }))
+    .sort((a,b)=> b.sizeKB - a.sizeKB);
 }
 
 /* ====================== MODULE MATRIX ====================== */
@@ -134,14 +149,11 @@ export function startCollectors(){
   startRafSampler(); startLongTaskObserver(); startTopbarObserver(); scanResources(); scanFeatures();
   setInterval(scanResources, 15000);
   setInterval(scanFeatures, 20000);
-
-  // Baseline-Capture & Learning (einmal pro Load, nach kurzer Stabilisierung)
-  setTimeout(captureAndLearn, 5500);
 }
 
 /* ==== Fingerprint/Cost ==== */
 function currentKnobs(){
-  const pm = !!document.getElementById("perfmode")?.checked; // initial UI-Wert
+  const pm = !!document.getElementById("perfmode")?.checked;
   return Promise.all([
     import("./ticker.js").then(m=> m.getUpdateInterval?.() ?? 7000),
     import("./renderer.js").then(m=> m.getPadOverride?.() ?? null),
@@ -157,55 +169,12 @@ function currentKnobs(){
 }
 function currentCost(){
   const s = getAppOpsSnapshot();
-  // normierte Kostenkomponenten (0..1+)
   const cap = clamp(s.engine.capRatio, 0, 1);
   const draw = clamp((s.timings.draw||0)/16, 0, 2);
   const ent  = clamp((s.timings.ent ||0)/16, 0, 2);
   const jank = clamp((s.perf.jank||0)/12, 0, 2);
   const flow = clamp((s.layout.reflows||0)/12, 0, 2);
-  // Gewichtung: Backlog 0.35, Draw 0.25, Entities 0.2, Jank 0.15, Reflows 0.05
   return +(0.35*cap + 0.25*draw + 0.20*ent + 0.15*jank + 0.05*flow).toFixed(4);
-}
-
-/* ==== Learning across sessions ==== */
-async function captureAndLearn(){
-  const knobs = await currentKnobs();
-  const cost  = currentCost();
-  const now = Date.now();
-
-  // load previous
-  const prev = safeParse(localStorage.getItem(LS_LAST));
-  const learn = safeParse(localStorage.getItem(LS_LEARN)) || {}; // id -> {succ,fail,gain}
-
-  if (prev && prev.knobs){
-    const gain = +(prev.cost - cost).toFixed(4); // positive = Verbesserung
-    const delta = diffKnobs(prev.knobs, knobs);
-
-    // map deltas -> hint ids
-    if (delta.ticker) bump(learn, "ticker", gain);
-    if (delta.pad)    bump(learn, "drawpad", gain);
-    if (delta.grid)   bump(learn, "gridfine", gain);
-    if (delta.pm)     bump(learn, "autoPerf", gain);
-    if (delta.tf)     bump(learn, "lazyTF", gain);
-
-    localStorage.setItem(LS_LEARN, JSON.stringify(learn));
-  }
-
-  localStorage.setItem(LS_LAST, JSON.stringify({ ts: now, knobs, cost }));
-}
-
-function diffKnobs(a, b){
-  const ticker = (a.tickerMs||0)!==(b.tickerMs||0);
-  const pad    = (a.padOverride||null)!==(b.padOverride||null);
-  const grid   = (a.gridCellSize||0)!==(b.gridCellSize||0) || (a.gridScale||1)!==(b.gridScale||1);
-  const pm     = (!!a.perfModeInit)!==(!!b.perfModeInit);
-  const tf     = (!!a.tfInline)!==(!!b.tfInline);
-  return { ticker, pad, grid, pm, tf };
-}
-function bump(learn, id, gain){
-  const e = learn[id] || (learn[id]={succ:0,fail:0,gain:0});
-  if (gain > 0){ e.succ++; e.gain = +((e.gain + gain)/2).toFixed(4); }
-  else         { e.fail++; e.gain = +((e.gain + gain)/2).toFixed(4); }
 }
 
 /* ====================== PUBLIC SNAPSHOT ====================== */
@@ -229,7 +198,6 @@ export function getAppOpsSnapshot(){
 /* ====================== SMART HINTS ====================== */
 export function getSmartHints(){
   const s = getAppOpsSnapshot();
-  const learn = safeParse(localStorage.getItem(LS_LEARN)) || {};
   const H = [];
 
   const jank = s.perf.jank || 0;
@@ -238,59 +206,54 @@ export function getSmartHints(){
   const t = s.timings || { ent:0, repro:0, food:0, draw:0 };
   const fpsAvg = s.perf.fpsAvg || 0;
 
-  // helper: learned confidence
-  const learnedConf = (id, base)=> {
-    const e = learn[id]; if(!e) return base;
-    const tries = (e.succ + e.fail) || 1;
-    const winrate = e.succ / tries;       // 0..1
-    const gain    = e.gain || 0;          // positiv gut
-    const bonus = clamp(0.5*winrate + 0.5*clamp(gain/0.2)); // 0..1
-    return Math.round( clamp(base/100 + 0.4*bonus, 0, 1) * 100 );
-  };
-
   // 0) Preflight nur falls fehlt
   if (!s.features.preflightHook) {
     H.push({
       id:"preflight",
       title:"Preflight-Hook (?pf=1)",
-      confidence: learnedConf("preflight", 85),
+      confidence: 85,
       reason:"Schneller manueller Diagnosezugriff; aktuell nicht im preflight.js gefunden.",
       changes:[{ file:"preflight.js", op:"append",
         code:"// === Dev-Hook: manuelle Preflight-Anzeige mit ?pf=1 ===\n(function devHook(){\n  try{\n    const q=new URLSearchParams(location.search);\n    if(q.get('pf')==='1') diagnose().then(r=>showOverlay('Manuelle Diagnose (pf=1):\\n\\n'+r));\n  }catch{}\n})();\n"}]
     });
   }
 
+  // 1) UI beruhigen
   if (jank > 5 || reflows > 5) {
-    const base = Math.round(100*clamp(0.6*clamp((jank-5)/10) + 0.4*clamp((reflows-5)/10)));
+    const jankScore = clamp((jank-5)/10), reflowScore = clamp((reflows-5)/10);
+    const conf = Math.round(100*clamp(0.6*jankScore + 0.4*reflowScore));
     H.push({
       id:"ticker",
       title:"Ticker throttle & kompakter",
-      confidence: learnedConf("ticker", base),
+      confidence: conf,
       reason:`UI-Detektor: jank=${jank}, reflows=${reflows}. Weniger Reflow durch selteneres Update & dichtere Zeilen.`,
       changes:[
         { file:"ticker.js", op:"patch", find:"setInterval\\(updateSnapshot, 5000\\);", replace:"setInterval(updateSnapshot, 7000);" },
-        { file:"style.css", op:"append", code:"/* Ticker kompakter */\n#ticker{ row-gap:0 !important; }\n#ticker span{ line-height:1.15; }\n" }
+        { file:"style.css", op:"append", code:"/* Ticker kompakter (Smart-Ops) */\n#ticker{ row-gap:0 !important; }\n#ticker span{ line-height:1.15; }\n" }
       ]
     });
   }
 
-  if (t.draw > 8) {
-    const base = Math.round(100*clamp((t.draw-8)/8));
+  // 2) Draw teuer?
+  if ((t.draw||0) > 8) {
+    const conf = Math.round(100*clamp((t.draw-8)/8));
     H.push({
       id:"drawpad",
       title:"Renderer: Culling-Pad im Perf-Mode senken",
-      confidence: learnedConf("drawpad", base),
+      confidence: conf,
       reason:`Draw-Detektor: draw≈${t.draw}ms. Kleinerer Puffer im Perf-Mode reduziert Overdraw.`,
       changes:[{ file:"renderer.js", op:"patch", find:"const pad = 24;", replace:"const pad = perfMode ? 12 : 24;" }]
     });
   }
 
-  if (cap > 0.15 || t.ent > 8) {
-    const base = Math.round(100*clamp(0.6*clamp((cap-0.15)/0.25) + 0.4*clamp((t.ent-8)/8)));
+  // 3) Engine-Backlog / Entities teuer?
+  if ((cap||0) > 0.15 || (t.ent||0) > 8) {
+    const capScore = clamp((cap-0.15)/0.25), entScore = clamp((t.ent-8)/8);
+    const conf = Math.round(100*clamp(0.6*capScore + 0.4*entScore));
     H.push({
       id:"gridfine",
       title:"Spatial-Grid: 10% kleinere Buckets",
-      confidence: learnedConf("gridfine", base),
+      confidence: conf,
       reason:`Engine-Detektor: Backlog=${Math.round(cap*100)}%, entities≈${t.ent}ms. Dichteres Grid reduziert Kandidaten pro Query.`,
       changes:[
         { file:"entities.js", op:"patch",
@@ -301,11 +264,12 @@ export function getSmartHints(){
     });
   }
 
+  // 4) TF inline → lazy
   if (s.features.tfInline) {
     H.push({
       id:"lazyTF",
       title:"Editor: TF.js lazy laden (Initial-Load entlasten)",
-      confidence: learnedConf("lazyTF", 70),
+      confidence: 70,
       reason:"TF.js wird beim Seitenstart geladen. Besser: nur bei Bedarf im Editor importieren.",
       changes:[
         { file:"index.html", op:"patch",
@@ -321,13 +285,30 @@ export function getSmartHints(){
     });
   }
 
-  if ((state.features.mobile && fpsAvg < 50) || fpsAvg < 40) {
-    const base = Math.round(100*clamp( (state.features.mobile?0.7:0.5) + clamp((50 - fpsAvg)/30) ));
+  // 5) Große Assets → Lazy-Hinweis
+  const heavy = heavyAssets();
+  if (heavy.length){
+    const top = heavy.slice(0,3);
+    const list = top.map(a=>`${a.name} (~${a.sizeKB}KB)`).join(', ');
+    H.push({
+      id:"lazyAssets",
+      title:"Große Assets lazy laden",
+      confidence: 65,
+      reason:`Gefundene große Ressourcen: ${list}. Prüfe, ob Lazy-Import möglich ist (Panel/Modell nur bei Bedarf).`,
+      changes: [] // nur Hinweis – konkrete Patches sind projektabhängig
+    });
+  }
+
+  // 6) Auto-Perf auf Mobile/niedriger FPS
+  const fpsAvg = (s.perf.fpsAvg||0);
+  if ((s.features.mobile && fpsAvg < 50) || fpsAvg < 40) {
+    const base = s.features.mobile ? 0.7 : 0.5;
+    const conf = Math.round(100*clamp(base + clamp((50 - fpsAvg)/30)));
     H.push({
       id:"autoPerf",
       title:"Auto-PerfMode auf Mobile/niedriger FPS",
-      confidence: learnedConf("autoPerf", base),
-      reason:`Heuristik: mobile=${state.features.mobile}, fpsAvg≈${Math.round(fpsAvg)}. Initial Perf-Mode reduziert Draw/Overhead.`,
+      confidence: conf,
+      reason:`Heuristik: mobile=${s.features.mobile}, fpsAvg≈${Math.round(fpsAvg)}. Initial Perf-Mode reduziert Draw/Overhead.`,
       changes:[{ file:"engine.js", op:"patch",
         find:"setPerfMode(pm.checked);",
         replace:
@@ -353,7 +334,3 @@ export function generateOps(){
   if (notes.length) ops.notes = notes.join(" | ");
   return JSON.stringify(ops, null, 2);
 }
-
-/* ====================== UTIL ====================== */
-function safeParse(s){ try{ return s? JSON.parse(s): null; }catch{ return null; } }
-export function startCollectorsOnce(){ startCollectors(); } // optional alias
