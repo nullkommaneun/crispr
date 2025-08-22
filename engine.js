@@ -1,89 +1,287 @@
+// engine.js — Orchestrierung: Game-Loop, UI, Timescale, Annealing, Panels
+// mobile-ready: Topbar-Höhe wird laufend gemessen (ResizeObserver) und an CSS übergeben.
+
 import { initErrorManager, breadcrumb } from "./errorManager.js";
-import { setWorldSize, createAdamAndEve, step as entitiesStep } from "./entities.js";
-import { step as reproductionStep, setMutationRate } from "./reproduction.js";
-import { step as foodStep, setSpawnRate } from "./food.js";
+
+import {
+  setWorldSize,
+  createAdamAndEve,
+  step as entitiesStep
+} from "./entities.js";
+
+import {
+  step as reproductionStep,
+  setMutationRate
+} from "./reproduction.js";
+
+import {
+  step as foodStep,
+  setSpawnRate
+} from "./food.js";
+
 import { draw, setPerfMode as rendererPerf } from "./renderer.js";
 import { openEditor } from "./editor.js";
-import { initTicker, setPerfMode as tickerPerf, pushFrame } from "./ticker.js";
+
+import {
+  initTicker,
+  setPerfMode as tickerPerf,
+  pushFrame
+} from "./ticker.js";
+
 import { emit, on } from "./event.js";
 import { openDummyPanel, handleCanvasClickForDummy } from "./dummy.js";
 import { initDrives } from "./drives.js";
+
+// Umwelt ist Stub (neutral), wir lesen nur den State und reichen ihn weiter
 import { getEnvState } from "./environment.js";
 
-let running=false, timescale=1, perfMode=false;
-const SPEED_STEPS=[1,5,10,50]; let speedIdx=0;
-let lastTime=0, acc=0; const fixedDt=1/60; let simTime=0; let annealAccum=0;
+/* ---------- Laufzeit-Flags ---------- */
+let running = false;
+let timescale = 1;
+let perfMode = false;
 
-function resizeCanvas(){
-  const canvas=document.getElementById("world");
-  const topbar=document.getElementById("topbar");
-  if(topbar){ const h=topbar.offsetHeight||56; document.documentElement.style.setProperty("--topbar-h", h+"px"); }
-  const rect=canvas.getBoundingClientRect(); canvas.width=Math.round(rect.width); canvas.height=Math.round(rect.height);
+const SPEED_STEPS = [1, 5, 10, 50];
+let speedIdx = 0;
+
+let lastTime = 0;
+let acc = 0;
+const fixedDt = 1 / 60;
+let simTime = 0;
+
+// Mutation-Annealing (sekündlich)
+let annealAccum = 0;
+
+/* =========================================================
+   Topbar-Höhe korrekt an CSS geben (über --topbar-h)
+   ========================================================= */
+function setTopbarHeightVar() {
+  const topbar = document.getElementById("topbar");
+  const h = topbar ? (topbar.offsetHeight || 56) : 56;
+  document.documentElement.style.setProperty("--topbar-h", h + "px");
+}
+
+let _topbarRO = null;
+function installTopbarObserver() {
+  const topbar = document.getElementById("topbar");
+  if (!topbar) return;
+  try {
+    _topbarRO?.disconnect();
+    _topbarRO = new ResizeObserver(() => {
+      setTopbarHeightVar();
+      // Canvas sofort synchronisieren, damit nichts „darunter rutscht“
+      const canvas = document.getElementById("world");
+      if (canvas) {
+        const rect = canvas.getBoundingClientRect();
+        canvas.width = Math.round(rect.width);
+        canvas.height = Math.round(rect.height);
+        setWorldSize(canvas.width, canvas.height);
+      }
+    });
+    _topbarRO.observe(topbar);
+  } catch {}
+}
+
+/* ---------- Canvas-Resize ---------- */
+function resizeCanvas() {
+  setTopbarHeightVar();
+  const canvas = document.getElementById("world");
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = Math.round(rect.width);
+  canvas.height = Math.round(rect.height);
   setWorldSize(canvas.width, canvas.height);
 }
-function bindUI(){
-  document.getElementById("btnStart").onclick=()=>{ breadcrumb("ui:btn","Start"); start(); };
-  document.getElementById("btnPause").onclick=()=>{ breadcrumb("ui:btn","Pause"); pause(); };
-  document.getElementById("btnReset").onclick=()=>{ breadcrumb("ui:btn","Reset"); reset(); };
-  document.getElementById("btnEditor").onclick=()=>{ breadcrumb("ui:btn","Editor"); openEditor(); };
-  const btnGenea=document.getElementById("btnGenea"); if(btnGenea) btnGenea.onclick=()=>{ import("./genea.js").then(m=>m.openGenealogyPanel()); };
-  const btnDummy=document.getElementById("btnDummy"); if(btnDummy) btnDummy.onclick=()=>{ breadcrumb("ui:btn","Dummy"); openDummyPanel(); };
-  const btnDiag =document.getElementById("btnDiag");  if(btnDiag)  btnDiag.onclick =()=>{ breadcrumb("ui:btn","Diagnose"); import("./diag.js").then(m=>m.openDiagPanel()); };
 
-  const mu=document.getElementById("mutation"); mu.oninput=()=> setMutationRate(parseFloat(mu.value));
-  const fr=document.getElementById("foodrate");  fr.oninput=()=> setSpawnRate(parseFloat(fr.value));
-  const pm=document.getElementById("perfmode");  pm.oninput=()=> setPerfMode(pm.checked);
+/* =========================================================
+   UI-Bindings
+   ========================================================= */
+function bindUI() {
+  // Hauptbuttons
+  const btnStart = document.getElementById("btnStart");
+  const btnPause = document.getElementById("btnPause");
+  const btnReset = document.getElementById("btnReset");
+  const btnEditor = document.getElementById("btnEditor");
+  const btnGenea = document.getElementById("btnGenea");
+  const btnDummy = document.getElementById("btnDummy");
+  const btnDiag = document.getElementById("btnDiag");
+  const btnSpeed = document.getElementById("btnSpeed");
 
-  const sp=document.getElementById("btnSpeed"); sp.onclick=()=>{ cycleSpeed(); };
+  btnStart.onclick = () => { breadcrumb("ui:btn","Start"); start(); };
+  btnPause.onclick = () => { breadcrumb("ui:btn","Pause"); pause(); };
+  btnReset.onclick = () => { breadcrumb("ui:btn","Reset"); reset(); };
+  btnEditor.onclick = () => { breadcrumb("ui:btn","Editor"); openEditor(); };
 
-  const canvas=document.getElementById("world");
-  canvas.addEventListener("click",(e)=>{ const r=canvas.getBoundingClientRect(); handleCanvasClickForDummy(e.clientX-r.left, e.clientY-r.top); });
+  if (btnGenea) {
+    btnGenea.onclick = () => {
+      breadcrumb("ui:btn","Genealogy");
+      import("./genea.js").then(m => m.openGenealogyPanel());
+    };
+  }
 
-  setMutationRate(parseFloat(mu.value)); setSpawnRate(parseFloat(fr.value)); setPerfMode(pm.checked);
-  setTimescale(SPEED_STEPS[speedIdx]); updateSpeedButton();
+  if (btnDummy) {
+    btnDummy.onclick = () => { breadcrumb("ui:btn","Dummy"); openDummyPanel(); };
+  }
+
+  if (btnDiag) {
+    btnDiag.onclick = () => {
+      breadcrumb("ui:btn","Diagnose");
+      import("./diag.js").then(m => m.openDiagPanel());
+    };
+  }
+
+  btnSpeed.onclick = () => { cycleSpeed(); };
+
+  // Slider / Switches
+  const mu = document.getElementById("mutation");
+  const fr = document.getElementById("foodrate");
+  const pm = document.getElementById("perfmode");
+
+  mu.oninput = () => setMutationRate(parseFloat(mu.value));
+  fr.oninput = () => setSpawnRate(parseFloat(fr.value));
+  pm.oninput = () => setPerfMode(pm.checked);
+
+  // Canvas-Interaktionen (Dummy-Feature)
+  const canvas = document.getElementById("world");
+  canvas.addEventListener("click", (e) => {
+    const rect = canvas.getBoundingClientRect();
+    handleCanvasClickForDummy(e.clientX - rect.left, e.clientY - rect.top);
+  });
+
+  // Startwerte anwenden
+  setMutationRate(parseFloat(mu.value));
+  setSpawnRate(parseFloat(fr.value));
+  setPerfMode(pm.checked);
+  setTimescale(SPEED_STEPS[speedIdx]);
+  updateSpeedButton();
 }
-function updateSpeedButton(){ const sp=document.getElementById("btnSpeed"); if(sp) sp.textContent=`Tempo ×${SPEED_STEPS[speedIdx]}`; }
-function cycleSpeed(){ speedIdx=(speedIdx+1)%SPEED_STEPS.length; setTimescale(SPEED_STEPS[speedIdx]); updateSpeedButton(); }
-function annealMutation(dt){ annealAccum+=dt; if(annealAccum<1) return; annealAccum=0; if(simTime>120) setMutationRate(8); else if(simTime>30) setMutationRate(12); else setMutationRate(30); }
 
-function frame(now){
-  if(!running) return; now/=1000;
-  if(!lastTime) lastTime=now; const delta=Math.min(0.1, now-lastTime); lastTime=now;
+function updateSpeedButton() {
+  const sp = document.getElementById("btnSpeed");
+  if (sp) sp.textContent = `Tempo ×${SPEED_STEPS[speedIdx]}`;
+}
+
+function cycleSpeed() {
+  speedIdx = (speedIdx + 1) % SPEED_STEPS.length;
+  setTimescale(SPEED_STEPS[speedIdx]);
+  updateSpeedButton();
+}
+
+/* =========================================================
+   Annealing der Mutationsrate
+   ========================================================= */
+function annealMutation(dt) {
+  annealAccum += dt;
+  if (annealAccum < 1) return; // 1x pro Sekunde
+  annealAccum = 0;
+
+  // einfache Staffel: 0–30 s → 30 %, 30–120 s → 12 %, >120 s → 8 %
+  if (simTime > 120) setMutationRate(8);
+  else if (simTime > 30) setMutationRate(12);
+  else setMutationRate(30);
+}
+
+/* =========================================================
+   Game-Loop
+   ========================================================= */
+function frame(now) {
+  if (!running) return;
+  now /= 1000;
+
+  if (!lastTime) lastTime = now;
+  const delta = Math.min(0.1, now - lastTime);
+  lastTime = now;
+
   acc += delta * timescale;
-  const desiredSteps=Math.floor(acc/fixedDt), maxSteps=Math.min(60, Math.max(8, Math.ceil(timescale*1.2)));
-  const steps=Math.min(desiredSteps, maxSteps);
-  const env=getEnvState(); // Stub (neutral)
 
-  for(let s=0;s<steps;s++){
+  const desiredSteps = Math.floor(acc / fixedDt);
+  const maxSteps = Math.min(60, Math.max(8, Math.ceil(timescale * 1.2)));
+  const steps = Math.min(desiredSteps, maxSteps);
+
+  const env = getEnvState(); // Stub (neutral)
+
+  for (let s = 0; s < steps; s++) {
     entitiesStep(fixedDt, env, simTime);
     reproductionStep(fixedDt);
     foodStep(fixedDt);
-    simTime += fixedDt; acc -= fixedDt;
+    simTime += fixedDt;
+    acc -= fixedDt;
+
     annealMutation(fixedDt);
   }
-  if(Math.floor(acc/fixedDt)>maxSteps) acc=fixedDt*maxSteps;
 
-  draw(); pushFrame(fixedDt, 1/delta); requestAnimationFrame(frame);
+  // Backlog begrenzen (Verhindert Spiralen bei langsamen Geräten)
+  if (Math.floor(acc / fixedDt) > maxSteps) {
+    acc = fixedDt * maxSteps;
+  }
+
+  draw();
+  pushFrame(fixedDt, 1 / delta);
+  requestAnimationFrame(frame);
 }
 
-export function boot(){
-  try{ initErrorManager({ pauseOnError:true, captureConsole:true }); }catch{}
-  on("error:panic", ()=> pause()); on("error:resume", ()=> start());
-  resizeCanvas(); window.addEventListener("resize", resizeCanvas);
+/* =========================================================
+   Public API
+   ========================================================= */
+export function boot() {
+  try { initErrorManager({ pauseOnError: true, captureConsole: true }); } catch {}
 
-  initDrives(); createAdamAndEve();
-  initTicker(); emit("ui:speed", timescale);
+  on("error:panic",  () => pause());
+  on("error:resume", () => start());
 
-  bindUI(); draw();
+  // Topbar-Höhe messen & beobachten
+  resizeCanvas();
+  installTopbarObserver();
+  window.addEventListener("resize", resizeCanvas);
+
+  // Systeme initialisieren
+  initDrives();
+  createAdamAndEve();
+  initTicker();
+
+  // UI verbinden
+  bindUI();
+
+  // Erste Zeichnung
+  draw();
+
   window.__APP_BOOTED = true;
 }
-export function start(){ if(!running){ running=true; lastTime=0; requestAnimationFrame(frame); } }
-export function pause(){ running=false; }
-export function reset(){ running=false; import("./food.js").then(m=>m.spawnClusters()); import("./entities.js").then(m=>{ m.createAdamAndEve(); }); draw(); }
-export function setTimescale(x){ timescale=Math.max(0.1, Math.min(50, x)); emit("ui:speed", timescale); }
-export function setPerfMode(on){ perfMode=!!on; rendererPerf(perfMode); tickerPerf(perfMode); }
 
-(function ensureBoot(){
-  if (document.readyState === "loading") window.addEventListener("DOMContentLoaded", boot);
-  else try{ boot(); }catch(e){ console.error("boot() error", e); }
+export function start() {
+  if (!running) {
+    running = true;
+    lastTime = 0;
+    requestAnimationFrame(frame);
+  }
+}
+
+export function pause() { running = false; }
+
+export function reset() {
+  running = false;
+  // Food-Cluster neu & Startpopulation zurücksetzen
+  import("./food.js").then(m => m.spawnClusters());
+  import("./entities.js").then(m => { m.createAdamAndEve(); });
+  draw();
+}
+
+export function setTimescale(x) {
+  timescale = Math.max(0.1, Math.min(50, x));
+  emit("ui:speed", timescale);
+}
+
+export function setPerfMode(on) {
+  perfMode = !!on;
+  rendererPerf(perfMode);
+  tickerPerf(perfMode);
+}
+
+/* =========================================================
+   Boot-Guard (wenn engine nach DOMContentLoaded geladen wird)
+   ========================================================= */
+(function ensureBoot() {
+  if (document.readyState === "loading") {
+    window.addEventListener("DOMContentLoaded", boot);
+  } else {
+    try { boot(); } catch (e) { console.error("boot() error", e); }
+  }
 })();
