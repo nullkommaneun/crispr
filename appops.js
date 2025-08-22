@@ -229,7 +229,3 @@ export function generateOps(){
   ops.accept.push("App-Ops Panel erzeugt gültige OPS; Backlog/Jank/Reflows sinken nach Anwendung der Vorschläge (wo zutreffend).");
   return JSON.stringify(ops, null, 2);
 }
-
-// (zusätzliche Absicherung – benannte Exporte sicherstellen)
-export default {};
-export { startCollectors, getAppOpsSnapshot, runModuleMatrix, generateOps };
