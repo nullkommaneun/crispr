@@ -31,8 +31,6 @@ import {
 import { emit, on } from "./event.js";
 import { openDummyPanel, handleCanvasClickForDummy } from "./dummy.js";
 import { initDrives } from "./drives.js";
-
-// Umwelt ist Stub (neutral), wir lesen nur den State und reichen ihn weiter
 import { getEnvState } from "./environment.js";
 
 /* ---------- Laufzeit-Flags ---------- */
@@ -68,7 +66,6 @@ function installTopbarObserver() {
     _topbarRO?.disconnect();
     _topbarRO = new ResizeObserver(() => {
       setTopbarHeightVar();
-      // Canvas sofort synchronisieren, damit nichts „darunter rutscht“
       const canvas = document.getElementById("world");
       if (canvas) {
         const rect = canvas.getBoundingClientRect();
@@ -96,37 +93,23 @@ function resizeCanvas() {
    ========================================================= */
 function bindUI() {
   // Hauptbuttons
-  const btnStart = document.getElementById("btnStart");
-  const btnPause = document.getElementById("btnPause");
-  const btnReset = document.getElementById("btnReset");
+  const btnStart  = document.getElementById("btnStart");
+  const btnPause  = document.getElementById("btnPause");
+  const btnReset  = document.getElementById("btnReset");
   const btnEditor = document.getElementById("btnEditor");
-  const btnGenea = document.getElementById("btnGenea");
-  const btnDummy = document.getElementById("btnDummy");
-  const btnDiag = document.getElementById("btnDiag");
-  const btnSpeed = document.getElementById("btnSpeed");
+  const btnGenea  = document.getElementById("btnGenea");
+  const btnDummy  = document.getElementById("btnDummy");
+  const btnDiag   = document.getElementById("btnDiag");
+  const btnSpeed  = document.getElementById("btnSpeed");
 
-  btnStart.onclick = () => { breadcrumb("ui:btn","Start"); start(); };
-  btnPause.onclick = () => { breadcrumb("ui:btn","Pause"); pause(); };
-  btnReset.onclick = () => { breadcrumb("ui:btn","Reset"); reset(); };
+  btnStart.onclick  = () => { breadcrumb("ui:btn","Start"); start(); };
+  btnPause.onclick  = () => { breadcrumb("ui:btn","Pause"); pause(); };
+  btnReset.onclick  = () => { breadcrumb("ui:btn","Reset"); reset(); };
   btnEditor.onclick = () => { breadcrumb("ui:btn","Editor"); openEditor(); };
 
-  if (btnGenea) {
-    btnGenea.onclick = () => {
-      breadcrumb("ui:btn","Genealogy");
-      import("./genea.js").then(m => m.openGenealogyPanel());
-    };
-  }
-
-  if (btnDummy) {
-    btnDummy.onclick = () => { breadcrumb("ui:btn","Dummy"); openDummyPanel(); };
-  }
-
-  if (btnDiag) {
-    btnDiag.onclick = () => {
-      breadcrumb("ui:btn","Diagnose");
-      import("./diag.js").then(m => m.openDiagPanel());
-    };
-  }
+  if (btnGenea) btnGenea.onclick = () => { breadcrumb("ui:btn","Genealogy"); import("./genea.js").then(m => m.openGenealogyPanel()); };
+  if (btnDummy) btnDummy.onclick = () => { breadcrumb("ui:btn","Dummy"); openDummyPanel(); };
+  if (btnDiag)  btnDiag.onclick  = () => { breadcrumb("ui:btn","Diagnose"); import("./diag.js").then(m => m.openDiagPanel()); };
 
   btnSpeed.onclick = () => { cycleSpeed(); };
 
@@ -135,21 +118,37 @@ function bindUI() {
   const fr = document.getElementById("foodrate");
   const pm = document.getElementById("perfmode");
 
-  mu.oninput = () => setMutationRate(parseFloat(mu.value));
-  fr.oninput = () => setSpawnRate(parseFloat(fr.value));
-  pm.oninput = () => setPerfMode(pm.checked);
+  // Werte-Badges (neben Slidern)
+  const mutVal  = document.getElementById("mutVal");
+  const foodVal = document.getElementById("foodVal");
 
-  // Canvas-Interaktionen (Dummy-Feature)
+  function updateDisplayVals(){
+    if (mutVal)  mutVal.textContent  = `${Math.round(parseFloat(mu.value||"0"))}%`;
+    if (foodVal) foodVal.textContent = `${Math.round(parseFloat(fr.value||"0"))}/s`;
+  }
+
+  mu.oninput = () => { setMutationRate(parseFloat(mu.value)); updateDisplayVals(); };
+  fr.oninput = () => { setSpawnRate(parseFloat(fr.value));  updateDisplayVals(); };
+  pm.oninput = () => { setPerfMode(pm.checked); };
+
+  // Touch: Scroll-Safe (kein Page-Scroll während Sliderbedienung)
+  [mu,fr].forEach(el=>{
+    if(!el) return;
+    el.addEventListener("touchmove", (e)=>{ e.preventDefault(); }, {passive:false});
+  });
+
+  // Canvas-Interaktionen (Dummy)
   const canvas = document.getElementById("world");
   canvas.addEventListener("click", (e) => {
     const rect = canvas.getBoundingClientRect();
     handleCanvasClickForDummy(e.clientX - rect.left, e.clientY - rect.top);
   });
 
-  // Startwerte anwenden
+  // Startwerte
   setMutationRate(parseFloat(mu.value));
   setSpawnRate(parseFloat(fr.value));
   setPerfMode(pm.checked);
+  updateDisplayVals();
   setTimescale(SPEED_STEPS[speedIdx]);
   updateSpeedButton();
 }
@@ -173,7 +172,7 @@ function annealMutation(dt) {
   if (annealAccum < 1) return; // 1x pro Sekunde
   annealAccum = 0;
 
-  // einfache Staffel: 0–30 s → 30 %, 30–120 s → 12 %, >120 s → 8 %
+  // 0–30 s → 30 %, 30–120 s → 12 %, >120 s → 8 %
   if (simTime > 120) setMutationRate(8);
   else if (simTime > 30) setMutationRate(12);
   else setMutationRate(30);
@@ -208,7 +207,6 @@ function frame(now) {
     annealMutation(fixedDt);
   }
 
-  // Backlog begrenzen (Verhindert Spiralen bei langsamen Geräten)
   if (Math.floor(acc / fixedDt) > maxSteps) {
     acc = fixedDt * maxSteps;
   }
@@ -223,24 +221,18 @@ function frame(now) {
    ========================================================= */
 export function boot() {
   try { initErrorManager({ pauseOnError: true, captureConsole: true }); } catch {}
-
   on("error:panic",  () => pause());
   on("error:resume", () => start());
 
-  // Topbar-Höhe messen & beobachten
   resizeCanvas();
   installTopbarObserver();
   window.addEventListener("resize", resizeCanvas);
 
-  // Systeme initialisieren
   initDrives();
   createAdamAndEve();
   initTicker();
 
-  // UI verbinden
   bindUI();
-
-  // Erste Zeichnung
   draw();
 
   window.__APP_BOOTED = true;
@@ -258,7 +250,6 @@ export function pause() { running = false; }
 
 export function reset() {
   running = false;
-  // Food-Cluster neu & Startpopulation zurücksetzen
   import("./food.js").then(m => m.spawnClusters());
   import("./entities.js").then(m => { m.createAdamAndEve(); });
   draw();
@@ -276,7 +267,7 @@ export function setPerfMode(on) {
 }
 
 /* =========================================================
-   Boot-Guard (wenn engine nach DOMContentLoaded geladen wird)
+   Boot-Guard
    ========================================================= */
 (function ensureBoot() {
   if (document.readyState === "loading") {
