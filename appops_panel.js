@@ -1,4 +1,4 @@
-// appops_panel.js — App-Optimierer-Panel inkl. „Timings“-Karte
+// appops_panel.js — App-Optimierer-Panel inkl. „Timings“-Karte (Smart Mode v1)
 import { startCollectors, getAppOpsSnapshot, runModuleMatrix, generateOps } from "./appops.js";
 
 const panel = document.getElementById("diagPanel");
@@ -21,7 +21,8 @@ function section(title){
 function row(label, html){ const r=document.createElement("div"); r.className="row"; const l=document.createElement("span"); l.textContent=label; const v=document.createElement("span"); v.innerHTML=html; r.append(l,v); return r; }
 function codeField(value){
   const wrap=document.createElement("div"); wrap.style.display="grid"; wrap.style.gridTemplateColumns="1fr auto"; wrap.style.gap="8px"; wrap.style.marginTop="6px";
-  const ta=document.createElement("textarea"); ta.readOnly=true; ta.value=value; ta.style.width="100%"; ta.style.height="120px"; ta.style.background="#0b1217"; ta.style.border="1px solid #2a3a46"; ta.style.borderRadius="8px"; ta.style.color="#d8f0ff"; ta.style.font="12px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
+  const ta=document.createElement("textarea"); ta.readOnly=true; ta.value=value;
+  ta.style.width="100%"; ta.style.height="120px"; ta.style.background="#0b1217"; ta.style.border="1px solid #2a3a46"; ta.style.borderRadius="8px"; ta.style.color="#d8f0ff"; ta.style.font="12px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
   const btn=document.createElement("button"); btn.textContent="OPS kopieren";
   btn.onclick=async()=>{ try{ await navigator.clipboard.writeText(ta.value); btn.textContent="Kopiert ✓"; setTimeout(()=>btn.textContent="OPS kopieren",1200);}catch{} };
   wrap.append(ta,btn); return wrap;
@@ -31,7 +32,7 @@ export function openAppOpsPanel(){
   startCollectors();
 
   panel.innerHTML=""; panel.classList.remove("hidden");
-  panel.append(buildHeader("App-Ops (Optimierer)"));
+  panel.append(buildHeader("App-Ops (Optimierer) — Smart Mode (beta)"));
 
   const body=document.createElement("div"); body.className="panel-body"; panel.append(body);
 
@@ -100,7 +101,7 @@ export function openAppOpsPanel(){
     body.append(box);
   }
 
-  // OPS
+  // OPS (Smart)
   {
     const { box } = section("Vorschläge (MDC-OPS)");
     const opsJSON = generateOps();
