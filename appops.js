@@ -1,4 +1,4 @@
-// appops.js — App-Telemetrie & MDC-OPS; Smart Mode v1 (regelbasierte Vorschläge)
+// appops.js — App-Telemetrie & MDC-OPS; Smart Mode v1 + Confidence
 
 import { on } from "./event.js";
 
@@ -12,7 +12,10 @@ const state = {
   timings:{ ent:0, repro:0, food:0, draw:0, alpha:0.2 } // EMA
 };
 
-/* ---------- RAF Sampler (FPS/Jank) ---------- */
+// ---------- Helfer ----------
+const clamp = (x,min=0,max=1)=> Math.max(min, Math.min(max, x));
+
+// ---------- RAF Sampler (FPS/Jank) ----------
 function startRafSampler(){
   const r=state.perf.raf;
   function loop(t){
@@ -27,7 +30,7 @@ function startRafSampler(){
   requestAnimationFrame(loop);
 }
 
-/* ---------- Long Tasks ---------- */
+// ---------- Long Tasks ----------
 function startLongTaskObserver(){
   try{
     const po=new PerformanceObserver(list=>{
@@ -39,7 +42,7 @@ function startLongTaskObserver(){
   }catch{}
 }
 
-/* ---------- Engine Backlog ---------- */
+// ---------- Engine Backlog ----------
 on("appops:frame",(e)=>{
   state.engine.frames++;
   if((e?.desired??0)>(e?.max??0)) state.engine.cappedFrames++;
@@ -47,7 +50,7 @@ on("appops:frame",(e)=>{
   state.engine.backlogRatio = state.engine.cappedFrames / f;
 });
 
-/* ---------- Micro-Profiler (EMA) ---------- */
+// ---------- Micro-Profiler (EMA) ----------
 on("appops:timings",(t)=>{
   const a=state.timings.alpha;
   state.timings.ent   = state.timings.ent  *(1-a) + (t.ent  ||0)*a;
@@ -56,7 +59,7 @@ on("appops:timings",(t)=>{
   state.timings.draw  = state.timings.draw *(1-a) + (t.draw ||0)*a;
 });
 
-/* ---------- Topbar Reflows ---------- */
+// ---------- Topbar Reflows ----------
 function startTopbarObserver(){
   const el=document.getElementById("topbar"); if(!el) return;
   try{
@@ -70,7 +73,7 @@ function startTopbarObserver(){
   }catch{}
 }
 
-/* ---------- Resource Audit ---------- */
+// ---------- Resource Audit ----------
 function scanResources(){
   try{
     const entries=performance.getEntriesByType("resource");
@@ -85,7 +88,7 @@ function scanResources(){
   }catch{}
 }
 
-/* ---------- Modulmatrix ---------- */
+// ---------- Modulmatrix ----------
 async function checkModule(path, expects){
   try{
     const m=await import(path+`?v=${Date.now()}`); // Cache-Buster
@@ -122,14 +125,14 @@ export async function runModuleMatrix(){
   return state.modules.lastReport;
 }
 
-/* ---------- Start ---------- */
+// ---------- Start ----------
 export function startCollectors(){
   if(state.started) return; state.started=true;
   startRafSampler(); startLongTaskObserver(); startTopbarObserver(); scanResources();
   setInterval(scanResources, 15000);
 }
 
-/* ---------- Snapshot (inkl. Timings) ---------- */
+// ---------- Snapshot (inkl. Timings) ----------
 export function getAppOpsSnapshot(){
   const s=state.perf.raf.samples;
   const fpsNow=s.length? s[s.length-1].fps : 0;
@@ -146,64 +149,97 @@ export function getAppOpsSnapshot(){
   };
 }
 
-/* ---------- Smart-OPS Generator (regelbasiert) ---------- */
-export function generateOps(){
+// ---------- Smart-Hints (Confidence & Begründung) ----------
+export function getSmartHints(){
   const s = getAppOpsSnapshot();
-  const ops = { v: 1, title: "Auto-OPS Vorschläge", goals: [], changes: [], accept: [] };
-  const notes = [];
-
-  // ---- Detektoren ----
+  const hints = [];
   const jank = s.perf.jank || 0;
   const reflows = s.layout.reflows || 0;
   const cap = s.engine.capRatio || 0; // 0..1
   const t = s.timings || { ent:0, repro:0, food:0, draw:0 };
 
-  // ---- Katalog ----
-
-  // 1) Preflight-Hook (Baseline)
-  ops.changes.push({
-    file: "preflight.js",
-    op: "append",
-    code:
-"// === Dev-Hook: manuelle Preflight-Anzeige mit ?pf=1 ===\n(function devHook(){\n  try{\n    const q=new URLSearchParams(location.search);\n    if(q.get('pf')==='1') diagnose().then(r=>showOverlay('Manuelle Diagnose (pf=1):\\n\\n'+r));\n  }catch{}\n})();\n"
+  // Preflight baseline
+  hints.push({
+    id:"preflight",
+    title:"Preflight-Hook (?pf=1)",
+    confidence: 50,
+    reason: "Baseline-Empfehlung: schneller manueller Diagnosezugriff.",
+    changes:[
+      { file: "preflight.js", op:"append",
+        code:"// === Dev-Hook: manuelle Preflight-Anzeige mit ?pf=1 ===\n(function devHook(){\n  try{\n    const q=new URLSearchParams(location.search);\n    if(q.get('pf')==='1') diagnose().then(r=>showOverlay('Manuelle Diagnose (pf=1):\\n\\n'+r));\n  }catch{}\n})();\n"
+      }
+    ]
   });
-  ops.goals.push("Preflight jederzeit manuell abrufbar (?pf=1)");
-  notes.push("Baseline: Preflight-Hook angeboten.");
 
-  // 2) Ticker beruhigen, wenn UI unruhig
+  // Ticker beruhigen
   if (jank > 5 || reflows > 5) {
-    ops.changes.push(
-      { file: "ticker.js", op: "patch", find: "setInterval\\(updateSnapshot, 5000\\);", replace: "setInterval(updateSnapshot, 7000);" },
-      { file: "style.css", op: "append", code: "/* Ticker kompakter (Smart-Ops) */\n#ticker{ row-gap:0 !important; }\n#ticker span{ line-height:1.15; }\n" }
-    );
-    ops.goals.push("Ticker ruhiger/kompakter zur Reflow-Reduktion");
-    notes.push(`Detektor UI: jank=${jank}, reflows=${reflows} → Ticker-Throttle`);
+    const jankScore = clamp((jank-5)/10);      // 0..1
+    const reflowScore = clamp((reflows-5)/10); // 0..1
+    const conf = Math.round(100*clamp(0.6*jankScore + 0.4*reflowScore));
+    hints.push({
+      id:"ticker",
+      title:"Ticker throttle & kompakter",
+      confidence: conf,
+      reason:`UI-Detektor: jank=${jank}, reflows=${reflows}. Weniger Reflow durch selteneres Update & dichtere Zeilen.`,
+      changes:[
+        { file:"ticker.js", op:"patch", find:"setInterval\\(updateSnapshot, 5000\\);", replace:"setInterval(updateSnapshot, 7000);" },
+        { file:"style.css", op:"append", code:"/* Ticker kompakter (Smart-Ops) */\n#ticker{ row-gap:0 !important; }\n#ticker span{ line-height:1.15; }\n" }
+      ]
+    });
   }
 
-  // 3) Draw teuer? → Culling-Puffer im Perf-Mode senken (Renderer)
+  // Draw teuer?
   if (t.draw > 8) {
-    ops.changes.push({
-      file: "renderer.js", op: "patch",
-      find: "const pad = 24;", replace: "const pad = perfMode ? 12 : 24;"
+    const conf = Math.round(100*clamp((t.draw-8)/8)); // 8ms→0%, 16ms→100%
+    hints.push({
+      id:"drawpad",
+      title:"Renderer: Culling-Pad im Perf-Mode senken",
+      confidence: conf,
+      reason:`Draw-Detektor: draw≈${t.draw}ms. Kleinerer Puffer im Perf-Mode reduziert Overdraw.`,
+      changes:[
+        { file:"renderer.js", op:"patch", find:"const pad = 24;", replace:"const pad = perfMode ? 12 : 24;" }
+      ]
     });
-    ops.goals.push("Draw-Kosten senken (Culling-Pad dynamisch im Perf-Mode)");
-    notes.push(`Detektor Draw: draw≈${t.draw}ms → Pad: 12 bei perfMode`);
   }
 
-  // 4) Engine-Backlog hoch? → Grid feintunen (kleiner, dichter)
+  // Engine-Backlog hoch / Entities teuer?
   if (cap > 0.15 || t.ent > 8) {
-    ops.changes.push({
-      file:"entities.js", op:"patch",
-      find:"const desired = Math.max(80, Math.round(baseSense * sMin));",
-      replace:"const desired = Math.max(80, Math.round(baseSense * sMin * 0.9));"
+    const capScore = clamp((cap-0.15)/0.25);   // 15%..40% → 0..1
+    const entScore = clamp((t.ent-8)/8);       // 8..16ms → 0..1
+    const conf = Math.round(100*clamp(0.6*capScore + 0.4*entScore));
+    hints.push({
+      id:"gridfine",
+      title:"Spatial-Grid: 10% kleinere Buckets",
+      confidence: conf,
+      reason:`Engine-Detektor: Backlog=${Math.round(cap*100)}%, entities≈${t.ent}ms. Dichteres Grid reduziert Kandidaten pro Query.`,
+      changes:[
+        { file:"entities.js", op:"patch",
+          find:"const desired = Math.max(80, Math.round(baseSense * sMin));",
+          replace:"const desired = Math.max(80, Math.round(baseSense * sMin * 0.9));"
+        }
+      ]
     });
-    ops.goals.push("Spatial-Grid feiner (10% kleinere Buckets)");
-    notes.push(`Detektor Engine: cap=${Math.round(cap*100)}%, ent≈${t.ent}ms → Grid -10%`);
   }
 
-  // Akzeptanz & Notizen
-  ops.accept.push("App-Ops Panel erzeugt gültige OPS; nach Einspielen sinken Jank/Backlog/Draw-Zeit (wo zutreffend).");
-  if (notes.length) ops.notes = notes.join(" | ");
+  return hints;
+}
 
+// ---------- Smart-OPS Generator (JSON für Copy/Paste) ----------
+export function generateOps(){
+  const hints = getSmartHints();
+  // Baue aus Hints einen gemeinsamen OPS-Block (mehrere Änderungen möglich)
+  const ops = { v: 1, title: "Auto-OPS Vorschläge", goals: [], changes: [], accept: [] };
+  const notes = [];
+
+  for(const h of hints){
+    // Ziele/Notizen
+    ops.goals.push(h.title);
+    notes.push(`${h.title} — Confidence ${h.confidence}% — ${h.reason}`);
+    // Änderungen anhängen
+    for(const ch of (h.changes||[])) ops.changes.push(ch);
+  }
+
+  ops.accept.push("App-Ops erzeugt gültige OPS; nach Einspielen sinken Jank/Backlog/Draw-Zeit (wo zutreffend).");
+  if (notes.length) ops.notes = notes.join(" | ");
   return JSON.stringify(ops, null, 2);
 }

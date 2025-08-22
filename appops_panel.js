@@ -1,5 +1,5 @@
-// appops_panel.js — App-Optimierer-Panel inkl. „Timings“-Karte (Smart Mode v1)
-import { startCollectors, getAppOpsSnapshot, runModuleMatrix, generateOps } from "./appops.js";
+// appops_panel.js — App-Optimierer-Panel inkl. „Timings“-Karte & Smart-Hints (Confidence)
+import { startCollectors, getAppOpsSnapshot, runModuleMatrix, generateOps, getSmartHints } from "./appops.js";
 
 const panel = document.getElementById("diagPanel");
 
@@ -101,9 +101,31 @@ export function openAppOpsPanel(){
     body.append(box);
   }
 
-  // OPS (Smart)
+  // Smart-Hints (Confidence)
   {
-    const { box } = section("Vorschläge (MDC-OPS)");
+    const { box } = section("Smart-Vorschläge (Confidence)");
+    const ul = document.createElement("div");
+    const hints = getSmartHints();
+    if (!hints.length) {
+      ul.textContent = "Keine situativen Vorschläge – alles stabil.";
+    } else {
+      for (const h of hints) {
+        const rowDiv = document.createElement("div"); rowDiv.className="row";
+        rowDiv.innerHTML = `<span>${h.title}</span><span><b>${h.confidence}%</b></span>`;
+        const reason = document.createElement("div");
+        reason.className = "muted";
+        reason.style.margin="2px 0 8px 0";
+        reason.textContent = h.reason || "";
+        ul.append(rowDiv, reason);
+      }
+    }
+    box.append(ul);
+    body.append(box);
+  }
+
+  // OPS (JSON zum Kopieren)
+  {
+    const { box } = section("Vorschläge (MDC-OPS JSON)");
     const opsJSON = generateOps();
     box.append(codeField(opsJSON));
     body.append(box);
