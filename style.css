@@ -1,5 +1,5 @@
 /* =========================================================
-   CRISPR Genetics Lab - Post-Apocalyptic UI Theme (v2)
+   CRISPR Genetics Lab - Post-Apocalyptic UI Theme (mobile-ready)
    ========================================================= */
 
 /* ---------- Design Tokens ---------- */
@@ -25,7 +25,7 @@
   --warn:        #ff6b6b;
 
   --topbar-h:    56px;      /* JS setzt dynamisch */
-  --panel-bottom-gap: 88px; /* >>> Abstand zum unteren Rand (sichtbar!) */
+  --panel-bottom-gap: 88px; /* Abstand zum unteren Rand */
   --radius:      12px;
 
   --shadow-1:    0 12px 32px rgba(0,0,0,.45);
@@ -40,8 +40,8 @@ html,body{
   font:14px/1.45 system-ui, Segoe UI, Roboto, Helvetica, Arial;
   background:
     radial-gradient(1200px 700px at 50% -5%, rgba(255,255,255,.04), transparent 60%),
-    radial-gradient(1000px 600px at -10% 30%, rgba(194,111,58,.08), transparent 55%),  /* Rost-Schimmer links */
-    radial-gradient(1000px 600px at 110% 20%, rgba(39,199,255,.07), transparent 55%),   /* kaltes Licht rechts */
+    radial-gradient(1000px 600px at -10% 30%, rgba(194,111,58,.08), transparent 55%),
+    radial-gradient(1000px 600px at 110% 20%, rgba(39,199,255,.07), transparent 55%),
     linear-gradient(180deg, #0c1116 0%, #0a0d10 55%, #070a0d 100%);
 }
 
@@ -50,7 +50,7 @@ body::before{
   content:"";
   position:fixed; inset:0; z-index:-1;
   background:
-    repeating-linear-gradient(0deg, rgba(255,255,255,.018), rgba(255,255,white,.018) 1px, transparent 1px, transparent 3px),
+    repeating-linear-gradient(0deg, rgba(255,255,255,.018), rgba(255,255,255,.018) 1px, transparent 1px, transparent 3px),
     repeating-linear-gradient(90deg, rgba(255,255,255,.012), rgba(255,255,255,.012) 1px, transparent 1px, transparent 4px),
     radial-gradient(40% 60% at 45% 20%, rgba(255,255,255,.03), transparent 60%);
   mix-blend-mode: screen;
@@ -180,7 +180,8 @@ input[type="text"]::placeholder{ color:#6f8598; }
   z-index:3000;
 
   width: min(820px, 96vw);
-  max-height: calc(100vh - var(--topbar-h) - var(--panel-bottom-gap)); /* <<< Abstand nach unten */
+  max-height: calc(100vh - var(--topbar-h) - var(--panel-bottom-gap));
+
   background:var(--panel);
   border:1px solid var(--line-1);
   border-radius:var(--radius);
@@ -196,7 +197,7 @@ input[type="text"]::placeholder{ color:#6f8598; }
   gap:12px; padding:12px 14px 10px 14px;
   background:
     linear-gradient(180deg, var(--panel-top), var(--panel)),
-    repeating-linear-gradient(135deg, rgba(194,111,58,.08) 0 8px, transparent 8px 16px); /* feine Warnstreifen */
+    repeating-linear-gradient(135deg, rgba(194,111,58,.08) 0 8px, transparent 8px 16px);
   border-bottom:1px solid var(--line-1);
 }
 .panel-header h2{ margin:0; font-size:16px; letter-spacing:.2px; }
@@ -312,3 +313,67 @@ label[title*="Perf"]{
   background:#121a21;
 }
 label[title*="Perf"] input{ margin-right:6px; }
+
+/* =========================================================
+   Mobile-Optimierung der Topbar (Portrait) + Fade Hint
+   ========================================================= */
+@media (max-width: 768px) {
+  #topbar { padding: 6px 6px; }
+
+  .controls{
+    display:flex;
+    flex-wrap:nowrap;               /* Kein Umbruch */
+    gap:10px;
+    overflow-x:auto;                /* horizontal scrollbar (touch) */
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+    white-space:nowrap;
+    scrollbar-width:none;           /* Firefox: Scrollbar ausblenden */
+    position:relative;              /* für Fade-Hints */
+  }
+  .controls::-webkit-scrollbar{ display:none; } /* WebKit: Scrollbar ausblenden */
+
+  /* Fade-Hints links/rechts: zeigen diskret an, dass horizontal gescrollt werden kann */
+  .controls::before,
+  .controls::after{
+    content:"";
+    position:absolute;
+    top:0; bottom:0; width:24px;
+    pointer-events:none;
+    z-index:10;
+  }
+  /* links dunkel → nach rechts wischen */
+  .controls::before{
+    left:-1px;
+    background:linear-gradient(90deg, #0f151b 0%, rgba(15,21,27,0) 100%);
+  }
+  /* rechts dunkel → nach links wischen */
+  .controls::after{
+    right:-1px;
+    background:linear-gradient(270deg, #0f151b 0%, rgba(15,21,27,0) 100%);
+  }
+
+  .group{
+    display:inline-flex;
+    align-items:center;
+    gap:8px;
+    border-right:none;
+    padding-right:0;
+    margin-right:0;
+  }
+  .group-title{ display:none; }
+
+  /* kompaktere Bedienelemente */
+  button{ padding:5px 8px; font-size:13px; border-radius:8px; }
+  #topbar input[type="range"]{ width:110px; height:18px; }
+  label{ font-size:12px; }
+
+  #ticker{ font-size:11px; }
+}
+
+/* Extra-kompakt für sehr schmale Geräte */
+@media (max-width: 480px){
+  .controls{ gap:8px; }
+  #topbar input[type="range"]{ width:90px; }
+  button{ padding:4px 7px; font-size:12px; }
+}
