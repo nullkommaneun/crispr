@@ -101,7 +101,7 @@ export function openAppOpsPanel(){
     body.append(box);
   }
 
-  // Smart-Hints (Confidence)
+  // Smart-Vorschläge (Confidence)
   {
     const { box } = section("Smart-Vorschläge (Confidence)");
     const ul = document.createElement("div");
@@ -113,8 +113,7 @@ export function openAppOpsPanel(){
         const rowDiv = document.createElement("div"); rowDiv.className="row";
         rowDiv.innerHTML = `<span>${h.title}</span><span><b>${h.confidence}%</b></span>`;
         const reason = document.createElement("div");
-        reason.className = "muted";
-        reason.style.margin="2px 0 8px 0";
+        reason.className = "muted"; reason.style.margin = "2px 0 8px 0";
         reason.textContent = h.reason || "";
         ul.append(rowDiv, reason);
       }
@@ -123,7 +122,7 @@ export function openAppOpsPanel(){
     body.append(box);
   }
 
-  // OPS (JSON zum Kopieren)
+  // OPS JSON
   {
     const { box } = section("Vorschläge (MDC-OPS JSON)");
     const opsJSON = generateOps();

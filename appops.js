@@ -1,4 +1,4 @@
-// appops.js — App-Telemetrie & MDC-OPS; Smart Mode v1 + Confidence
+// appops.js — App-Telemetrie & MDC-OPS; Smart Mode v1.2 (Confidence + Feature-Scan + weitere Hints)
 
 import { on } from "./event.js";
 
@@ -9,13 +9,15 @@ const state = {
   layout:{ reflowCount:0, lastHeights:[] },
   resources:{ scannedAt:0, total:0, largest:[] },
   modules:{ lastReport:null },
-  timings:{ ent:0, repro:0, food:0, draw:0, alpha:0.2 } // EMA
+  timings:{ ent:0, repro:0, food:0, draw:0, alpha:0.2 }, // EMA
+  features:{ preflightHook:false, tfInline:false, swActive:false, mobile:false }
 };
 
-// ---------- Helfer ----------
+/* ---------- Helfer ---------- */
 const clamp = (x,min=0,max=1)=> Math.max(min, Math.min(max, x));
+const isMobileUA = ()=> /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent||"");
 
-// ---------- RAF Sampler (FPS/Jank) ----------
+/* ---------- RAF Sampler (FPS/Jank) ---------- */
 function startRafSampler(){
   const r=state.perf.raf;
   function loop(t){
@@ -30,7 +32,7 @@ function startRafSampler(){
   requestAnimationFrame(loop);
 }
 
-// ---------- Long Tasks ----------
+/* ---------- Long Tasks ---------- */
 function startLongTaskObserver(){
   try{
     const po=new PerformanceObserver(list=>{
@@ -42,7 +44,7 @@ function startLongTaskObserver(){
   }catch{}
 }
 
-// ---------- Engine Backlog ----------
+/* ---------- Engine Backlog ---------- */
 on("appops:frame",(e)=>{
   state.engine.frames++;
   if((e?.desired??0)>(e?.max??0)) state.engine.cappedFrames++;
@@ -50,7 +52,7 @@ on("appops:frame",(e)=>{
   state.engine.backlogRatio = state.engine.cappedFrames / f;
 });
 
-// ---------- Micro-Profiler (EMA) ----------
+/* ---------- Micro-Profiler (EMA) ---------- */
 on("appops:timings",(t)=>{
   const a=state.timings.alpha;
   state.timings.ent   = state.timings.ent  *(1-a) + (t.ent  ||0)*a;
@@ -59,7 +61,7 @@ on("appops:timings",(t)=>{
   state.timings.draw  = state.timings.draw *(1-a) + (t.draw ||0)*a;
 });
 
-// ---------- Topbar Reflows ----------
+/* ---------- Topbar Reflows ---------- */
 function startTopbarObserver(){
   const el=document.getElementById("topbar"); if(!el) return;
   try{
@@ -73,7 +75,7 @@ function startTopbarObserver(){
   }catch{}
 }
 
-// ---------- Resource Audit ----------
+/* ---------- Resource Audit ---------- */
 function scanResources(){
   try{
     const entries=performance.getEntriesByType("resource");
@@ -88,7 +90,23 @@ function scanResources(){
   }catch{}
 }
 
-// ---------- Modulmatrix ----------
+/* ---------- Feature-Scan (Preflight-Hook, TF inline, SW) ---------- */
+async function scanFeatures(){
+  // Preflight-Hook: preflight.js laden und nach Hook-Signatur suchen
+  try{
+    const res = await fetch("./preflight.js", { cache:"no-store" });
+    const txt = await res.text();
+    state.features.preflightHook = /Manuelle Diagnose \(pf=1\)|devHook\(\)/.test(txt);
+  }catch{ state.features.preflightHook = false; }
+  // TF inline im DOM?
+  state.features.tfInline = !!document.querySelector('script[src*="@tensorflow/tfjs"]');
+  // Service Worker aktiv?
+  state.features.swActive = !!(navigator.serviceWorker && navigator.serviceWorker.controller);
+  // Mobile Heuristik
+  state.features.mobile = isMobileUA() || (window.matchMedia && window.matchMedia("(max-width: 768px)").matches);
+}
+
+/* ---------- Modulmatrix ---------- */
 async function checkModule(path, expects){
   try{
     const m=await import(path+`?v=${Date.now()}`); // Cache-Buster
@@ -125,14 +143,15 @@ export async function runModuleMatrix(){
   return state.modules.lastReport;
 }
 
-// ---------- Start ----------
+/* ---------- Start ---------- */
 export function startCollectors(){
   if(state.started) return; state.started=true;
-  startRafSampler(); startLongTaskObserver(); startTopbarObserver(); scanResources();
+  startRafSampler(); startLongTaskObserver(); startTopbarObserver(); scanResources(); scanFeatures();
   setInterval(scanResources, 15000);
+  setInterval(scanFeatures, 20000);
 }
 
-// ---------- Snapshot (inkl. Timings) ----------
+/* ---------- Snapshot (inkl. Timings & Features) ---------- */
 export function getAppOpsSnapshot(){
   const s=state.perf.raf.samples;
   const fpsNow=s.length? s[s.length-1].fps : 0;
@@ -145,11 +164,12 @@ export function getAppOpsSnapshot(){
     layout:{ reflows:state.layout.reflowCount, heights:[...state.layout.lastHeights] },
     resources:{ scannedAt:state.resources.scannedAt, totalKB:state.resources.total, largest:state.resources.largest },
     modules:{ last:state.modules.lastReport },
-    timings:{ ent:Math.round(state.timings.ent), repro:Math.round(state.timings.repro), food:Math.round(state.timings.food), draw:Math.round(state.timings.draw) }
+    timings:{ ent:Math.round(state.timings.ent), repro:Math.round(state.timings.repro), food:Math.round(state.timings.food), draw:Math.round(state.timings.draw) },
+    features:{ ...state.features }
   };
 }
 
-// ---------- Smart-Hints (Confidence & Begründung) ----------
+/* ---------- Smart-Hints (Confidence & Begründung) ---------- */
 export function getSmartHints(){
   const s = getAppOpsSnapshot();
   const hints = [];
@@ -158,23 +178,25 @@ export function getSmartHints(){
   const cap = s.engine.capRatio || 0; // 0..1
   const t = s.timings || { ent:0, repro:0, food:0, draw:0 };
 
-  // Preflight baseline
-  hints.push({
-    id:"preflight",
-    title:"Preflight-Hook (?pf=1)",
-    confidence: 50,
-    reason: "Baseline-Empfehlung: schneller manueller Diagnosezugriff.",
-    changes:[
-      { file: "preflight.js", op:"append",
-        code:"// === Dev-Hook: manuelle Preflight-Anzeige mit ?pf=1 ===\n(function devHook(){\n  try{\n    const q=new URLSearchParams(location.search);\n    if(q.get('pf')==='1') diagnose().then(r=>showOverlay('Manuelle Diagnose (pf=1):\\n\\n'+r));\n  }catch{}\n})();\n"
-      }
-    ]
-  });
+  // 0) Preflight baseline NUR wenn Hook fehlt
+  if (!s.features.preflightHook) {
+    hints.push({
+      id:"preflight",
+      title:"Preflight-Hook (?pf=1)",
+      confidence: 85,
+      reason: "Schneller manueller Diagnosezugriff; aktuell nicht im preflight.js gefunden.",
+      changes:[
+        { file: "preflight.js", op:"append",
+          code:"// === Dev-Hook: manuelle Preflight-Anzeige mit ?pf=1 ===\n(function devHook(){\n  try{\n    const q=new URLSearchParams(location.search);\n    if(q.get('pf')==='1') diagnose().then(r=>showOverlay('Manuelle Diagnose (pf=1):\\n\\n'+r));\n  }catch{}\n})();\n"
+        }
+      ]
+    });
+  }
 
-  // Ticker beruhigen
+  // 1) Ticker beruhigen
   if (jank > 5 || reflows > 5) {
-    const jankScore = clamp((jank-5)/10);      // 0..1
-    const reflowScore = clamp((reflows-5)/10); // 0..1
+    const jankScore = clamp((jank-5)/10);
+    const reflowScore = clamp((reflows-5)/10);
     const conf = Math.round(100*clamp(0.6*jankScore + 0.4*reflowScore));
     hints.push({
       id:"ticker",
@@ -188,9 +210,9 @@ export function getSmartHints(){
     });
   }
 
-  // Draw teuer?
+  // 2) Draw teuer?
   if (t.draw > 8) {
-    const conf = Math.round(100*clamp((t.draw-8)/8)); // 8ms→0%, 16ms→100%
+    const conf = Math.round(100*clamp((t.draw-8)/8)); // 8..16ms
     hints.push({
       id:"drawpad",
       title:"Renderer: Culling-Pad im Perf-Mode senken",
@@ -202,10 +224,10 @@ export function getSmartHints(){
     });
   }
 
-  // Engine-Backlog hoch / Entities teuer?
+  // 3) Engine-Backlog hoch / Entities teuer?
   if (cap > 0.15 || t.ent > 8) {
-    const capScore = clamp((cap-0.15)/0.25);   // 15%..40% → 0..1
-    const entScore = clamp((t.ent-8)/8);       // 8..16ms → 0..1
+    const capScore = clamp((cap-0.15)/0.25);
+    const entScore = clamp((t.ent-8)/8);
     const conf = Math.round(100*clamp(0.6*capScore + 0.4*entScore));
     hints.push({
       id:"gridfine",
@@ -221,24 +243,62 @@ export function getSmartHints(){
     });
   }
 
+  // 4) Lazy TF.js – wenn TF inline geladen wird
+  if (s.features.tfInline) {
+    hints.push({
+      id:"lazyTF",
+      title:"Editor: TF.js lazy laden (Initial-Load entlasten)",
+      confidence: 70,
+      reason:"TF.js wird bereits beim Seitenstart geladen. Besser: nur beim Öffnen des Editors importieren.",
+      changes:[
+        {
+          file:"index.html", op:"patch",
+          find:'<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.16.0/dist/tf.min.js"></script>',
+          replace:'<!-- TF.js lazy via editor.js -->'
+        },
+        {
+          file:"editor.js", op:"patch",
+          find:"async function ensureModel(){",
+          replace:
+"async function ensureModel(){\n  // Lazy: TF nur bei Bedarf nachladen\n  if (typeof tf === 'undefined'){ try{ await import('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.16.0/dist/tf.min.js'); }catch(e){ console.warn('TF import failed', e); return null; } }\n  if (!window.__tfModel){\n    try{ window.__tfModel = await tf.loadLayersModel('./models/model.json'); }\n    catch(e){ console.warn('TF model load failed:', e); return null; }\n  }\n  return window.__tfModel;\n}\n"
+        }
+      ]
+    });
+  }
+
+  // 5) Auto-PerfMode Empfehlung (Mobile + niedrige FPS)
+  const fpsAvg = s.perf.fpsAvg || 0;
+  if ((s.features.mobile && fpsAvg < 50) || fpsAvg < 40) {
+    const base = s.features.mobile ? 0.7 : 0.5;
+    const conf = Math.round(100*clamp(base + clamp((50 - fpsAvg)/30)));
+    hints.push({
+      id:"autoPerf",
+      title:"Auto-PerfMode auf Mobile/niedriger FPS",
+      confidence: conf,
+      reason:`Heuristik: mobile=${s.features.mobile}, fpsAvg≈${Math.round(fpsAvg)}. Initial Perf-Mode reduziert Draw/Overhead.`,
+      changes:[
+        {
+          file:"engine.js", op:"patch",
+          find:"setPerfMode(pm.checked);",
+          replace:"// Auto-PerfMode: Mobile oder niedrige FPS → initial aktivieren\n  const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent||'');\n  setPerfMode(isMobile ? true : pm.checked);"
+        }
+      ]
+    });
+  }
+
   return hints;
 }
 
-// ---------- Smart-OPS Generator (JSON für Copy/Paste) ----------
+/* ---------- Smart-OPS Generator (JSON) ---------- */
 export function generateOps(){
   const hints = getSmartHints();
-  // Baue aus Hints einen gemeinsamen OPS-Block (mehrere Änderungen möglich)
   const ops = { v: 1, title: "Auto-OPS Vorschläge", goals: [], changes: [], accept: [] };
   const notes = [];
-
   for(const h of hints){
-    // Ziele/Notizen
     ops.goals.push(h.title);
     notes.push(`${h.title} — Confidence ${h.confidence}% — ${h.reason}`);
-    // Änderungen anhängen
     for(const ch of (h.changes||[])) ops.changes.push(ch);
   }
-
   ops.accept.push("App-Ops erzeugt gültige OPS; nach Einspielen sinken Jank/Backlog/Draw-Zeit (wo zutreffend).");
   if (notes.length) ops.notes = notes.join(" | ");
   return JSON.stringify(ops, null, 2);
