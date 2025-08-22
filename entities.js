@@ -1,10 +1,11 @@
 // entities.js — Entities & Bewegung (Spatial-Hash aktiv)
-// Neuerungen (dieser Patch):
-//  - senseFood +15 % (größerer Nahrungssensor)
-//  - eatPerSecond +25 % (schnelleres Fressen)
-//  - baseMetabolic −10 % global (geringere Grundkosten)
-//  - Kreuzungsbonus bei Partnerwahl: +0.3, wenn stammId verschieden
-//  - Juvenil-Schutz: baseMetabolic ×0.8 für Age < 15 s
+// Tuning:
+//  - senseFood +15 %
+//  - eatPerSecond +25 %
+//  - baseMetabolic −10 % global
+//  - Kreuzungsbonus bei Partnerwahl: +0.3 (Cross-Stamm)
+//  - Juvenil-Schutz: baseMetabolic ×0.8 bei Age < 15 s
+// Mate-first: entities liefert eFrac & popN an drives.getAction und übergibt echte Sim-Zeit _t
 
 import { CONFIG } from "./config.js";
 import { emit } from "./event.js";
@@ -122,14 +123,14 @@ function updateWander(c,dt){
 /* Spatial Grid (mit Scale-Faktor) */
 let grid = null;
 let gridMeta = { cellSize: 0, W: 0, H: 0 };
-let gridScaleFactor = 1.0; // 1.0 = Standard, <1 dichter
+let gridScaleFactor = 1.0;
 export function getGridScaleFactor(){ return gridScaleFactor; }
 export function setGridScaleFactor(f){ gridScaleFactor = Math.max(0.6, Math.min(1.4, +f||1)); }
 export function getGridCellSize(){ return gridMeta.cellSize || null; }
 
 function ensureGrid(sMin){
   const baseSense = CONFIG.cell?.senseFood || 110;
-  const desiredBase = baseSense * 1.15 * sMin * gridScaleFactor; // +15 % Sensorik
+  const desiredBase = baseSense * 1.15 * sMin * gridScaleFactor; // +15% Sensorik
   const desired = Math.max(80, Math.round(desiredBase));
   if (!grid || gridMeta.cellSize !== desired || gridMeta.W !== W || gridMeta.H !== H){
     grid = createGrid(desired, W, H);
@@ -138,7 +139,7 @@ function ensureGrid(sMin){
   return grid;
 }
 
-/* Grid-Queries */
+/* Grid-Queries (Food/Mate/Separation) */
 function senseFoodGrid(c, senseR, grid){
   const cand = grid.queryCircle(c.pos.x, c.pos.y, senseR);
   let nearestItem=null, nd2=Infinity; let cx=0, cy=0, n=0; const r2=senseR*senseR;
@@ -168,22 +169,17 @@ function chooseMateGrid(c, senseR, grid){
   if(c.cooldown>0) return null;
   const cand = grid.queryCircle(c.pos.x, c.pos.y, senseR);
   let best=null, bestScore=-1e9, bestD=Infinity, rr=senseR*senseR;
-
   for(const p of cand){
     if(p?.type!=="cell") continue;
-    const o=p.obj;
-    if (o === c || o.sex === c.sex || o.cooldown > 0) continue;
-    const dist2 = d2(c.pos.x,c.pos.y,o.pos.x,o.pos.y);
-    if (dist2 > rr) continue;
-    const d = Math.sqrt(dist2);
-
-    const geneScore = (o.genome.EFF*0.8 + (10 - o.genome.MET)*0.7 + o.genome.SCH*0.2 + o.genome.TEM*0.2);
-    const crossBonus = (o.stammId !== c.stammId) ? 0.3 : 0.0;
-
-    const total = -0.05*d + geneScore + crossBonus;
-    if (total > bestScore){ best = o; bestScore = total; bestD = d; }
+    const o=p.obj; if(o===c||o.sex===c.sex||o.cooldown>0) continue;
+    const dist2=d2(c.pos.x,c.pos.y,o.pos.x,o.pos.y); if(dist2>rr) continue;
+    const d=Math.sqrt(dist2);
+    const geneScore=(o.genome.EFF*0.8+(10-o.genome.MET)*0.7+o.genome.SCH*0.2+o.genome.TEM*0.2);
+    const crossBonus=(o.stammId!==c.stammId)?0.3:0.0;
+    const total=-0.05*d + geneScore + crossBonus;
+    if(total>bestScore){ best=o; bestScore=total; bestD=d; }
   }
-  return best ? { cell: best, d: bestD } : null;
+  return best? {cell:best,d:bestD}:null;
 }
 
 /* Langlebigkeit */
@@ -203,7 +199,6 @@ function effectiveAgeLimit(c){
 export function step(dt, _env, _t){
   const { sMin } = worldScales();
 
-  // Grid vorbereiten
   const g = ensureGrid(sMin);
   g.clear();
   for (const f of foodItems) g.insert(f.x, f.y, { type:"food", obj:f });
@@ -216,7 +211,7 @@ export function step(dt, _env, _t){
     c.age += dt; c.cooldown=Math.max(0,c.cooldown-dt);
 
     const gnm=c.genome;
-    const senseFoodR=CONFIG.cell.senseFood*(1.15)*(0.7+0.1*gnm.EFF)*sMin; // +15 % Sensorik
+    const senseFoodR=CONFIG.cell.senseFood*(1.15)*(0.7+0.1*gnm.EFF)*sMin;
     const senseMateR=CONFIG.cell.senseMate*(0.7+0.08*gnm.EFF)*sMin;
     const maxSpeed =  CONFIG.cell.baseSpeed*(0.7+0.08*gnm.TEM)*sMin;
     const maxForce = (CONFIG.physics.maxForceBase??140)*(0.7+0.08*gnm.TEM)*sMin;
@@ -224,7 +219,7 @@ export function step(dt, _env, _t){
     const foodS = senseFoodGrid(c, senseFoodR, g);
     const mate  = chooseMateGrid(c, senseMateR, g);
 
-    // Nachbardichte
+    // lokale Nachbardichte (optionales Signal)
     let neigh=0;{
       const R = 60*sMin, R2=R*R;
       const local = g.queryCircle(c.pos.x, c.pos.y, R);
@@ -232,14 +227,17 @@ export function step(dt, _env, _t){
         if(d2(c.pos.x,c.pos.y,o.pos.x,o.pos.y) <= R2) neigh++; }
     }
 
+    // >>>>>>>>>> Mate-first: eFrac & popN ins ctx, echte Zeit _t an drives
+    const eFrac = c.energy / Math.max(1e-6, capEnergy(c));
     const ctx={ env:{},
       food: foodS ? { x:(foodS.item?.x ?? foodS.center?.x), y:(foodS.item?.y ?? foodS.center?.y) } : null,
       foodDist: foodS ? (foodS.item?.d ?? foodS.center?.d) : null,
       mate: mate?.cell??null, mateDist:mate?.d??null,
-      hazard:0, neighCount:neigh, worldMin:Math.min(W,H)
+      hazard:0, neighCount:neigh, worldMin:Math.min(W,H),
+      eFrac, popN: cells.length
     };
 
-    const option = drivesGetAction(c, 0, ctx);
+    const option = drivesGetAction(c, _t, ctx);
 
     // Avoid
     let [fx,fy]=[0,0], rem=maxForce; const fAvoid=steerWallAvoid(c);
@@ -249,21 +247,19 @@ export function step(dt, _env, _t){
     let fOpt=[0,0]; const slowR=Math.max(CONFIG.physics.slowRadius??120, CONFIG.cell.pairDistance*3);
     if(option==="food" && foodS){
       const eatR = (CONFIG.food.itemRadius + radiusOf(c) + 2) * sMin, eatR2=eatR*eatR;
-
       if(foodS.item){
         fOpt = steerSeekArrive(c,{x:foodS.item.x,y:foodS.item.y}, maxSpeed, Math.max(2,eatR-2), slowR);
       }else{
         const stopCenter = Math.max(2, (radiusOf(c)*0.25 + 1) * sMin);
         fOpt = steerSeekArrive(c,{x:foodS.center.x,y:foodS.center.y}, maxSpeed, stopCenter, slowR);
       }
-
-      // Essen (nur lokale Buckets) – +25 % Intake
+      // Essen (+25% Intake)
       let eaten=0;
       const localFood = g.queryCircle(c.pos.x, c.pos.y, eatR);
       for(const p of localFood){
         if(p?.type!=="food") continue; const f=p.obj;
         if (d2(c.pos.x,c.pos.y,f.x,f.y) > eatR2) continue;
-        const take=CONFIG.cell.eatPerSecond * 1.25 * dt; // +25 %
+        const take=CONFIG.cell.eatPerSecond * 1.25 * dt;
         const got=Math.min(take,f.amount);
         c.energy=Math.min(capEnergy(c),c.energy+got); f.amount-=got; eaten+=got;
         if(f.amount<=1){ const idx=foodItems.indexOf(f); if(idx>=0) foodItems.splice(idx,1); }
@@ -287,10 +283,10 @@ export function step(dt, _env, _t){
     c.pos.x=clamp(c.pos.x+c.vel.x*dt,0,W); c.pos.y=clamp(c.pos.y+c.vel.y*dt,0,H);
     c.vel.x*=0.985; c.vel.y*=0.985;
 
-    // Energie (global −10 % Grundumsatz + Juvenil-Schutz)
+    // Energie (−10% Base + Juvenil 0.8)
     const sp=len(c.vel.x,c.vel.y);
-    let baseDrain=CONFIG.cell.baseMetabolic * 0.9 * (0.6+0.1*gnm.MET) * dt; // −10 %
-    if (c.age < 15) baseDrain *= 0.8; // Juvenil-Schutz
+    let baseDrain=CONFIG.cell.baseMetabolic * 0.9 * (0.6+0.1*gnm.MET) * dt;
+    if (c.age < 15) baseDrain *= 0.8;
     const moveDrain=(CONFIG.physics.moveCostK??0.0006)*(sp*sp)*dt / sMin;
     c.energy -= baseDrain + moveDrain;
     metrics.sampleEnergy({ base:baseDrain, move:moveDrain, env:0, intake:0, eating:false });
@@ -298,10 +294,10 @@ export function step(dt, _env, _t){
     // Vitalität
     {
       const L = CONFIG.longevity || {};
-      const eFrac = clamp(c.energy / capEnergy(c), 0, 1);
+      const eFracNow = clamp(c.energy / capEnergy(c), 0, 1);
       let dv = 0;
-      if (eFrac >= (L.energyGood ?? 0.60)) dv += (L.vitalityRate ?? 0.6) * dt;
-      else if (eFrac <= (L.energyBad ?? 0.25)) dv -= (L.vitalityRate ?? 0.6) * dt;
+      if (eFracNow >= (L.energyGood ?? 0.60)) dv += (L.vitalityRate ?? 0.6) * dt;
+      else if (eFracNow <= (L.energyBad ?? 0.25)) dv -= (L.vitalityRate ?? 0.6) * dt;
       c.vitality = clamp((c.vitality ?? 0) + dv, -1, 1);
     }
 

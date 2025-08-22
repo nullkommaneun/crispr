@@ -1,109 +1,71 @@
-// drives.js — Verhaltenspolitik (Mate-first mit Gating & Hysterese)
-// Exports: initDrives, getAction, afterStep, getDrivesSnapshot, setTracing
+// drives.js — Verhaltenspolitik: Mate-first mit Energie-Gating & Hysterese (Pop-aware)
 
 let TRACE = false;
 
-// Policy-Parameter (konservativ gewählt)
 const CFG = {
-  // Energie-Schwellen (Anteil an Emax)
-  E_ENTER_MATE: 0.55,   // ab hier Paarung priorisieren
-  E_EXIT_MATE:  0.45,   // unter diese Schwelle -> raus aus Mate-Modus
-  // Zeit-Hysterese (verhindert Zickzack)
-  MATE_STICKY_SEC: 6.0, // bleibe bis zu 6s im Paarungsmodus
-  // Pairing & Distanzen (nur Info für Snapshot; das eigentliche Steuern macht entities.js)
-  R_PAIR: 32,           // "Pair distance" ist in entities geregelt; hier nur Anzeige
-  K_DIST: 0.05,         // Distanzabzug im Score (entities nutzt −0.05*d analog)
-  EPS: 0                // frei für spätere Feinheiten
+  E_ENTER_MATE: 0.55,   // Energieanteil zum Einsteigen
+  E_EXIT_MATE:  0.45,   // zum Aussteigen
+  MATE_STICKY_SEC: 6.0  // solange im Mate-Modus kleben (wenn Energie ok)
 };
 
-// Laufzeitzähler (für Ticker/Diagnose)
-const MISC = {
-  duels: 0,
-  wins:  0
-};
+const MISC = { duels:0, wins:0 };
 
-// Pro-Zelle: kleiner Drive-Status (Mate-Hysterese)
 function ensureDS(c){
-  if (!c.__drive) c.__drive = { mode: "wander", until: 0 };
+  if(!c.__drive) c.__drive = { mode:"wander", modeSince:0 };
   return c.__drive;
 }
 
-export function initDrives(){ /* aktuell nichts nötig */ }
-
+export function initDrives(){ /* noop */ }
 export function setTracing(on){ TRACE = !!on; }
-
 export function getDrivesSnapshot(){
-  return {
-    misc: { duels: MISC.duels, wins: MISC.wins },
-    cfg:  { K_DIST: CFG.K_DIST, R_PAIR: CFG.R_PAIR, EPS: CFG.EPS }
-  };
-}
-
-// Hilfen
-function capEnergyOf(c){
-  const g = c.genome || {};
-  const baseMax = 100; // Fallback; real kommt aus CONFIG in entities (wir kennen die dortige Skalierung nicht direkt)
-  // Wir schätzen hier nur den Anteil über c.energy/cap, falls entities capEnergy nicht exportiert.
-  // Falls kein Hinweis, benutzen wir heuristisch 80..140 als plausible Range:
-  return Math.max(40, Math.min(240, (c.energy / Math.max(0.01, c.vitality+1)) * 2)); // sehr grobe Schätzung
-}
-
-// Besser: Anteil via "virtueller Kapazität" (entities exportiert cap nicht).
-function energyFrac(c){
-  // Wir haben keinen direkten cap(). Näherung: skaliere auf [0,1] relativ zu typischen Energiespannen.
-  // c.energy bewegt sich in deiner Sim normalerweise ~[0..100+] — wir normalisieren robust:
-  const E = Math.max(0, Math.min(120, c.energy || 0));
-  return E / 100; // robust, hinreichend für Policy-Gating
+  return { misc:{...MISC}, cfg:{ R_PAIR:32, K_DIST:0.05, EPS:0 } };
 }
 
 // Hauptentscheidung
 export function getAction(c, t, ctx){
   const ds = ensureDS(c);
+  const now = +t || 0;
 
   const hasFood = !!ctx.food;
   const hasMate = !!ctx.mate && (ctx.mateDist != null);
 
-  const eFrac = energyFrac(c);
+  // Energieanteil möglichst exakt aus entities geliefert
+  const eFrac = typeof ctx.eFrac === "number" ? ctx.eFrac :
+                Math.max(0, Math.min(1, (c.energy||0)/100));
 
-  // Mate-Hysterese: bleib im Mate-Modus, solange Energie nicht unter Exit fällt
-  // oder die Sticky-Zeit nicht abgelaufen ist.
+  // Dynamische Schwellen bei kleiner Population → früher Mate versuchen
+  const popN = ctx.popN || 0;
+  let enter = CFG.E_ENTER_MATE;
+  let exit  = CFG.E_EXIT_MATE;
+  if (popN <= 12){ enter = Math.max(0.40, enter - 0.10); exit = Math.max(0.30, exit - 0.10); }
+
+  // Stickiness (nur wenn Energie nicht unter Exit fällt)
   if (ds.mode === "mate"){
-    if (eFrac < CFG.E_EXIT_MATE || (t - (ds.modeSince || 0)) > CFG.MATE_STICKY_SEC) {
-      ds.mode = "wander"; // neu entscheiden
-    } else {
-      if (TRACE) console.log(`[DRIVES] stick: mate (e=${eFrac.toFixed(2)})`);
+    const stick = (now - (ds.modeSince||0)) <= CFG.MATE_STICKY_SEC;
+    if (eFrac >= exit && stick){
+      if (TRACE) console.log(`[DRIVES] mate-stick e=${eFrac.toFixed(2)} dt=${(now-(ds.modeSince||0)).toFixed(1)}s`);
       return "mate";
     }
+    // sonst neu entscheiden
   }
 
-  // Neue Entscheidung
-  if (hasMate && c.cooldown <= 0 && eFrac >= CFG.E_ENTER_MATE){
-    ds.mode = "mate";
-    ds.modeSince = t;
-    if (TRACE) console.log(`[DRIVES] choose: mate (e=${eFrac.toFixed(2)})`);
+  // Priorität: Mate vor Food (mit Gating)
+  if (hasMate && c.cooldown<=0 && eFrac >= enter){
+    ds.mode = "mate"; ds.modeSince = now;
+    if (TRACE) console.log(`[DRIVES] choose Mate (e=${eFrac.toFixed(2)} pop=${popN})`);
     return "mate";
   }
 
   if (hasFood){
-    ds.mode = "food";
-    ds.modeSince = t;
-    if (TRACE) console.log(`[DRIVES] choose: food (e=${eFrac.toFixed(2)})`);
+    ds.mode = "food"; ds.modeSince = now;
+    if (TRACE) console.log(`[DRIVES] choose Food (e=${eFrac.toFixed(2)} pop=${popN})`);
     return "food";
   }
 
-  ds.mode = "wander";
-  ds.modeSince = t;
-  if (TRACE) console.log(`[DRIVES] choose: wander (e=${eFrac.toFixed(2)})`);
+  ds.mode = "wander"; ds.modeSince = now;
   return "wander";
 }
 
-// Feedback-Hook je Schritt (kann später für Lernen genutzt werden)
-export function afterStep(c, dt, ctx){
-  // Zählwerke optional pflegen (z.B. wenn eine Paarung erfolgreich war → wins++)
-  // Hier kein direkter Ereignis-Hook; könnte über emit('cells:born') angebunden werden.
-  // Platzhalter:
-  if (false) {
-    MISC.duels++;
-    MISC.wins++;
-  }
+export function afterStep(/* c, dt, ctx */){
+  // hier könntest du in Zukunft Erfolg von Paarungen hochzählen (wins++)
 }
