@@ -1,5 +1,5 @@
 // appops.js — Smart-Ops v2 + Lazy-Assets-Hinweis
-// Telemetrie, Feature-Scan, Learned Confidence (pro Device-Profil), Hints mit Begründung
+// Telemetrie, Feature-Scan, Hints mit Begründung (ohne Runtime-Preview)
 
 import { on } from "./event.js";
 
@@ -15,7 +15,6 @@ const state = {
   features:{ preflightHook:false, tfInline:false, swActive:false, mobile:false }
 };
 
-/* session learning storages (localStorage) */
 const LS_LAST   = "smartops.lastSession";
 const LS_LEARN  = "smartops.learn";
 const LS_PROFILE= "smartops.profile";
@@ -87,7 +86,6 @@ function scanResources(){
 }
 
 /* ====================== FEATURE-/ASSET-SCAN ====================== */
-// Preflight-Hook vorhanden? TF inline? SW aktiv? Mobile?
 async function scanFeatures(){
   try{
     const res = await fetch("./preflight.js", { cache:"no-store" });
@@ -97,7 +95,6 @@ async function scanFeatures(){
   state.features.swActive = !!(navigator.serviceWorker && navigator.serviceWorker.controller);
   state.features.mobile   = isMobileUA() || (window.matchMedia && window.matchMedia("(max-width: 768px)").matches);
 }
-// Große Ressourcen (für Lazy-Hinweis)
 function heavyAssets(){
   const res = performance.getEntriesByType('resource')||[];
   return res
@@ -143,7 +140,7 @@ export async function runModuleMatrix(){
   return state.modules.lastReport;
 }
 
-/* ====================== START/CAPTURE ====================== */
+/* ====================== START ====================== */
 export function startCollectors(){
   if(state.started) return; state.started=true;
   startRafSampler(); startLongTaskObserver(); startTopbarObserver(); scanResources(); scanFeatures();
@@ -177,7 +174,7 @@ function currentCost(){
   return +(0.35*cap + 0.25*draw + 0.20*ent + 0.15*jank + 0.05*flow).toFixed(4);
 }
 
-/* ====================== PUBLIC SNAPSHOT ====================== */
+/* ====================== SNAPSHOT ====================== */
 export function getAppOpsSnapshot(){
   const s=state.perf.raf.samples;
   const fpsNow=s.length? s[s.length-1].fps : 0;
@@ -185,11 +182,11 @@ export function getAppOpsSnapshot(){
   return {
     v:1, kind:"appops",
     perf:{ fpsNow:Math.round(fpsNow), fpsAvg:Math.round(fpsAvg), jank:state.perf.raf.jankCount, jankMs:Math.round(state.perf.raf.jankSumMs),
-      longTasks:{ count:state.perf.longTasks.count, totalMs:Math.round(state.perf.longTasks.totalMs) } },
+      longTasks:{ count:state.perf.longTasks.count, totalMs:Math.round(state.perf.raf.longTasks.totalMs) } },
     engine:{ frames:state.engine.frames||1, capRatio:Math.round((state.engine.backlogRatio||0)*100)/100 },
     layout:{ reflows:state.layout.reflowCount, heights:[...state.layout.lastHeights] },
     resources:{ scannedAt:state.resources.scannedAt, totalKB:state.resources.total, largest:state.resources.largest },
-    modules:{ last:state.modules.lastReport },
+    modules:{ lastReport:state.modules.lastReport },
     timings:{ ent:Math.round(state.timings.ent), repro:Math.round(state.timings.repro), food:Math.round(state.timings.food), draw:Math.round(state.timings.draw) },
     features:{ ...state.features }
   };
@@ -206,7 +203,6 @@ export function getSmartHints(){
   const t = s.timings || { ent:0, repro:0, food:0, draw:0 };
   const fpsAvg = s.perf.fpsAvg || 0;
 
-  // 0) Preflight nur falls fehlt
   if (!s.features.preflightHook) {
     H.push({
       id:"preflight",
@@ -218,7 +214,6 @@ export function getSmartHints(){
     });
   }
 
-  // 1) UI beruhigen
   if (jank > 5 || reflows > 5) {
     const jankScore = clamp((jank-5)/10), reflowScore = clamp((reflows-5)/10);
     const conf = Math.round(100*clamp(0.6*jankScore + 0.4*reflowScore));
@@ -234,7 +229,6 @@ export function getSmartHints(){
     });
   }
 
-  // 2) Draw teuer?
   if ((t.draw||0) > 8) {
     const conf = Math.round(100*clamp((t.draw-8)/8));
     H.push({
@@ -246,7 +240,6 @@ export function getSmartHints(){
     });
   }
 
-  // 3) Engine-Backlog / Entities teuer?
   if ((cap||0) > 0.15 || (t.ent||0) > 8) {
     const capScore = clamp((cap-0.15)/0.25), entScore = clamp((t.ent-8)/8);
     const conf = Math.round(100*clamp(0.6*capScore + 0.4*entScore));
@@ -264,7 +257,6 @@ export function getSmartHints(){
     });
   }
 
-  // 4) TF inline → lazy
   if (s.features.tfInline) {
     H.push({
       id:"lazyTF",
@@ -285,7 +277,6 @@ export function getSmartHints(){
     });
   }
 
-  // 5) Große Assets → Lazy-Hinweis
   const heavy = heavyAssets();
   if (heavy.length){
     const top = heavy.slice(0,3);
@@ -295,12 +286,11 @@ export function getSmartHints(){
       title:"Große Assets lazy laden",
       confidence: 65,
       reason:`Gefundene große Ressourcen: ${list}. Prüfe, ob Lazy-Import möglich ist (Panel/Modell nur bei Bedarf).`,
-      changes: [] // nur Hinweis – konkrete Patches sind projektabhängig
+      changes: []
     });
   }
 
-  // 6) Auto-Perf auf Mobile/niedriger FPS
-  const fpsAvg = (s.perf.fpsAvg||0);
+  // Auto-Perf (nutzt die bereits oben definierte Variable fpsAvg)
   if ((s.features.mobile && fpsAvg < 50) || fpsAvg < 40) {
     const base = s.features.mobile ? 0.7 : 0.5;
     const conf = Math.round(100*clamp(base + clamp((50 - fpsAvg)/30)));
