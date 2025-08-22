@@ -1,114 +1,93 @@
-// food.js — Cluster-Spawning (Gauß), flächen-/auflösungsstabil + Ökonomie-Zählung
+// food.js — Cluster-basierter Food-Spawner (Gauß), jetzt mit global +15% Spawnrate
+// API: step(dt), setSpawnRate(perSec), spawnClusters(n?)
 
-import { CONFIG } from "./config.js";
+import { worldSize, addFoodItem } from "./entities.js";
 import { emit } from "./event.js";
-import { addFoodItem, getFoodItems, worldSize } from "./entities.js";
-import { addSpawn } from "./metrics.js"; // für Ökonomie (Items/Energie pro Sekunde)
 
-/* ==== State ==== */
-let clusters = [];
-let spawnRatePerSec = CONFIG.food?.baseSpawnRate ?? 6;
+const CLUSTERS = [];
+let ratePerSec = 6;         // UI-Basis (wird per setSpawnRate gesetzt)
+const SPAWN_BOOST = 1.15;   // +15% global
 
-/* ==== Utils ==== */
-const clamp = (x,a,b)=> Math.max(a, Math.min(b,x));
-const rand  = (a,b)=> a + Math.random()*(b-a);
+let acc = 0;
 
-// Baseline 1024×640
-const BASE_W = 1024, BASE_H = 640;
-function scales(){
-  const { width:W, height:H } = worldSize();
-  const areaScale = (W*H)/(BASE_W*BASE_H);
-  const sMin = Math.max(0.6, Math.min(W,H)/BASE_H);
-  return { W, H, areaScale, sMin };
-}
+// Cluster-Params
+const CFG = {
+  nClusters: 3,
+  drift: 18,             // px/s
+  spread: 42,            // Gauß σ
+  itemRadius: 2,
+  decay: 0.000,          // optionaler Zerfall
+};
 
-// Box–Muller für Normalverteilung
-function gaussian(){
-  let u=0,v=0; while(u===0) u=Math.random(); while(v===0) v=Math.random();
-  return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);
-}
-function sampleGaussian2D(cx,cy,sigma){ return [ cx + gaussian()*sigma, cy + gaussian()*sigma ]; }
-
-// Poisson-Sampling
-function samplePoisson(lambda){
-  const L = Math.exp(-lambda);
-  let k = 0, p = 1;
-  do { k++; p *= Math.random(); } while (p > L);
-  return k - 1;
-}
-
-/* ==== API ==== */
 export function setSpawnRate(perSec){
-  spawnRatePerSec = Math.max(0, Number(perSec)||0);
+  // Anwenderwert * globaler Boost
+  ratePerSec = Math.max(0, +perSec || 0) * SPAWN_BOOST;
 }
 
-export function spawnClusters(){
-  clusters = [];
-  const { W, H, sMin } = scales();
-
-  const count = Math.max(3, Math.round((CONFIG.food.clusterCount ?? 5) * sMin));
-  const drift = (CONFIG.food.clusterDrift ?? 20) * sMin;
-  const sigma = (CONFIG.food.clusterSigma ?? 55) * sMin;
-
-  for(let i=0;i<count;i++){
-    clusters.push({
-      x: rand(100, W-100),
-      y: rand(80,  H-80),
-      vx: rand(-0.6,0.6) * drift,
-      vy: rand(-0.6,0.6) * drift,
-      sigma,
-      strength: rand(0.7,1.3)
+export function spawnClusters(n){
+  CLUSTERS.length = 0;
+  const { width:W, height:H } = worldSize();
+  const k = n ?? CFG.nClusters;
+  for(let i=0;i<k;i++){
+    CLUSTERS.push({
+      x: 40 + Math.random()*(W-80),
+      y: 40 + Math.random()*(H-80),
+      vx: (Math.random()*2-1) * CFG.drift,
+      vy: (Math.random()*2-1) * CFG.drift,
     });
   }
+  emit("food:clusters", { n: CLUSTERS.length });
 }
+
+// Gauß-Zufall
+function gauss(mu=0, sigma=1){
+  let u=0,v=0;
+  while(u===0) u=Math.random();
+  while(v===0) v=Math.random();
+  const z=Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);
+  return mu + z*sigma;
+}
+
+function clamp(x,a,b){ return Math.max(a,Math.min(b,x)); }
 
 export function step(dt){
-  if(clusters.length===0) spawnClusters();
+  const { width:W, height:H } = worldSize();
 
-  const { W, H, areaScale, sMin } = scales();
-
-  // Cluster-Drift
-  const baseDrift = (CONFIG.food.clusterDrift ?? 20) * sMin;
-  for(const c of clusters){
-    c.vx += rand(-0.5,0.5) * baseDrift * 0.1;
-    c.vy += rand(-0.5,0.5) * baseDrift * 0.1;
-    const sp = Math.hypot(c.vx,c.vy), vmax = baseDrift;
-    if(sp>vmax){ const s=vmax/sp; c.vx*=s; c.vy*=s; }
-
-    c.x = clamp(c.x + c.vx*dt, 60, W-60);
-    c.y = clamp(c.y + c.vy*dt, 60, H-60);
-
-    c.vx *= 0.92; c.vy *= 0.92;
+  // Cluster drift
+  for(const c of CLUSTERS){
+    c.x = clamp(c.x + c.vx*dt, 20, W-20);
+    c.y = clamp(c.y + c.vy*dt, 20, H-20);
+    // leichte Rücklenkung zur Mitte
+    c.vx += (-Math.sign(c.x-W/2))*0.3*dt;
+    c.vy += (-Math.sign(c.y-H/2))*0.3*dt;
   }
 
-  // Cap & Spawn (flächen-skaliert)
-  const baseMax = CONFIG.food?.maxItems ?? 180;
-  const MAX_FOOD_ITEMS = Math.max(60, Math.round(baseMax * areaScale));
-  const current = getFoodItems().length;
+  // Spawn-Akkumulator
+  acc += ratePerSec * dt;
 
-  if(current < MAX_FOOD_ITEMS){
-    const lambda = spawnRatePerSec * areaScale * dt;
-    const count  = samplePoisson(lambda);
+  while(acc >= 1){
+    acc -= 1;
 
-    if (count > 0) {
-      // Ökonomie: Spawns zählen (Items und Gesamtenergie)
-      const perItemEnergy = CONFIG.food.itemEnergy || 0;
-      addSpawn(count, count * perItemEnergy);
-    }
+    // wähle Cluster proportional zufällig
+    const c = CLUSTERS.length ? CLUSTERS[(Math.random()*CLUSTERS.length)|0] : null;
+    if (!c) continue;
 
-    for(let i=0;i<count;i++){
-      const c = clusters[(Math.random()*clusters.length)|0];
-      let [x,y] = sampleGaussian2D(c.x, c.y, c.sigma);
-      x = clamp(x, 8, W-8); y = clamp(y, 8, H-8);
-      addFoodItem({ x, y, amount: CONFIG.food.itemEnergy, radius: CONFIG.food.itemRadius });
+    // Gauß-Offset
+    const ox = gauss(0, CFG.spread);
+    const oy = gauss(0, CFG.spread);
 
-      if(getFoodItems().length >= MAX_FOOD_ITEMS) break;
-    }
+    const x = clamp(c.x + ox, 4, W-4);
+    const y = clamp(c.y + oy, 4, H-4);
+
+    addFoodItem({ x, y, amount: 1.0, r: CFG.itemRadius });
+    emit("food:spawn", { x, y });
   }
 
-  // Engpass-Hinweis
-  const avail = getFoodItems().length;
-  if(avail < Math.max(10, Math.round(15*areaScale)) && Math.random()<0.02){
-    emit("food:crisis", { available: avail });
+  // optionaler Zerfall (derzeit 0)
+  if (CFG.decay > 0){
+    // könnte FoodItems reduzieren; wird hier nicht benötigt
   }
 }
+
+// Initiale Cluster
+spawnClusters(CFG.nClusters);

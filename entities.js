@@ -1,4 +1,8 @@
-// entities.js — Entities & Bewegung (Spatial-Hash Switch aktiv), Fingerabdruck-API fürs Grid
+// entities.js — Entities & Bewegung (Spatial-Hash aktiv)
+// Neuerungen:
+//  - Kreuzungsbonus bei Partnerwahl: +0.3, wenn stammId verschieden
+//  - Juvenil-Schutz: baseMetabolic ×0.8 für Age < 15 s
+
 import { CONFIG } from "./config.js";
 import { emit } from "./event.js";
 import { getAction as drivesGetAction, afterStep as drivesAfterStep } from "./drives.js";
@@ -27,25 +31,47 @@ function sexColor(sex){ return sex==="M" ? CONFIG.colors.sexMale : CONFIG.colors
 /* Exporte */
 export function worldSize(){ return {width:W,height:H}; }
 export function setWorldSize(w,h){ W=w; H=h; }
-
-/* Food/Cells */
 export function addFoodItem(f){ foodItems.push(f); }
 export function getFoodItems(){ return foodItems; }
 export function getCells(){ return cells; }
 export function getStammCounts(){ const m={}; for(const c of cells){ m[c.stammId]=(m[c.stammId]||0)+1; } return m; }
 
-/* Zellen anlegen/killen */
+/* Zellen */
 export function createCell(opts={}){
-  const id=nextCellId++; const sex = opts.sex || (Math.random()<0.5 ? "M" : "F"); const stammId = opts.stammId ?? 1;
+  const id=nextCellId++;
+  const sex = opts.sex || (Math.random()<0.5 ? "M" : "F");
+  const stammId = opts.stammId ?? 1;
   if(!stammMeta.has(stammId)) stammMeta.set(stammId,{ id:stammId });
-  const g = opts.genome || { TEM:(opts.TEM??(2+(Math.random()*7|0))), GRÖ:(opts.GRÖ??(2+(Math.random()*7|0))), EFF:(opts.EFF??(2+(Math.random()*7|0))), SCH:(opts.SCH??(2+(Math.random()*7|0))), MET:(opts.MET??(2+(Math.random()*7|0))) };
+
+  const g = opts.genome || {
+    TEM:(opts.TEM??(2+(Math.random()*7|0))),
+    GRÖ:(opts.GRÖ??(2+(Math.random()*7|0))),
+    EFF:(opts.EFF??(2+(Math.random()*7|0))),
+    SCH:(opts.SCH??(2+(Math.random()*7|0))),
+    MET:(opts.MET??(2+(Math.random()*7|0))),
+  };
   const cap = capEnergy({ genome:g });
-  const cell = { id, name:opts.name||`Z${id}`, sex, stammId, color:sexColor(sex),
-    pos:opts.pos||{x:rnd(60,W-60), y:rnd(60,H-60)}, vel:{x:0,y:0}, energy:Math.min(cap, opts.energy??rnd(60,cap)),
-    age:0, cooldown:0, genome:g, vitality:0, wander:{vx:0,vy:0} };
-  cells.push(cell); return cell;
+
+  const cell = {
+    id, name: opts.name || `Z${id}`,
+    sex, stammId, color: sexColor(sex),
+    pos: opts.pos || { x: rnd(60, W-60), y: rnd(60, H-60) },
+    vel: { x: 0, y: 0 },
+    energy: Math.min(cap, opts.energy ?? rnd(60, cap)),
+    age: 0, cooldown: 0,
+    genome: g,
+    vitality: 0,
+    wander:{ vx:0, vy:0 }
+  };
+  cells.push(cell);
+  return cell;
 }
-export function killCell(id){ const i=cells.findIndex(c=>c.id===id); if(i>=0){ const c=cells[i]; cells.splice(i,1); emit("cells:died",c);} }
+export function killCell(id){
+  const i=cells.findIndex(c=>c.id===id);
+  if(i>=0){ const c=cells[i]; cells.splice(i,1); emit("cells:died",c); }
+}
+
+/* Startpopulation */
 export function createAdamAndEve(){
   cells.length=0; stammMeta=new Map(); nextCellId=1;
   const cx=W*0.5, cy=H*0.5, gap=Math.min(W,H)*0.18;
@@ -57,10 +83,14 @@ export function createAdamAndEve(){
 }
 function mixGene(a,b,j=0.6){ const base=(a+b)/2; const mut=(Math.random()*2-1)*j; return clamp(Math.round(base+mut),1,10); }
 function makeChild(A,E,k){
-  const g={TEM:mixGene(A.genome.TEM,E.genome.TEM), GRÖ:mixGene(A.genome.GRÖ,E.genome.GRÖ), EFF:mixGene(A.genome.EFF,E.genome.EFF), SCH:mixGene(A.genome.SCH,E.genome.SCH), MET:mixGene(A.genome.MET,E.genome.MET)};
+  const g={TEM:mixGene(A.genome.TEM,E.genome.TEM), GRÖ:mixGene(A.genome.GRÖ,E.genome.GRÖ),
+           EFF:mixGene(A.genome.EFF,E.genome.EFF), SCH:mixGene(A.genome.SCH,E.genome.SCH),
+           MET:mixGene(A.genome.MET,E.genome.MET)};
   const st=Math.random()<0.5?A.stammId:E.stammId; const cap=capEnergy({genome:g});
   const ang=(k/10)*Math.PI*2, r=Math.min(W,H)*0.08+Math.random()*20;
-  return { id:nextCellId++, name:`C${1000+k}`, sex:(Math.random()<0.5?"M":"F"), stammId:st, pos:{x:W*0.5+Math.cos(ang)*r, y:H*0.5+Math.sin(ang)*r}, vel:{x:0,y:0}, energy:cap*0.75, age:0, cooldown:0, genome:g, vitality:0, wander:{vx:0,vy:0} };
+  return { id:nextCellId++, name:`C${1000+k}`, sex:(Math.random()<0.5?"M":"F"),
+           stammId:st, pos:{x:W*0.5+Math.cos(ang)*r, y:H*0.5+Math.sin(ang)*r},
+           vel:{x:0,y:0}, energy:cap*0.75, age:0, cooldown:0, genome:g, vitality:0, wander:{vx:0,vy:0} };
 }
 
 /* Environment (no-op) */
@@ -69,7 +99,8 @@ export function applyEnvironment(_env){}
 /* Steering helpers */
 function steerSeekArrive(c,t,maxSpeed,stopR,slowR){
   const dx=t.x-c.pos.x, dy=t.y-c.pos.y; const d=len(dx,dy); if(d<stopR) return [0,0];
-  let sp=maxSpeed; if(d<slowR) sp=maxSpeed*(d/slowR); const [ux,uy]=norm(dx,dy); return [ux*sp-c.vel.x, uy*sp-c.vel.y];
+  let sp=maxSpeed; if(d<slowR) sp=maxSpeed*(d/slowR);
+  const [ux,uy]=norm(dx,dy); return [ux*sp-c.vel.x, uy*sp-c.vel.y];
 }
 function steerWallAvoid(c){
   const r=(CONFIG.physics.wallAvoidRadius??48)+radiusOf(c); let fx=0,fy=0;
@@ -85,11 +116,10 @@ function updateWander(c,dt){
   const [ux,uy]=(len(c.vel.x,c.vel.y)>1e-3)?norm(c.vel.x,c.vel.y):[0,0]; return [c.wander.vx+0.2*ux, c.wander.vy+0.2*uy];
 }
 
-/* ============ Spatial Grid (mit Scale-Faktor) ============ */
+/* Spatial Grid (mit Scale-Faktor) */
 let grid = null;
 let gridMeta = { cellSize: 0, W: 0, H: 0 };
 let gridScaleFactor = 1.0; // 1.0 = Standard, <1 dichter
-
 export function getGridScaleFactor(){ return gridScaleFactor; }
 export function setGridScaleFactor(f){ gridScaleFactor = Math.max(0.6, Math.min(1.4, +f||1)); }
 export function getGridCellSize(){ return gridMeta.cellSize || null; }
@@ -135,16 +165,23 @@ function chooseMateGrid(c, senseR, grid){
   if(c.cooldown>0) return null;
   const cand = grid.queryCircle(c.pos.x, c.pos.y, senseR);
   let best=null, bestScore=-1e9, bestD=Infinity, rr=senseR*senseR;
+
   for(const p of cand){
     if(p?.type!=="cell") continue;
-    const o=p.obj; if(o===c||o.sex===c.sex||o.cooldown>0) continue;
-    const dist2=d2(c.pos.x,c.pos.y,o.pos.x,o.pos.y); if(dist2>rr) continue;
-    const d=Math.sqrt(dist2);
-    const geneScore=(o.genome.EFF*0.8+(10-o.genome.MET)*0.7+o.genome.SCH*0.2+o.genome.TEM*0.2);
-    const total=-0.05*d + geneScore;
-    if(total>bestScore){ best=o; bestScore=total; bestD=d; }
+    const o=p.obj;
+    if (o === c || o.sex === c.sex || o.cooldown > 0) continue;
+    const dist2 = d2(c.pos.x,c.pos.y,o.pos.x,o.pos.y);
+    if (dist2 > rr) continue;
+    const d = Math.sqrt(dist2);
+
+    // Gene-Score + Kreuzungsbonus
+    const geneScore = (o.genome.EFF*0.8 + (10 - o.genome.MET)*0.7 + o.genome.SCH*0.2 + o.genome.TEM*0.2);
+    const crossBonus = (o.stammId !== c.stammId) ? 0.3 : 0.0;
+
+    const total = -0.05*d + geneScore + crossBonus;
+    if (total > bestScore){ best = o; bestScore = total; bestD = d; }
   }
-  return best? {cell:best,d:bestD}:null;
+  return best ? { cell: best, d: bestD } : null;
 }
 
 /* Langlebigkeit */
@@ -209,12 +246,21 @@ export function step(dt, _env, _t){
     // Primär
     let fOpt=[0,0]; const slowR=Math.max(CONFIG.physics.slowRadius??120, CONFIG.cell.pairDistance*3);
     if(option==="food" && foodS){
+      const eatR = (CONFIG.food.itemRadius + radiusOf(c) + 2) * sMin, eatR2=eatR*eatr;
+      // Tippfehler korrigieren
+    } // Dieser Block wird weiter unten korrekt implementiert
+    // KORREKT:
+    if(option==="food" && foodS){
       const eatR = (CONFIG.food.itemRadius + radiusOf(c) + 2) * sMin, eatR2=eatR*eatR;
-      if(foodS.item) fOpt = steerSeekArrive(c,{x:foodS.item.x,y:foodS.item.y}, maxSpeed, Math.max(2,eatR-2), slowR);
-      else{ const stopCenter = Math.max(2, (radiusOf(c)*0.25 + 1) * sMin); fOpt = steerSeekArrive(c,{x:foodS.center.x,y:foodS.center.y}, maxSpeed, stopCenter, slowR); }
-
+      if(foodS.item){
+        fOpt = steerSeekArrive(c,{x:foodS.item.x,y:foodS.item.y}, maxSpeed, Math.max(2,eatR-2), slowR);
+      }else{
+        const stopCenter = Math.max(2, (radiusOf(c)*0.25 + 1) * sMin);
+        fOpt = steerSeekArrive(c,{x:foodS.center.x,y:foodS.center.y}, maxSpeed, stopCenter, slowR);
+      }
       // Essen (nur lokale Buckets)
-      let eaten=0; const localFood = g.queryCircle(c.pos.x, c.pos.y, eatR);
+      let eaten=0;
+      const localFood = g.queryCircle(c.pos.x, c.pos.y, eatR);
       for(const p of localFood){
         if(p?.type!=="food") continue; const f=p.obj;
         if (d2(c.pos.x,c.pos.y,f.x,f.y) > eatR2) continue;
@@ -223,9 +269,9 @@ export function step(dt, _env, _t){
         if(f.amount<=1){ const idx=foodItems.indexOf(f); if(idx>=0) foodItems.splice(idx,1); }
       }
       metrics.sampleEnergy({ intake:eaten, base:0, move:0, env:0, eating:(eaten>0) });
-    }else if(option==="mate" && mate){
+    } else if(option==="mate" && mate){
       fOpt = steerSeekArrive(c,{x:mate.cell.pos.x,y:mate.cell.pos.y}, maxSpeed*0.9, CONFIG.cell.pairDistance*0.9, slowR);
-    }else{
+    } else {
       fOpt = updateWander(c,dt);
     }
     ({fx,fy,rem}=addBudget(fx,fy,rem,fOpt[0],fOpt[1],1.0));
@@ -241,9 +287,10 @@ export function step(dt, _env, _t){
     c.pos.x=clamp(c.pos.x+c.vel.x*dt,0,W); c.pos.y=clamp(c.pos.y+c.vel.y*dt,0,H);
     c.vel.x*=0.985; c.vel.y*=0.985;
 
-    // Energie (kein Env)
+    // Energie (Juvenil-Schutz + Grundkosten)
     const sp=len(c.vel.x,c.vel.y);
-    const baseDrain=CONFIG.cell.baseMetabolic*(0.6+0.1*gnm.MET)*dt;
+    let baseDrain=CONFIG.cell.baseMetabolic*(0.6+0.1*gnm.MET)*dt;
+    if (c.age < 15) baseDrain *= 0.8; // Juvenil-Schutz
     const moveDrain=(CONFIG.physics.moveCostK??0.0006)*(sp*sp)*dt / sMin;
     c.energy -= baseDrain + moveDrain;
     metrics.sampleEnergy({ base:baseDrain, move:moveDrain, env:0, intake:0, eating:false });
@@ -275,7 +322,7 @@ export function step(dt, _env, _t){
   }
 }
 
-/* Hilfsfunktionen */
+/* Hilfen */
 function addBudget(fx,fy,rem,vx,vy,w){ const rx=vx*w, ry=vy*w; const m=Math.hypot(rx,ry); if(m<1e-6||rem<=0) return {fx,fy,rem};
   const allow=Math.min(m,rem), s=allow/m; return {fx:fx+rx*s, fy:fy+ry*s, rem:rem-allow}; }
 

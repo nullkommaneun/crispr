@@ -63,6 +63,7 @@ function bindUI(){
   const btnDummy  = document.getElementById("btnDummy");
   const btnDiag   = document.getElementById("btnDiag");
   const btnAppOps = document.getElementById("btnAppOps");
+  const btnHUD    = document.getElementById("btnHUD");
   const btnSpeed  = document.getElementById("btnSpeed");
 
   btnStart.onclick = ()=>{ breadcrumb("ui:btn","Start"); start(); };
@@ -73,7 +74,8 @@ function bindUI(){
   if (btnDummy) btnDummy.onclick = ()=> openDummyPanel();
   if (btnDiag)  btnDiag.onclick  = ()=> import("./diag.js").then(m=>m.openDiagPanel());
   if (btnAppOps) btnAppOps.onclick = ()=> import("./appops_panel.js").then(m=>m.openAppOpsPanel());
-  btnSpeed.onclick = ()=> cycleSpeed();
+  if (btnHUD) btnHUD.onclick     = ()=> import("./hud.js").then(m=>m.toggleHUD());
+  btnSpeed.onclick               = ()=> cycleSpeed();
 
   const mu=document.getElementById("mutation");
   const fr=document.getElementById("foodrate");
@@ -83,14 +85,15 @@ function bindUI(){
   function updVals(){ if(mutVal) mutVal.textContent=`${Math.round(parseFloat(mu.value||"0"))}%`; if(foodVal) foodVal.textContent=`${Math.round(parseFloat(fr.value||"0"))}/s`; }
   mu.oninput=()=>{ setMutationRate(parseFloat(mu.value)); updVals(); };
   fr.oninput=()=>{ setSpawnRate(parseFloat(fr.value)); updVals(); };
-  pm.oninput=()=> setPerfMode(pm.checked);
+  pm.oninput =()=> setPerfMode(pm.checked);
   [mu,fr].forEach(el=> el?.addEventListener("touchmove",(e)=>{ e.preventDefault(); },{passive:false}));
 
   const canvas=document.getElementById("world");
   canvas.addEventListener("click",(e)=>{ const r=canvas.getBoundingClientRect(); handleCanvasClickForDummy(e.clientX-r.left, e.clientY-r.top); });
 
+  // Startwerte anwenden
   setMutationRate(parseFloat(mu.value));
-  setSpawnRate(parseFloat(fr.value));
+  setSpawnRate(parseFloat(fr.value)); // food.js wendet global +15% an
   setPerfMode(pm.checked);
   updVals();
   setTimescale(SPEED_STEPS[speedIdx]); updateSpeedButton();
@@ -98,14 +101,15 @@ function bindUI(){
 function updateSpeedButton(){ const sp=document.getElementById("btnSpeed"); if(sp) sp.textContent=`Tempo ×${SPEED_STEPS[speedIdx]}`; }
 function cycleSpeed(){ speedIdx=(speedIdx+1)%SPEED_STEPS.length; setTimescale(SPEED_STEPS[speedIdx]); updateSpeedButton(); }
 
-/* Annealing */
+/* Mutation-Annealing (angepasst) */
 function annealMutation(dt){
   annealAccum += dt;
-  if (annealAccum < 1) return;
+  if (annealAccum < 1) return; // 1x pro Sekunde
   annealAccum = 0;
-  if (simTime > 120) setMutationRate(8);
-  else if (simTime > 30) setMutationRate(12);
-  else setMutationRate(30);
+
+  // NEU: 0–120 s → 12 %; danach → 8 %
+  if (simTime <= 120) setMutationRate(12);
+  else setMutationRate(8);
 }
 
 /* Game-Loop mit Micro-Profiler */
@@ -122,14 +126,11 @@ function frame(now){
   const steps=Math.min(desiredSteps, maxSteps);
   const env=getEnvState(); // neutral
 
-  // Micro-Profiler Aggregate je Frame
   let tEnt=0, tRep=0, tFood=0;
-
   for(let s=0;s<steps;s++){
     let t0=performance.now(); entitiesStep(fixedDt, env, simTime); tEnt += performance.now()-t0;
     t0=performance.now(); reproductionStep(fixedDt); tRep += performance.now()-t0;
     t0=performance.now(); foodStep(fixedDt);        tFood+= performance.now()-t0;
-
     simTime += fixedDt; acc -= fixedDt;
     annealMutation(fixedDt);
   }
@@ -138,8 +139,7 @@ function frame(now){
 
   const tDraw0=performance.now(); draw(); const tDraw=performance.now()-tDraw0;
 
-  // an App-Ops melden
-  emit("appops:frame", { desired: desiredSteps, max: maxSteps, steps, delta, timescale });
+  emit("appops:frame",   { desired: desiredSteps, max: maxSteps, steps, delta, timescale });
   emit("appops:timings", { ent:tEnt, repro:tRep, food:tFood, draw:tDraw, steps });
 
   pushFrame(fixedDt, 1/delta);
