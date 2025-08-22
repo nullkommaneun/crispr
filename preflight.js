@@ -1,10 +1,92 @@
-// … bestehender Kopf bleibt …
+// preflight.js — Start-Diagnose (robust) + manueller Trigger ?pf=1
+// Zeigt ein Overlay, falls die App nicht bootet (Watchdog) oder auf Wunsch (pf=1).
+
+/* ========= Basis-Konstanten ========= */
+const BOOT_FLAG  = "__APP_BOOTED";
+const OVERLAY_ID = "preflightOverlay";
+const TIMEOUT_MS = 2200;
+
+/* ========= Runtime-Fehlerpuffer (robust) ========= */
+// Einheitliche Fehlerablage – auch wenn dieses Script mehrfach geladen würde
+if (!window.__pfRuntimeErrors) window.__pfRuntimeErrors = [];
+const runtimeErrors = window.__pfRuntimeErrors;
+
+// Laufzeitfehler sammeln (global)
+window.addEventListener("error", (e) => {
+  try { runtimeErrors.push(`window.error: ${e?.message || e}`); } catch {}
+});
+window.addEventListener("unhandledrejection", (e) => {
+  try { runtimeErrors.push(`unhandledrejection: ${e?.reason || e}`); } catch {}
+});
+
+/* ========= Overlay-Helfer ========= */
+function ensureOverlay(){
+  let el = document.getElementById(OVERLAY_ID);
+  if (el) return el;
+  el = document.createElement("div");
+  el.id = OVERLAY_ID;
+  el.style.cssText = `
+    position:fixed; inset:0; z-index:9000; display:none;
+    background:rgba(0,0,0,.72); color:#d1e7ff;
+    font:14px/1.45 system-ui, Segoe UI, Roboto, Helvetica, Arial;
+  `;
+  el.innerHTML = `
+    <div style="max-width:840px;margin:8vh auto;background:#1a232b;border:1px solid #33414c;border-radius:12px;padding:16px;box-shadow:0 12px 30px rgba(0,0,0,.4)">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:12px">
+        <h3 style="margin:0;font-size:18px">Start-Diagnose</h3>
+        <button id="pfClose" style="background:#23313b;border:1px solid #3a4c5a;color:#d8f0ff;border-radius:8px;padding:6px 10px;cursor:pointer">Schließen</button>
+      </div>
+      <div id="pfBody" style="margin-top:8px;white-space:pre-wrap"></div>
+    </div>
+  `;
+  document.body.appendChild(el);
+  document.getElementById("pfClose").onclick = ()=> { el.style.display = "none"; };
+  return el;
+}
+function showOverlay(text){
+  const el = ensureOverlay();
+  const body = el.querySelector("#pfBody");
+  body.textContent = (text || "").trim();
+  el.style.display = "block";
+}
+
+/* ========= DOM-Check ========= */
+function listMissingDom(){
+  const need = [
+    "topbar","world","ticker",
+    "editorPanel","envPanel","dummyPanel","diagPanel",
+    "errorOverlay"
+  ];
+  return need.filter(id => !document.getElementById(id));
+}
+
+/* ========= Modul-Check ========= */
+async function checkModule(path, expects){
+  try{
+    const m = await import(path);
+    if(!expects || expects.length===0) return `✅ ${path}`;
+    const miss = expects.filter(x=> !(x in m));
+    if(miss.length) return `❌ ${path}: fehlt Export ${miss.join(", ")}`;
+    return `✅ ${path}`;
+  }catch(e){
+    let msg = String(e && e.message || e);
+    if(/failed to fetch|404/i.test(msg)) msg += " (Pfad/Dateiname? GitHub Pages ist case-sensitiv)";
+    return `❌ ${path}: Import/Parse fehlgeschlagen → ${msg}`;
+  }
+}
+
+/* ========= Diagnose-Kern ========= */
 async function diagnose(){
   const lines = [];
-  const missingDom = ["topbar","world","ticker","editorPanel","envPanel","dummyPanel","diagPanel","errorOverlay"]
-    .filter(id=>!document.getElementById(id));
-  if(missingDom.length) lines.push(`⚠️ Fehlende DOM-IDs: ${missingDom.join(", ")}`); else lines.push("✅ DOM-Struktur OK");
 
+  // DOM
+  try{
+    const missingDom = listMissingDom();
+    if(missingDom.length) lines.push(`⚠️ Fehlende DOM-IDs: ${missingDom.join(", ")}`);
+    else lines.push("✅ DOM-Struktur OK");
+  }catch{ lines.push("⚠️ DOM-Check nicht ausführbar."); }
+
+  // Module & Exporte (an Projektstand angepasst)
   const checks = [
     ["./event.js",         ["on","off","emit"]],
     ["./config.js",        ["CONFIG"]],
@@ -16,8 +98,7 @@ async function diagnose(){
     ["./editor.js",        ["openEditor","closeEditor","setAdvisorMode","getAdvisorMode"]],
     ["./environment.js",   ["getEnvState","setEnvState","openEnvPanel"]],
     ["./ticker.js",        ["initTicker","setPerfMode","pushFrame"]],
-    // NEU:
-    ["./genealogy.js",     ["getNode","getParents","getChildren","getSubtree","searchByNameOrId","exportJSON","getStats"]],
+    ["./genealogy.js",     ["getNode","getParents","getChildren","getSubtree","searchByNameOrId","exportJSON","getStats","getAll"]],
     ["./genea.js",         ["openGenealogyPanel"]],
     ["./metrics.js",       [
       "beginTick","sampleEnergy","commitTick","addSpawn",
@@ -25,40 +106,59 @@ async function diagnose(){
     ]],
     ["./drives.js",        ["initDrives","getTraceText","getAction","afterStep","getDrivesSnapshot","setTracing"]],
     ["./diag.js",          ["openDiagPanel"]],
-    ["./genealogy.js", ["getNode","getParents","getChildren","getSubtree","searchByNameOrId","exportJSON","getStats","getAll"]],
-["./genea.js", ["openGenealogyPanel"]],
   ];
 
   for(const [path, expects] of checks){
-    try{
-      const m = await import(path);
-      const miss = expects.filter(x=> !(x in m));
-      lines.push(miss.length? `❌ ${path}: fehlt Export ${miss.join(", ")}` : `✅ ${path}`);
-    }catch(e){
-      let msg=String(e?.message||e);
-      if(/failed to fetch|404/i.test(msg)) msg+=" (Pfad/Dateiname? Case-sensitiv)";
-      lines.push(`❌ ${path}: Import/Parse fehlgeschlagen → ${msg}`);
-    }
+    lines.push(await checkModule(path, expects));
   }
 
-  // … Rest (runtimeErrors/Hinweise) wie in deiner letzten Version …
-  if(runtimeErrors.length){
-    lines.push("\nLaufzeitfehler:");
-    for(const r of runtimeErrors) lines.push(`• ${r}`);
+  // Laufzeitfehler (robust lesen)
+  try{
+    const errs = Array.isArray(window.__pfRuntimeErrors) ? window.__pfRuntimeErrors : (Array.isArray(runtimeErrors) ? runtimeErrors : []);
+    if(errs.length){
+      lines.push("\nLaufzeitfehler:");
+      for(const r of errs) lines.push(`• ${r}`);
+    }
+  }catch{
+    lines.push("\n(Hinweis: runtimeErrors nicht verfügbar.)");
   }
-  lines.push("\nHinweise:","- Prüfe Groß/Kleinschreibung von Dateien.","- Seite mit Querystring neu laden (Cache-Buster).");
+
+  lines.push(
+    "\nHinweise:",
+    "- Prüfe Groß/Kleinschreibung von Dateinamen (Pages ist case-sensitiv).",
+    "- Setze Cache-Buster (z. B. ?ts=" + Date.now() + ") beim Neuladen."
+  );
+
   return lines.join("\n");
 }
-// … Rest des Files unverändert …
 
-// === Dev-Hook: manuelle Preflight-Anzeige mit ?pf=1 ===
+/* ========= Watchdog: App nicht gestartet? ========= */
+function armWatchdog(){
+  setTimeout(async ()=>{
+    if(!window[BOOT_FLAG]){
+      const report = await diagnose();
+      showOverlay(
+`Die Anwendung ist nicht gestartet (Boot-Flag fehlt nach ${TIMEOUT_MS}ms).
+
+Wahrscheinliche Ursache: Ein ES-Modul konnte nicht geladen werden
+(fehlende Datei, falscher Export, Groß/Kleinschreibung, veraltete Datei).
+
+Diagnose:
+${report}`
+      );
+    }
+  }, TIMEOUT_MS);
+}
+
+/* ========= Auto-Start ========= */
+document.addEventListener("DOMContentLoaded", armWatchdog);
+
+/* ========= Dev-Hook: manuelle Preflight-Anzeige mit ?pf=1 ========= */
 (function devHook(){
   try{
     const q = new URLSearchParams(location.search);
     if (q.get("pf") === "1") {
-      diagnose().then(report => {
-        showOverlay("Manuelle Diagnose (pf=1):\n\n" + report);
-      });
+      diagnose().then(r => showOverlay("Manuelle Diagnose (pf=1):\n\n" + r));
     }
   }catch{}
 })();
