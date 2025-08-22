@@ -100,6 +100,7 @@ function bindUI() {
   const btnGenea  = document.getElementById("btnGenea");
   const btnDummy  = document.getElementById("btnDummy");
   const btnDiag   = document.getElementById("btnDiag");
+  const btnAppOps = document.getElementById("btnAppOps"); // NEU
   const btnSpeed  = document.getElementById("btnSpeed");
 
   btnStart.onclick  = () => { breadcrumb("ui:btn","Start"); start(); };
@@ -110,6 +111,7 @@ function bindUI() {
   if (btnGenea) btnGenea.onclick = () => { breadcrumb("ui:btn","Genealogy"); import("./genea.js").then(m => m.openGenealogyPanel()); };
   if (btnDummy) btnDummy.onclick = () => { breadcrumb("ui:btn","Dummy"); openDummyPanel(); };
   if (btnDiag)  btnDiag.onclick  = () => { breadcrumb("ui:btn","Diagnose"); import("./diag.js").then(m => m.openDiagPanel()); };
+  if (btnAppOps) btnAppOps.onclick = () => { breadcrumb("ui:btn","AppOps"); import("./appops_panel.js").then(m => m.openAppOpsPanel()); };
 
   btnSpeed.onclick = () => { cycleSpeed(); };
 
@@ -118,7 +120,6 @@ function bindUI() {
   const fr = document.getElementById("foodrate");
   const pm = document.getElementById("perfmode");
 
-  // Werte-Badges (neben Slidern)
   const mutVal  = document.getElementById("mutVal");
   const foodVal = document.getElementById("foodVal");
 
@@ -131,7 +132,7 @@ function bindUI() {
   fr.oninput = () => { setSpawnRate(parseFloat(fr.value));  updateDisplayVals(); };
   pm.oninput = () => { setPerfMode(pm.checked); };
 
-  // Touch: Scroll-Safe (kein Page-Scroll während Sliderbedienung)
+  // Touch: kein Seitenscroll beim Sliden (Backstop)
   [mu,fr].forEach(el=>{
     if(!el) return;
     el.addEventListener("touchmove", (e)=>{ e.preventDefault(); }, {passive:false});
@@ -207,9 +208,20 @@ function frame(now) {
     annealMutation(fixedDt);
   }
 
-  if (Math.floor(acc / fixedDt) > maxSteps) {
+  // Backlog begrenzen
+  const backlogAfter = Math.floor(acc / fixedDt);
+  if (backlogAfter > maxSteps) {
     acc = fixedDt * maxSteps;
   }
+
+  // App-Ops Frame-Metrik (für Backlog-Quote etc.)
+  emit("appops:frame", {
+    desired: desiredSteps,
+    max: maxSteps,
+    steps,
+    delta,
+    timescale
+  });
 
   draw();
   pushFrame(fixedDt, 1 / delta);
