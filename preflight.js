@@ -1,12 +1,9 @@
 // preflight.js — Start-Diagnose (robust) + manueller Trigger ?pf=1
-// Zeigt ein Overlay, falls die App nicht bootet (Watchdog) oder auf Wunsch (pf=1).
 
-/* ========= Basis-Konstanten ========= */
 const BOOT_FLAG  = "__APP_BOOTED";
 const OVERLAY_ID = "preflightOverlay";
 const TIMEOUT_MS = 2200;
 
-/* ========= Runtime-Fehlerpuffer (robust) ========= */
 if (!window.__pfRuntimeErrors) window.__pfRuntimeErrors = [];
 const runtimeErrors = window.__pfRuntimeErrors;
 
@@ -17,7 +14,6 @@ window.addEventListener("unhandledrejection", (e) => {
   try { runtimeErrors.push(`unhandledrejection: ${e?.reason || e}`); } catch {}
 });
 
-/* ========= Overlay ========= */
 function ensureOverlay(){
   let el = document.getElementById(OVERLAY_ID);
   if (el) return el;
@@ -48,40 +44,33 @@ function showOverlay(text){
   el.style.display = "block";
 }
 
-/* ========= DOM-Check ========= */
 function listMissingDom(){
-  const need = [
-    "topbar","world","ticker",
-    "editorPanel","envPanel","dummyPanel","diagPanel",
-    "errorOverlay"
-  ];
+  const need = ["topbar","world","ticker","editorPanel","envPanel","dummyPanel","diagPanel","errorOverlay"];
   return need.filter(id => !document.getElementById(id));
 }
 
-/* ========= Modul-Check ========= */
 async function checkModule(path, expects){
   try{
     const m = await import(path);
     if(!expects || expects.length===0) return `✅ ${path}`;
     const miss = expects.filter(x=> !(x in m));
-    if(miss.length) return `❌ ${path}: fehlt Export ${miss.join(", ")}`;
-    return `✅ ${path}`;
+    return miss.length ? `❌ ${path}: fehlt Export ${miss.join(", ")}` : `✅ ${path}`;
   }catch(e){
     let msg = String(e && e.message || e);
-    if(/failed to fetch|404/i.test(msg)) msg += " (Pfad/Dateiname? GitHub Pages ist case-sensitiv)";
+    if(/failed to fetch|404/i.test(msg)) msg += " (Pfad/Dateiname? Case-sensitiv)";
     return `❌ ${path}: Import/Parse fehlgeschlagen → ${msg}`;
   }
 }
 
-/* ========= Diagnose ========= */
 async function diagnose(){
   const lines = [];
 
-  try{
-    const missingDom = listMissingDom();
-    if(missingDom.length) lines.push(`⚠️ Fehlende DOM-IDs: ${missingDom.join(", ")}`);
-    else lines.push("✅ DOM-Struktur OK");
-  }catch{ lines.push("⚠️ DOM-Check nicht ausführbar."); }
+  // Bootstrap-Status sichtbar machen
+  lines.push(`Bootstrap: ${window.__BOOTSTRAP_OK ? "OK" : "NICHT ausgeführt"}`);
+
+  const missingDom = listMissingDom();
+  if(missingDom.length) lines.push(`⚠️ Fehlende DOM-IDs: ${missingDom.join(", ")}`);
+  else lines.push("✅ DOM-Struktur OK");
 
   const checks = [
     ["./event.js",         ["on","off","emit"]],
@@ -101,32 +90,28 @@ async function diagnose(){
       "getEconSnapshot","getMateSnapshot","mateStart","mateEnd","getPopSnapshot","getDriftSnapshot"
     ]],
     ["./drives.js",        ["initDrives","getTraceText","getAction","afterStep","getDrivesSnapshot","setTracing"]],
-    ["./diag.js",          ["openDiagPanel"]],
+    ["./diag.js",          ["openDiagPanel"]]
   ];
+
   for(const [path, expects] of checks){
     lines.push(await checkModule(path, expects));
   }
 
-  try{
-    const errs = Array.isArray(window.__pfRuntimeErrors) ? window.__pfRuntimeErrors : [];
-    if(errs.length){
-      lines.push("\nLaufzeitfehler:");
-      for(const r of errs) lines.push(`• ${r}`);
-    }
-  }catch{
-    lines.push("\n(Hinweis: runtimeErrors nicht verfügbar.)");
+  const errs = Array.isArray(window.__pfRuntimeErrors) ? window.__pfRuntimeErrors : [];
+  if(errs.length){
+    lines.push("\nLaufzeitfehler:");
+    for(const r of errs) lines.push(`• ${r}`);
   }
 
   lines.push(
     "\nHinweise:",
     "- Prüfe Groß/Kleinschreibung von Dateinamen.",
-    "- Neuladen mit Cache-Buster (z. B. ?ts=" + Date.now() + ")."
+    "- Seite mit Cache-Buster neu laden (z. B. ?ts=" + Date.now() + ")."
   );
 
   return lines.join("\n");
 }
 
-/* ========= Watchdog ========= */
 function armWatchdog(){
   setTimeout(async ()=>{
     if(!window[BOOT_FLAG]){
@@ -145,7 +130,7 @@ ${report}`
 }
 document.addEventListener("DOMContentLoaded", armWatchdog);
 
-/* ========= Manueller Trigger: ?pf=1 ========= */
+// manueller Trigger
 (function devHook(){
   try{
     const q = new URLSearchParams(location.search);
