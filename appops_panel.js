@@ -1,11 +1,10 @@
-// appops_panel.js — App-Optimierer-Panel inkl. „Timings“-Karte & Smart-Hints (Confidence + Copy per Hint)
+// appops_panel.js — App-Optimierer-Panel: Smart-Hints mit Copy je Hint (ohne buildOpsForHint-Export)
 import {
   startCollectors,
   getAppOpsSnapshot,
   runModuleMatrix,
   generateOps,
-  getSmartHints,
-  buildOpsForHint
+  getSmartHints
 } from "./appops.js";
 
 const panel = document.getElementById("diagPanel");
@@ -25,20 +24,44 @@ function section(title){
   const h=document.createElement("b"); h.textContent=title;
   head.append(h); box.append(head); return {box,head};
 }
-function row(label, html){ const r=document.createElement("div"); r.className="row"; const l=document.createElement("span"); l.textContent=label; const v=document.createElement("span"); v.innerHTML=html; r.append(l,v); return r; }
+function row(label, html){
+  const r=document.createElement("div"); r.className="row";
+  const l=document.createElement("span"); l.textContent=label;
+  const v=document.createElement("span"); v.innerHTML=html;
+  r.append(l,v); return r;
+}
 function copy(text, btn){
   navigator.clipboard.writeText(text).then(()=>{
-    if(btn){ const old=btn.textContent; btn.textContent="Kopiert ✓"; setTimeout(()=>btn.textContent=old, 1200); }
-  }).catch(()=>{ if(btn){ const old=btn.textContent; btn.textContent="Fehler"; setTimeout(()=>btn.textContent=old, 1200);} });
+    if(btn){ const o=btn.textContent; btn.textContent="Kopiert ✓"; setTimeout(()=>btn.textContent=o, 1200); }
+  }).catch(()=>{
+    if(btn){ const o=btn.textContent; btn.textContent="Fehler"; setTimeout(()=>btn.textContent=o, 1200); }
+  });
 }
 function codeField(value){
   const wrap=document.createElement("div");
-  wrap.style.display="grid"; wrap.style.gridTemplateColumns="1fr auto"; wrap.style.gap="8px"; wrap.style.marginTop="6px";
+  wrap.style.display="grid"; wrap.style.gridTemplateColumns="1fr auto";
+  wrap.style.gap="8px"; wrap.style.marginTop="6px";
   const ta=document.createElement("textarea"); ta.readOnly=true; ta.value=value;
-  ta.style.width="100%"; ta.style.height="120px"; ta.style.background="#0b1217"; ta.style.border="1px solid #2a3a46"; ta.style.borderRadius="8px"; ta.style.color="#d8f0ff"; ta.style.font="12px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
+  ta.style.width="100%"; ta.style.height="120px";
+  ta.style.background="#0b1217"; ta.style.border="1px solid #2a3a46";
+  ta.style.borderRadius="8px"; ta.style.color="#d8f0ff";
+  ta.style.font="12px/1.35 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace";
   const btn=document.createElement("button"); btn.textContent="OPS kopieren";
   btn.onclick=()=> copy(ta.value, btn);
   wrap.append(ta,btn); return wrap;
+}
+
+// Lokaler Builder für einen einzelnen Hint → MDC-OPS JSON
+function buildOpsForHintLocal(h){
+  const ops = {
+    v: 1,
+    title: `Auto-OPS Vorschlag: ${h.title}`,
+    goals: [h.title],
+    changes: [...(h.changes||[])],
+    accept: ["OPS kopieren, einspielen, reload; Kennzahlen (Jank/Backlog/Draw) sollten sich verbessern."],
+    notes: `Confidence ${h.confidence}% — ${h.reason||""}`
+  };
+  return JSON.stringify(ops, null, 2);
 }
 
 export function openAppOpsPanel(){
@@ -114,7 +137,7 @@ export function openAppOpsPanel(){
     body.append(box);
   }
 
-  // Smart-Vorschläge (Confidence) + Copy je Hint
+  // Smart-Vorschläge (Confidence) – Copy je Hint
   {
     const { box } = section("Smart-Vorschläge (Confidence)");
     const wrap = document.createElement("div");
@@ -126,10 +149,13 @@ export function openAppOpsPanel(){
       for (const h of hints) {
         const head = document.createElement("div"); head.className="row";
         head.innerHTML = `<span>${h.title}</span><span><b>${h.confidence}%</b></span>`;
-        const reason = document.createElement("div"); reason.className="muted"; reason.style.margin = "2px 0 6px 0"; reason.textContent = h.reason || "";
-        const btn = document.createElement("button"); btn.textContent = "OPS kopieren";
-        btn.onclick = ()=> copy(buildOpsForHint(h), btn);
-        wrap.append(head, reason, btn);
+        const reason = document.createElement("div"); reason.className="muted";
+        reason.style.margin = "2px 0 6px 0"; reason.textContent = h.reason || "";
+
+        const btnCopy = document.createElement("button"); btnCopy.textContent = "OPS kopieren";
+        btnCopy.onclick = ()=> copy(buildOpsForHintLocal(h), btnCopy);
+
+        wrap.append(head, reason, btnCopy);
       }
     }
 
