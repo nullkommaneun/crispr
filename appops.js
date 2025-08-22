@@ -182,7 +182,7 @@ export function getAppOpsSnapshot(){
   return {
     v:1, kind:"appops",
     perf:{ fpsNow:Math.round(fpsNow), fpsAvg:Math.round(fpsAvg), jank:state.perf.raf.jankCount, jankMs:Math.round(state.perf.raf.jankSumMs),
-      longTasks:{ count:state.perf.longTasks.count, totalMs:Math.round(state.perf.raf.longTasks.totalMs) } },
+      longTasks:{ count:state.perf.longTasks.count, totalMs:Math.round(state.perf.longTasks.totalMs) } }, // ← hier korrigiert
     engine:{ frames:state.engine.frames||1, capRatio:Math.round((state.engine.backlogRatio||0)*100)/100 },
     layout:{ reflows:state.layout.reflowCount, heights:[...state.layout.lastHeights] },
     resources:{ scannedAt:state.resources.scannedAt, totalKB:state.resources.total, largest:state.resources.largest },
@@ -290,7 +290,7 @@ export function getSmartHints(){
     });
   }
 
-  // Auto-Perf (nutzt die bereits oben definierte Variable fpsAvg)
+  // Auto-Perf (nutzt die oben definierte Variable fpsAvg)
   if ((s.features.mobile && fpsAvg < 50) || fpsAvg < 40) {
     const base = s.features.mobile ? 0.7 : 0.5;
     const conf = Math.round(100*clamp(base + clamp((50 - fpsAvg)/30)));
