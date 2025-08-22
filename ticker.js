@@ -1,16 +1,24 @@
-import { getEnvState } from "./environment.js"; // falls du später wieder ENV nutzt
+import { getEnvState } from "./environment.js";
 import { getCells, getFoodItems } from "./entities.js";
 import { getDrivesSnapshot } from "./drives.js";
 
 let el, perf=false, speedLabel=1;
+let updateMs = 7000;
+let intervalId = null;
 
 export function initTicker(){
   el = document.getElementById("ticker");
   updateSnapshot();
-  // ruhiger: alle 7s
-  setInterval(updateSnapshot, 7000);
+  setUpdateInterval(updateMs); // startet Intervall
 }
 export function setPerfMode(on){ perf=!!on; }
+
+export function setUpdateInterval(ms){
+  updateMs = Math.max(1000, ms|0);
+  if (intervalId) clearInterval(intervalId);
+  intervalId = setInterval(updateSnapshot, updateMs);
+}
+export function getUpdateInterval(){ return updateMs; }
 
 let lastFrameTimes = [];
 export function pushFrame(dtSim, fps){
@@ -48,12 +56,7 @@ export function updateSnapshot(){
   `;
 }
 
-export function setSpeedIndicator(x){
-  speedLabel = x;
-  updateSnapshot();
-}
-
-/* helpers */
+export function setSpeedIndicator(x){ speedLabel = x; updateSnapshot(); }
 function fmtK(n){ if(n==null) return "-"; if(n<1000) return String(n); const k=(n/1000).toFixed(1); return k.replace(/\.0$/,"")+"k"; }
 function safeDrives(){ try{ return getDrivesSnapshot() || { misc:{duels:0,wins:0}, cfg:{} }; } catch{ return { misc:{duels:0,wins:0}, cfg:{} }; } }
 function worldScaleInfo(){

@@ -1,7 +1,7 @@
-// appops.js — App-Telemetrie & MDC-OPS; Smart Mode v1.2 (Confidence + Feature-Scan + weitere Hints)
-
+// appops.js — Smart-Ops v2: Learned Confidence (session-basiert), Feature-Scan, Hints mit Begründung
 import { on } from "./event.js";
 
+/* ====================== STATE ====================== */
 const state = {
   started:false,
   perf:{ raf:{ last:0, samples:[], jankCount:0, jankSumMs:0 }, longTasks:{ count:0, totalMs:0 } },
@@ -13,10 +13,13 @@ const state = {
   features:{ preflightHook:false, tfInline:false, swActive:false, mobile:false }
 };
 
+/* session learning storages (localStorage) */
+const LS_LAST   = "smartops.lastSession";
+const LS_LEARN  = "smartops.learn";
 const clamp = (x,min=0,max=1)=> Math.max(min, Math.min(max, x));
 const isMobileUA = ()=> /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent||"");
 
-/* RAF / Jank */
+/* ====================== SAMPLERS ====================== */
 function startRafSampler(){
   const r=state.perf.raf;
   function loop(t){
@@ -30,7 +33,6 @@ function startRafSampler(){
   }
   requestAnimationFrame(loop);
 }
-/* Long Tasks */
 function startLongTaskObserver(){
   try{
     const po=new PerformanceObserver(list=>{
@@ -41,14 +43,12 @@ function startLongTaskObserver(){
     po.observe({ entryTypes:["longtask"] });
   }catch{}
 }
-/* Engine Backlog */
 on("appops:frame",(e)=>{
   state.engine.frames++;
   if((e?.desired??0)>(e?.max??0)) state.engine.cappedFrames++;
   const f=state.engine.frames||1;
   state.engine.backlogRatio = state.engine.cappedFrames / f;
 });
-/* Micro-Profiler (EMA) */
 on("appops:timings",(t)=>{
   const a=state.timings.alpha;
   state.timings.ent   = state.timings.ent  *(1-a) + (t.ent  ||0)*a;
@@ -56,7 +56,6 @@ on("appops:timings",(t)=>{
   state.timings.food  = state.timings.food *(1-a) + (t.food ||0)*a;
   state.timings.draw  = state.timings.draw *(1-a) + (t.draw ||0)*a;
 });
-/* Topbar Reflows */
 function startTopbarObserver(){
   const el=document.getElementById("topbar"); if(!el) return;
   try{
@@ -69,7 +68,6 @@ function startTopbarObserver(){
     ro.observe(el);
   }catch{}
 }
-/* Resource Audit */
 function scanResources(){
   try{
     const entries=performance.getEntriesByType("resource");
@@ -83,18 +81,17 @@ function scanResources(){
     state.resources={ scannedAt:Date.now(), total, largest:list.slice(0,12) };
   }catch{}
 }
-/* Feature-Scan */
 async function scanFeatures(){
   try{
     const res = await fetch("./preflight.js", { cache:"no-store" });
-    const txt = await res.text();
-    state.features.preflightHook = /Manuelle Diagnose \(pf=1\)|devHook\(\)/.test(txt);
+    state.features.preflightHook = /Manuelle Diagnose \(pf=1\)|devHook\(\)/.test(await res.text());
   }catch{ state.features.preflightHook = false; }
   state.features.tfInline = !!document.querySelector('script[src*="@tensorflow/tfjs"]');
   state.features.swActive = !!(navigator.serviceWorker && navigator.serviceWorker.controller);
   state.features.mobile   = isMobileUA() || (window.matchMedia && window.matchMedia("(max-width: 768px)").matches);
 }
-/* Modulmatrix */
+
+/* ====================== MODULE MATRIX ====================== */
 async function checkModule(path, expects){
   try{
     const m=await import(path+`?v=${Date.now()}`);
@@ -113,13 +110,13 @@ export async function runModuleMatrix(){
     ["./event.js",["on","off","emit"]],
     ["./config.js",["CONFIG"]],
     ["./errorManager.js",["initErrorManager","report"]],
-    ["./entities.js",["step","createAdamAndEve","setWorldSize","applyEnvironment","getCells","getFoodItems"]],
+    ["./entities.js",["step","createAdamAndEve","setWorldSize","applyEnvironment","getCells","getFoodItems","getGridCellSize","getGridScaleFactor"]],
     ["./reproduction.js",["step","setMutationRate","getMutationRate"]],
     ["./food.js",["step","setSpawnRate","spawnClusters"]],
-    ["./renderer.js",["draw","setPerfMode"]],
+    ["./renderer.js",["draw","setPerfMode","getPadOverride"]],
     ["./editor.js",["openEditor","closeEditor","setAdvisorMode","getAdvisorMode"]],
     ["./environment.js",["getEnvState","setEnvState","openEnvPanel"]],
-    ["./ticker.js",["initTicker","setPerfMode","pushFrame"]],
+    ["./ticker.js",["initTicker","setPerfMode","pushFrame","setUpdateInterval","getUpdateInterval"]],
     ["./genealogy.js",["getNode","getParents","getChildren","getSubtree","searchByNameOrId","exportJSON","getStats","getAll"]],
     ["./genea.js",["openGenealogyPanel"]],
     ["./metrics.js",["beginTick","sampleEnergy","commitTick","addSpawn","getEconSnapshot","getMateSnapshot","mateStart","mateEnd","getPopSnapshot","getDriftSnapshot"]],
@@ -130,14 +127,88 @@ export async function runModuleMatrix(){
   state.modules.lastReport = lines.join("\n");
   return state.modules.lastReport;
 }
-/* Start */
+
+/* ====================== START/CAPTURE ====================== */
 export function startCollectors(){
   if(state.started) return; state.started=true;
   startRafSampler(); startLongTaskObserver(); startTopbarObserver(); scanResources(); scanFeatures();
   setInterval(scanResources, 15000);
   setInterval(scanFeatures, 20000);
+
+  // Baseline-Capture & Learning (einmal pro Load, nach kurzer Stabilisierung)
+  setTimeout(captureAndLearn, 5500);
 }
-/* Snapshot */
+
+/* ==== Fingerprint/Cost ==== */
+function currentKnobs(){
+  const pm = !!document.getElementById("perfmode")?.checked; // initial UI-Wert
+  return Promise.all([
+    import("./ticker.js").then(m=> m.getUpdateInterval?.() ?? 7000),
+    import("./renderer.js").then(m=> m.getPadOverride?.() ?? null),
+    import("./entities.js").then(m=> ({ size: m.getGridCellSize?.() ?? null, scale: m.getGridScaleFactor?.() ?? 1.0 }))
+  ]).then(([tickerMs, padOverride, grid])=>({
+    perfModeInit: pm,
+    tickerMs,
+    padOverride,
+    gridCellSize: grid.size,
+    gridScale: grid.scale,
+    tfInline: !!document.querySelector('script[src*="@tensorflow/tfjs"]')
+  }));
+}
+function currentCost(){
+  const s = getAppOpsSnapshot();
+  // normierte Kostenkomponenten (0..1+)
+  const cap = clamp(s.engine.capRatio, 0, 1);
+  const draw = clamp((s.timings.draw||0)/16, 0, 2);
+  const ent  = clamp((s.timings.ent ||0)/16, 0, 2);
+  const jank = clamp((s.perf.jank||0)/12, 0, 2);
+  const flow = clamp((s.layout.reflows||0)/12, 0, 2);
+  // Gewichtung: Backlog 0.35, Draw 0.25, Entities 0.2, Jank 0.15, Reflows 0.05
+  return +(0.35*cap + 0.25*draw + 0.20*ent + 0.15*jank + 0.05*flow).toFixed(4);
+}
+
+/* ==== Learning across sessions ==== */
+async function captureAndLearn(){
+  const knobs = await currentKnobs();
+  const cost  = currentCost();
+  const now = Date.now();
+
+  // load previous
+  const prev = safeParse(localStorage.getItem(LS_LAST));
+  const learn = safeParse(localStorage.getItem(LS_LEARN)) || {}; // id -> {succ,fail,gain}
+
+  if (prev && prev.knobs){
+    const gain = +(prev.cost - cost).toFixed(4); // positive = Verbesserung
+    const delta = diffKnobs(prev.knobs, knobs);
+
+    // map deltas -> hint ids
+    if (delta.ticker) bump(learn, "ticker", gain);
+    if (delta.pad)    bump(learn, "drawpad", gain);
+    if (delta.grid)   bump(learn, "gridfine", gain);
+    if (delta.pm)     bump(learn, "autoPerf", gain);
+    if (delta.tf)     bump(learn, "lazyTF", gain);
+
+    localStorage.setItem(LS_LEARN, JSON.stringify(learn));
+  }
+
+  localStorage.setItem(LS_LAST, JSON.stringify({ ts: now, knobs, cost }));
+}
+
+function diffKnobs(a, b){
+  const ticker = (a.tickerMs||0)!==(b.tickerMs||0);
+  const pad    = (a.padOverride||null)!==(b.padOverride||null);
+  const grid   = (a.gridCellSize||0)!==(b.gridCellSize||0) || (a.gridScale||1)!==(b.gridScale||1);
+  const pm     = (!!a.perfModeInit)!==(!!b.perfModeInit);
+  const tf     = (!!a.tfInline)!==(!!b.tfInline);
+  return { ticker, pad, grid, pm, tf };
+}
+function bump(learn, id, gain){
+  const e = learn[id] || (learn[id]={succ:0,fail:0,gain:0});
+  if (gain > 0){ e.succ++; e.gain = +((e.gain + gain)/2).toFixed(4); }
+  else         { e.fail++; e.gain = +((e.gain + gain)/2).toFixed(4); }
+}
+
+/* ====================== PUBLIC SNAPSHOT ====================== */
 export function getAppOpsSnapshot(){
   const s=state.perf.raf.samples;
   const fpsNow=s.length? s[s.length-1].fps : 0;
@@ -155,63 +226,71 @@ export function getAppOpsSnapshot(){
   };
 }
 
-/* -------- Smart-Hints (Confidence & Begründung) -------- */
+/* ====================== SMART HINTS ====================== */
 export function getSmartHints(){
   const s = getAppOpsSnapshot();
-  const hints = [];
+  const learn = safeParse(localStorage.getItem(LS_LEARN)) || {};
+  const H = [];
+
   const jank = s.perf.jank || 0;
   const reflows = s.layout.reflows || 0;
-  const cap = s.engine.capRatio || 0; // 0..1
+  const cap = s.engine.capRatio || 0;
   const t = s.timings || { ent:0, repro:0, food:0, draw:0 };
+  const fpsAvg = s.perf.fpsAvg || 0;
 
+  // helper: learned confidence
+  const learnedConf = (id, base)=> {
+    const e = learn[id]; if(!e) return base;
+    const tries = (e.succ + e.fail) || 1;
+    const winrate = e.succ / tries;       // 0..1
+    const gain    = e.gain || 0;          // positiv gut
+    const bonus = clamp(0.5*winrate + 0.5*clamp(gain/0.2)); // 0..1
+    return Math.round( clamp(base/100 + 0.4*bonus, 0, 1) * 100 );
+  };
+
+  // 0) Preflight nur falls fehlt
   if (!s.features.preflightHook) {
-    hints.push({
+    H.push({
       id:"preflight",
       title:"Preflight-Hook (?pf=1)",
-      confidence: 85,
+      confidence: learnedConf("preflight", 85),
       reason:"Schneller manueller Diagnosezugriff; aktuell nicht im preflight.js gefunden.",
-      changes:[{
-        file:"preflight.js", op:"append",
-        code:"// === Dev-Hook: manuelle Preflight-Anzeige mit ?pf=1 ===\n(function devHook(){\n  try{\n    const q=new URLSearchParams(location.search);\n    if(q.get('pf')==='1') diagnose().then(r=>showOverlay('Manuelle Diagnose (pf=1):\\n\\n'+r));\n  }catch{}\n})();\n"
-      }]
+      changes:[{ file:"preflight.js", op:"append",
+        code:"// === Dev-Hook: manuelle Preflight-Anzeige mit ?pf=1 ===\n(function devHook(){\n  try{\n    const q=new URLSearchParams(location.search);\n    if(q.get('pf')==='1') diagnose().then(r=>showOverlay('Manuelle Diagnose (pf=1):\\n\\n'+r));\n  }catch{}\n})();\n"}]
     });
   }
 
   if (jank > 5 || reflows > 5) {
-    const jankScore = clamp((jank-5)/10);
-    const reflowScore = clamp((reflows-5)/10);
-    const conf = Math.round(100*clamp(0.6*jankScore + 0.4*reflowScore));
-    hints.push({
+    const base = Math.round(100*clamp(0.6*clamp((jank-5)/10) + 0.4*clamp((reflows-5)/10)));
+    H.push({
       id:"ticker",
       title:"Ticker throttle & kompakter",
-      confidence: conf,
+      confidence: learnedConf("ticker", base),
       reason:`UI-Detektor: jank=${jank}, reflows=${reflows}. Weniger Reflow durch selteneres Update & dichtere Zeilen.`,
       changes:[
         { file:"ticker.js", op:"patch", find:"setInterval\\(updateSnapshot, 5000\\);", replace:"setInterval(updateSnapshot, 7000);" },
-        { file:"style.css", op:"append", code:"/* Ticker kompakter (Smart-Ops) */\n#ticker{ row-gap:0 !important; }\n#ticker span{ line-height:1.15; }\n" }
+        { file:"style.css", op:"append", code:"/* Ticker kompakter */\n#ticker{ row-gap:0 !important; }\n#ticker span{ line-height:1.15; }\n" }
       ]
     });
   }
 
   if (t.draw > 8) {
-    const conf = Math.round(100*clamp((t.draw-8)/8));
-    hints.push({
+    const base = Math.round(100*clamp((t.draw-8)/8));
+    H.push({
       id:"drawpad",
       title:"Renderer: Culling-Pad im Perf-Mode senken",
-      confidence: conf,
+      confidence: learnedConf("drawpad", base),
       reason:`Draw-Detektor: draw≈${t.draw}ms. Kleinerer Puffer im Perf-Mode reduziert Overdraw.`,
       changes:[{ file:"renderer.js", op:"patch", find:"const pad = 24;", replace:"const pad = perfMode ? 12 : 24;" }]
     });
   }
 
   if (cap > 0.15 || t.ent > 8) {
-    const capScore = clamp((cap-0.15)/0.25);
-    const entScore = clamp((t.ent-8)/8);
-    const conf = Math.round(100*clamp(0.6*capScore + 0.4*entScore));
-    hints.push({
+    const base = Math.round(100*clamp(0.6*clamp((cap-0.15)/0.25) + 0.4*clamp((t.ent-8)/8)));
+    H.push({
       id:"gridfine",
       title:"Spatial-Grid: 10% kleinere Buckets",
-      confidence: conf,
+      confidence: learnedConf("gridfine", base),
       reason:`Engine-Detektor: Backlog=${Math.round(cap*100)}%, entities≈${t.ent}ms. Dichteres Grid reduziert Kandidaten pro Query.`,
       changes:[
         { file:"entities.js", op:"patch",
@@ -223,10 +302,10 @@ export function getSmartHints(){
   }
 
   if (s.features.tfInline) {
-    hints.push({
+    H.push({
       id:"lazyTF",
       title:"Editor: TF.js lazy laden (Initial-Load entlasten)",
-      confidence: 70,
+      confidence: learnedConf("lazyTF", 70),
       reason:"TF.js wird beim Seitenstart geladen. Besser: nur bei Bedarf im Editor importieren.",
       changes:[
         { file:"index.html", op:"patch",
@@ -236,54 +315,31 @@ export function getSmartHints(){
         { file:"editor.js", op:"patch",
           find:"async function ensureModel(){",
           replace:
-"async function ensureModel(){\n  // Lazy: TF nur bei Bedarf nachladen\n  if (typeof tf === 'undefined'){\n    try{ await import('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.16.0/dist/tf.min.js'); }\n    catch(e){ console.warn('TF import failed', e); return null; }\n  }\n  if (!window.__tfModel){\n    try{ window.__tfModel = await tf.loadLayersModel('./models/model.json'); }\n    catch(e){ console.warn('TF model load failed:', e); return null; }\n  }\n  return window.__tfModel;\n}\n"
+"async function ensureModel(){\n  if (typeof tf === 'undefined'){\n    try{ await import('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.16.0/dist/tf.min.js'); }\n    catch(e){ console.warn('TF import failed', e); return null; }\n  }\n  if (!window.__tfModel){\n    try{ window.__tfModel = await tf.loadLayersModel('./models/model.json'); }\n    catch(e){ console.warn('TF model load failed:', e); return null; }\n  }\n  return window.__tfModel;\n}\n"
         }
       ]
     });
   }
 
-  const fpsAvg = (getAppOpsSnapshot().perf.fpsAvg||0);
-  if ((s.features.mobile && fpsAvg < 50) || fpsAvg < 40) {
-    const base = s.features.mobile ? 0.7 : 0.5;
-    const conf = Math.round(100*clamp(base + clamp((50 - fpsAvg)/30)));
-    hints.push({
+  if ((state.features.mobile && fpsAvg < 50) || fpsAvg < 40) {
+    const base = Math.round(100*clamp( (state.features.mobile?0.7:0.5) + clamp((50 - fpsAvg)/30) ));
+    H.push({
       id:"autoPerf",
       title:"Auto-PerfMode auf Mobile/niedriger FPS",
-      confidence: conf,
-      reason:`Heuristik: mobile=${s.features.mobile}, fpsAvg≈${Math.round(fpsAvg)}. Initial Perf-Mode reduziert Draw/Overhead.`,
-      changes:[
-        { file:"engine.js", op:"patch",
-          find:"setPerfMode(pm.checked);",
-          replace:
+      confidence: learnedConf("autoPerf", base),
+      reason:`Heuristik: mobile=${state.features.mobile}, fpsAvg≈${Math.round(fpsAvg)}. Initial Perf-Mode reduziert Draw/Overhead.`,
+      changes:[{ file:"engine.js", op:"patch",
+        find:"setPerfMode(pm.checked);",
+        replace:
 "// Auto-PerfMode: Mobile oder niedrige FPS → initial aktivieren\n  const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent||'');\n  setPerfMode(isMobile ? true : pm.checked);"
-        }
-      ]
+      }]
     });
   }
 
-  return hints;
+  return H;
 }
 
-/* --------- JSON-Erzeuger --------- */
-export function buildOpsForHint(hint){
-  const h = hint;
-  const ops = {
-    v: 1,
-    title: `Auto-OPS Vorschlag: ${h.title}`,
-    goals: [h.title],
-    changes: [...(h.changes||[])],
-    accept: ["OPS kopieren, einspielen, reload; Kennzahlen (Jank/Backlog/Draw) sollten sich verbessern."],
-    notes: `Confidence ${h.confidence}% — ${h.reason||""}`
-  };
-  return JSON.stringify(ops, null, 2);
-}
-export function generateOpsForHintId(id){
-  const hint = getSmartHints().find(h=>h.id===id);
-  if(!hint) return '{"v":1,"title":"OPS","goals":[],"changes":[],"accept":["Hint nicht gefunden"]}';
-  return buildOpsForHint(hint);
-}
-
-/* --------- Sammel-OPS (alle Hints) --------- */
+/* ====================== OPS JSON ====================== */
 export function generateOps(){
   const hints = getSmartHints();
   const ops = { v: 1, title: "Auto-OPS Vorschläge", goals: [], changes: [], accept: [] };
@@ -293,7 +349,11 @@ export function generateOps(){
     notes.push(`${h.title} — Confidence ${h.confidence}% — ${h.reason}`);
     for(const ch of (h.changes||[])) ops.changes.push(ch);
   }
-  ops.accept.push("App-Ops erzeugt gültige OPS; nach Einspielen sinken Jank/Backlog/Draw-Zeit (wo zutreffend).");
+  ops.accept.push("Nach Einspielen sollten Jank/Backlog/Draw sinken (wo zutreffend).");
   if (notes.length) ops.notes = notes.join(" | ");
   return JSON.stringify(ops, null, 2);
 }
+
+/* ====================== UTIL ====================== */
+function safeParse(s){ try{ return s? JSON.parse(s): null; }catch{ return null; } }
+export function startCollectorsOnce(){ startCollectors(); } // optional alias
