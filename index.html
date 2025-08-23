@@ -5,41 +5,146 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>CRISPR Genetics Lab</title>
 
-  <!-- HARTE REINIGUNG vor allen Modulen -->
+  <!-- HARTE REINIGUNG (einmal pro Tab-Session) -->
   <script>
   (function hardClean(){
-    // Nur einmal ausführen
-    if (sessionStorage.getItem("sw-clean-done")) return;
-    sessionStorage.setItem("sw-clean-done", "1");
-
-    // SW unregister + Caches löschen; danach einmal sauber neu laden
-    if ("serviceWorker" in navigator) {
-      Promise.resolve()
-      .then(() => navigator.serviceWorker.getRegistrations())
-      .then(rs => Promise.all((rs||[]).map(r => r.unregister())))
-      .then(() => caches && caches.keys ? caches.keys() : [])
-      .then(keys => Promise.all((keys||[]).map(k => caches.delete(k))))
-      .finally(() => {
-        // Ein Redirect verhindert, dass der alte SW das erste Laden abfängt
-        var url = location.origin + location.pathname + location.hash;
-        if (location.search.indexOf("clean=1") === -1) {
-          location.replace(url + (url.indexOf("?")>-1 ? "&" : "?") + "clean=1");
-        }
-      });
-    }
+    try {
+      if (sessionStorage.getItem("sw-clean-done")) return;
+      sessionStorage.setItem("sw-clean-done","1");
+      if ("serviceWorker" in navigator) {
+        Promise.resolve()
+        .then(() => navigator.serviceWorker.getRegistrations())
+        .then(rs => Promise.all((rs||[]).map(r => r.unregister())))
+        .then(() => (caches && caches.keys ? caches.keys() : []))
+        .then(keys => Promise.all((keys||[]).map(k => caches.delete(k))))
+        .finally(() => {
+          var base = location.origin + location.pathname + location.hash;
+          if (location.search.indexOf("clean=1") === -1) {
+            location.replace(base + (base.indexOf("?")>-1 ? "&" : "?") + "clean=1");
+          }
+        });
+      }
+    } catch {}
   })();
   </script>
 
-  <!-- deine Styles -->
   <link rel="stylesheet" href="./style.css" />
+  <style>
+    /* Mini-Fallbacks, falls style.css mal nicht lädt */
+    body{margin:0;background:#0b1217;color:#d6e1ea;font:14px/1.4 system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+    #topbar{position:sticky;top:0;z-index:10;background:#0e151c;border-bottom:1px solid #1f2c36;padding:8px 10px;display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+    #topbar .group{display:flex;gap:8px;align-items:center}
+    #scene{display:block;width:100%;height:calc(100vh - 64px);background:#0f1720}
+    .badge{background:#203040;border:1px solid #31475a;border-radius:10px;padding:2px 6px;font-size:12px;color:#bcd7f0}
+    button{background:#1b2834;border:1px solid #2c3f50;border-radius:8px;color:#cfe6ff;padding:6px 10px;cursor:pointer}
+    button.ghost{background:transparent;border-color:#2c3f50}
+    input[type=range]{touch-action:none}
+    label{opacity:.85}
+  </style>
 </head>
 <body>
-  <!-- deine UI / Canvas bleiben wie gehabt ... -->
-  <div id="topbar">…</div>
+
+  <!-- Topbar / Steuerung -->
+  <div id="topbar">
+    <div class="group"><span class="badge">Simulation</span>
+      <button id="btnStart">Start</button>
+      <button id="btnPause">Pause</button>
+      <button id="btnReset">Reset</button>
+    </div>
+
+    <div class="group"><span class="badge">Tempo</span>
+      <button class="ts" data-ts="1">×1</button>
+      <button class="ts" data-ts="5">×5</button>
+      <button class="ts" data-ts="10">×10</button>
+      <button class="ts" data-ts="50">×50</button>
+    </div>
+
+    <div class="group">
+      <label><input id="chkPerf" type="checkbox" /> Perf-Modus</label>
+    </div>
+
+    <div class="group">
+      <button id="btnEditor">CRISPR-Editor</button>
+      <button id="btnEnv">Umwelt</button>
+      <button id="btnAppOps">App-Ops</button>
+      <button id="btnDiag">Diagnose</button>
+    </div>
+
+    <div class="group" style="margin-left:auto">
+      <label>Mutation % <input id="sliderMutation" type="range" min="0" max="30" value="8" step="1" style="width:160px"></label>
+      <span id="valMutation">8%</span>
+      <label style="margin-left:12px">Nahrung/s <input id="sliderFood" type="range" min="0" max="12" value="6" step="0.5" style="width:160px"></label>
+      <span id="valFood">6/s</span>
+    </div>
+  </div>
+
+  <!-- Canvas -->
   <canvas id="scene"></canvas>
 
-  <!-- Module OHNE Cache-Busting -->
+  <!-- Bootstrap + Preflight (ohne Cache-Busting) -->
   <script type="module" src="./bootstrap.js"></script>
   <script type="module" src="./preflight.js"></script>
+
+  <!-- UI-Wiring (leichtgewichtig) -->
+  <script type="module">
+  import * as engine from "./engine.js";
+  import * as repro  from "./reproduction.js";
+  import * as food   from "./food.js";
+  import { setWorldSize } from "./entities.js";
+
+  const $ = sel => document.querySelector(sel);
+
+  // Buttons
+  $("#btnStart").onclick = () => engine.start();
+  $("#btnPause").onclick = () => engine.pause();
+  $("#btnReset").onclick = () => engine.reset();
+
+  // Tempo
+  document.querySelectorAll("button.ts").forEach(b=>{
+    b.onclick = ()=> {
+      const ts = +b.dataset.ts || 1;
+      engine.setTimescale(ts);
+      document.querySelectorAll("button.ts").forEach(x=>x.classList.toggle("active", x===b));
+    };
+  });
+
+  // Perf
+  $("#chkPerf").onchange = e => engine.setPerfMode(!!e.target.checked);
+
+  // Sliders (Werte anzeigen + anwenden)
+  const sM = $("#sliderMutation"), sF = $("#sliderFood");
+  const vM = $("#valMutation"),   vF = $("#valFood");
+  function applyMutation(){ const v = +sM.value|0; vM.textContent = v+"%"; try{ repro.setMutationRate(v); }catch{} }
+  function applyFood(){ const v = +sF.value||0; vF.textContent = v.toFixed(1).replace(/\.0$/,"")+"/s"; try{ food.setSpawnRate(v); }catch{} }
+  sM.oninput = applyMutation; sM.onchange = applyMutation;
+  sF.oninput = applyFood;     sF.onchange = applyFood;
+
+  // Panels (lazy import)
+  $("#btnEditor").onclick = async()=>{ try{ (await import("./editor.js")).openEditor(); }catch{} };
+  $("#btnEnv").onclick    = async()=>{ try{ (await import("./environment.js")).openEnvPanel(); }catch{} };
+  $("#btnAppOps").onclick = async()=>{ try{ (await import("./appops_panel.js")).openAppOps(); }catch{} };
+  $("#btnDiag").onclick   = async()=>{ try{ (await import("./preflight.js")).diagnose(); }catch{} };
+
+  // Canvas-Größe an Viewport koppeln
+  const canvas = $("#scene");
+  function fitCanvas(){
+    const r = canvas.getBoundingClientRect();
+    const w = Math.max(2, Math.floor(r.width));
+    const h = Math.max(2, Math.floor(window.innerHeight - r.top));
+    if (canvas.width!==w)  canvas.width  = w;
+    if (canvas.height!==h) canvas.height = h;
+    try { setWorldSize(w,h); } catch {}
+  }
+  window.addEventListener("resize", fitCanvas, {passive:true});
+  fitCanvas();
+
+  // Direkt booten (robust)
+  try { engine.boot(); } catch {}
+
+  // Standard-Tempo & Slider initial anwenden
+  document.querySelector('button.ts[data-ts="10"]')?.click();
+  applyMutation(); applyFood();
+  </script>
+
 </body>
 </html>
