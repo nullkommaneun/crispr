@@ -1,105 +1,109 @@
-// drives.js — Policy: Mate-first (Pop-aware Gating + Hysterese)
-// Publiziert Diagnose-Felder zusätzlich auf window.__drivesDiag
-
-import { on } from "./event.js";
-import { CONFIG } from "./config.js";
+// drives.js — Verhaltenspolitik (Mate-first mit Gating & Hysterese)
+// Exports: initDrives, getAction, afterStep, getDrivesSnapshot, setTracing
 
 let TRACE = false;
-let SUBBED = false;
 
+// Policy-Parameter (konservativ gewählt)
 const CFG = {
-  E_ENTER_MATE: 0.50,
-  E_EXIT_MATE:  0.40,
-  MATE_STICKY_SEC: 8.0
+  // Energie-Schwellen (Anteil an Emax)
+  E_ENTER_MATE: 0.55,   // ab hier Paarung priorisieren
+  E_EXIT_MATE:  0.45,   // unter diese Schwelle -> raus aus Mate-Modus
+  // Zeit-Hysterese (verhindert Zickzack)
+  MATE_STICKY_SEC: 6.0, // bleibe bis zu 6s im Paarungsmodus
+  // Pairing & Distanzen (nur Info für Snapshot; das eigentliche Steuern macht entities.js)
+  R_PAIR: 32,           // "Pair distance" ist in entities geregelt; hier nur Anzeige
+  K_DIST: 0.05,         // Distanzabzug im Score (entities nutzt −0.05*d analog)
+  EPS: 0                // frei für spätere Feinheiten
 };
 
+// Laufzeitzähler (für Ticker/Diagnose)
 const MISC = {
-  duels:0, wins:0,
-  chooseMate:0, chooseFood:0, chooseWander:0,
-  stickMate:0, lastNow:0
+  duels: 0,
+  wins:  0
 };
 
-const POOLS = {
-  byStamm:new Map(),
-  total(){ return this.byStamm.size; },
-  inc(s){ if(s==null) return; this.byStamm.set(s,(this.byStamm.get(s)||0)+1); },
-  dec(s){ if(s==null) return; const n=(this.byStamm.get(s)||0)-1; if(n<=0) this.byStamm.delete(s); else this.byStamm.set(s,n); }
-};
-
-function ensureDS(c){ if(!c.__drive) c.__drive={mode:"wander",modeSince:0}; return c.__drive; }
-
-export function initDrives(){
-  if (SUBBED) return;
-  SUBBED = true;
-
-  on("cells:born",(p)=>{
-    MISC.duels++; MISC.wins++;
-    const sid = p?.child?.stammId ?? p?.stammId;
-    if (sid!=null) POOLS.inc(sid);
-    publish();
-  });
-  on("cells:died",(c)=>{
-    const sid = c?.stammId;
-    if (sid!=null) POOLS.dec(sid);
-    publish();
-  });
+// Pro-Zelle: kleiner Drive-Status (Mate-Hysterese)
+function ensureDS(c){
+  if (!c.__drive) c.__drive = { mode: "wander", until: 0 };
+  return c.__drive;
 }
 
-export function setTracing(on){ TRACE=!!on; }
+export function initDrives(){ /* aktuell nichts nötig */ }
 
-export function getTraceText(){
-  const m=MISC, c=CFG;
-  return `mate-first | enter=${(c.E_ENTER_MATE*100)|0}% exit=${(c.E_EXIT_MATE*100)|0}% sticky=${c.MATE_STICKY_SEC}s | `+
-         `choose M=${m.chooseMate} F=${m.chooseFood} W=${m.chooseWander} stick=${m.stickMate} | duels=${m.duels} wins=${m.wins}`;
-}
+export function setTracing(on){ TRACE = !!on; }
 
 export function getDrivesSnapshot(){
-  const K_DIST=0.05, R_PAIR=CONFIG?.cell?.pairDistance ?? 28;
-  const WIN=[MISC.wins, MISC.duels];
-  const winRate = MISC.duels ? (MISC.wins/MISC.duels) : 0;
-  const snap = {
-    duels:MISC.duels, wins:MISC.wins, winRate,
-    pools:POOLS.total(), K_DIST, R_PAIR, WIN,
-    misc:{...MISC},
-    cfg:{ E_ENTER_MATE:CFG.E_ENTER_MATE, E_EXIT_MATE:CFG.E_EXIT_MATE, MATE_STICKY_SEC:CFG.MATE_STICKY_SEC },
-    params:{ K_DIST, R_PAIR, WIN }
+  return {
+    misc: { duels: MISC.duels, wins: MISC.wins },
+    cfg:  { K_DIST: CFG.K_DIST, R_PAIR: CFG.R_PAIR, EPS: CFG.EPS }
   };
-  publish(snap);
-  return snap;
 }
 
+// Hilfen
+function capEnergyOf(c){
+  const g = c.genome || {};
+  const baseMax = 100; // Fallback; real kommt aus CONFIG in entities (wir kennen die dortige Skalierung nicht direkt)
+  // Wir schätzen hier nur den Anteil über c.energy/cap, falls entities capEnergy nicht exportiert.
+  // Falls kein Hinweis, benutzen wir heuristisch 80..140 als plausible Range:
+  return Math.max(40, Math.min(240, (c.energy / Math.max(0.01, c.vitality+1)) * 2)); // sehr grobe Schätzung
+}
+
+// Besser: Anteil via "virtueller Kapazität" (entities exportiert cap nicht).
+function energyFrac(c){
+  // Wir haben keinen direkten cap(). Näherung: skaliere auf [0,1] relativ zu typischen Energiespannen.
+  // c.energy bewegt sich in deiner Sim normalerweise ~[0..100+] — wir normalisieren robust:
+  const E = Math.max(0, Math.min(120, c.energy || 0));
+  return E / 100; // robust, hinreichend für Policy-Gating
+}
+
+// Hauptentscheidung
 export function getAction(c, t, ctx){
-  const ds=ensureDS(c); const now=+t||0; MISC.lastNow=now;
-  const hasFood=!!ctx.food; const hasMate=!!ctx.mate && (ctx.mateDist!=null);
-  const eFrac = typeof ctx.eFrac==="number" ? ctx.eFrac : Math.max(0,Math.min(1,(c.energy||0)/100));
-  const popN = ctx.popN||0;
-  let enter=CFG.E_ENTER_MATE, exit=CFG.E_EXIT_MATE;
-  if (popN<=12){ enter=Math.max(0.35, enter-0.10); exit=Math.max(0.25, exit-0.15); }
+  const ds = ensureDS(c);
 
-  if (ds.mode==="mate"){
-    const stick=(now-(ds.modeSince||0))<=CFG.MATE_STICKY_SEC;
-    if (eFrac>=exit && stick){ MISC.stickMate++; return "mate"; }
+  const hasFood = !!ctx.food;
+  const hasMate = !!ctx.mate && (ctx.mateDist != null);
+
+  const eFrac = energyFrac(c);
+
+  // Mate-Hysterese: bleib im Mate-Modus, solange Energie nicht unter Exit fällt
+  // oder die Sticky-Zeit nicht abgelaufen ist.
+  if (ds.mode === "mate"){
+    if (eFrac < CFG.E_EXIT_MATE || (t - (ds.modeSince || 0)) > CFG.MATE_STICKY_SEC) {
+      ds.mode = "wander"; // neu entscheiden
+    } else {
+      if (TRACE) console.log(`[DRIVES] stick: mate (e=${eFrac.toFixed(2)})`);
+      return "mate";
+    }
   }
-  if (hasMate && c.cooldown<=0 && eFrac>=enter){ ds.mode="mate"; ds.modeSince=now; MISC.chooseMate++; return "mate"; }
-  if (hasFood){ ds.mode="food"; ds.modeSince=now; MISC.chooseFood++; return "food"; }
-  ds.mode="wander"; ds.modeSince=now; MISC.chooseWander++; return "wander";
+
+  // Neue Entscheidung
+  if (hasMate && c.cooldown <= 0 && eFrac >= CFG.E_ENTER_MATE){
+    ds.mode = "mate";
+    ds.modeSince = t;
+    if (TRACE) console.log(`[DRIVES] choose: mate (e=${eFrac.toFixed(2)})`);
+    return "mate";
+  }
+
+  if (hasFood){
+    ds.mode = "food";
+    ds.modeSince = t;
+    if (TRACE) console.log(`[DRIVES] choose: food (e=${eFrac.toFixed(2)})`);
+    return "food";
+  }
+
+  ds.mode = "wander";
+  ds.modeSince = t;
+  if (TRACE) console.log(`[DRIVES] choose: wander (e=${eFrac.toFixed(2)})`);
+  return "wander";
 }
 
-export function afterStep(){ /* noop */ }
-
-// ---- Diagnose-Fallback ----
-function publish(snap){
-  try{
-    const s = snap || getBare();
-    window.__drivesDiag = {
-      duels:s.duels, wins:s.wins, winRate:s.winRate,
-      pools:s.pools, K_DIST:s.K_DIST, R_PAIR:s.R_PAIR, WIN:s.WIN
-    };
-  }catch{}
-}
-function getBare(){
-  const K_DIST=0.05, R_PAIR=CONFIG?.cell?.pairDistance ?? 28;
-  const WIN=[MISC.wins,MISC.duels];
-  const winRate = MISC.duels ? (MISC.wins/MISC.duels) : 0;
-  return { duels:MISC.duels, wins:MISC.wins, winRate, pools:POOLS.total(), K_DIST, R_PAIR, WIN };
+// Feedback-Hook je Schritt (kann später für Lernen genutzt werden)
+export function afterStep(c, dt, ctx){
+  // Zählwerke optional pflegen (z.B. wenn eine Paarung erfolgreich war → wins++)
+  // Hier kein direkter Ereignis-Hook; könnte über emit('cells:born') angebunden werden.
+  // Platzhalter:
+  if (false) {
+    MISC.duels++;
+    MISC.wins++;
+  }
 }

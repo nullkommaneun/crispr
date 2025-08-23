@@ -1,193 +1,84 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="de">
 <head>
   <meta charset="utf-8" />
-  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
-  <meta
-    name="viewport"
-    content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, user-scalable=no"
-  />
-  <meta name="theme-color" content="#0b1218" />
   <title>CRISPR Genetics Lab</title>
-
-  <!-- Haupt-CSS -->
-  <link rel="stylesheet" href="./style.css" />
-
-  <!-- Minimaler Fallback, falls style.css mal nicht lädt -->
-  <style>
-    :root { color-scheme: dark; }
-    body { margin:0; background:#0b1218; color:#d6e1ea; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu; }
-    .bar {
-      display:grid; gap:8px; align-items:center; padding:8px 12px;
-      background: linear-gradient(to bottom, rgba(9,14,20,.95), rgba(9,14,20,.85));
-      border-bottom: 1px solid rgba(70,96,120,.25);
-      position: sticky; top:0; z-index:60; backdrop-filter: blur(6px);
-    }
-    .bar .row { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
-    .bar .sep { width:1px; height:22px; background:rgba(90,120,150,.35); margin:0 6px; }
-    .bar button {
-      background:#243241; border:1px solid #3a5166; color:#cfe6ff; border-radius:10px;
-      padding:6px 10px; cursor:pointer;
-    }
-    .bar button:hover { filter: brightness(1.1); }
-    .bar label { display:flex; align-items:center; gap:6px; opacity:.95; }
-    .bar input[type="range"] { width:180px; }
-    .pill { opacity:.75; }
-    #scene {
-      display:block; width:min(1400px, 94vw); height:min(72vh, 78svh);
-      margin:10px auto 18px; background:#0f1720;
-      border:1px solid rgba(70,96,120,.25); border-radius:14px;
-      box-shadow: 0 6px 30px rgba(0,0,0,.35) inset;
-    }
-    * { touch-action: manipulation; }
-  </style>
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <link rel="stylesheet" href="./style.css">
+  <!-- TensorFlow.js (für Prognose im Editor) -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.16.0/dist/tf.min.js"></script>
 </head>
 <body>
+  <div id="topbar">
+    <div class="controls">
+      <div class="group">
+        <span class="group-title">Simulation</span>
+        <button id="btnStart">Start</button>
+        <button id="btnPause">Pause</button>
+        <button id="btnReset">Reset</button>
+      </div>
 
-  <!-- Topbar: Simulation / Tempo / Tools -->
-  <header class="bar" role="banner" aria-label="Top-Leiste">
-    <div class="row" aria-label="Simulation">
-      <strong>Simulation</strong>
-      <button id="btnStart">Start</button>
-      <button id="btnPause">Pause</button>
-      <button id="btnReset">Reset</button>
+      <div class="group">
+        <span class="group-title">Tempo</span>
+        <button id="btnSpeed">Tempo ×1</button>
+        <label title="Performance-Modus: Grafik & Nebenrechnungen reduziert">
+          <input id="perfmode" type="checkbox"> Perf-Modus
+        </label>
+      </div>
 
-      <span class="pill">Tempo</span>
-      <button data-ts="1">×1</button>
-      <button data-ts="5">×5</button>
-      <button data-ts="10">×10</button>
-      <button data-ts="50">×50</button>
+      <div class="group">
+        <span class="group-title">Parameter</span>
+        <label>Mutation %
+          <input id="mutation" type="range" min="0" max="30" step="1" value="5">
+          <span id="mutVal" class="value-badge">5%</span>
+        </label>
+        <label>Nahrung/s
+          <input id="foodrate" type="range" min="0" max="40" step="1" value="6">
+          <span id="foodVal" class="value-badge">6/s</span>
+        </label>
+      </div>
 
-      <span class="sep" aria-hidden="true"></span>
-
-      <label title="Performance-Modus">
-        <input id="chkPerf" type="checkbox" />
-        Perf-Modus
-      </label>
-
-      <span class="sep" aria-hidden="true"></span>
-
-      <button id="btnEditor">CRISPR-Editor</button>
-      <button id="btnEnv">Umwelt</button>
-      <button id="btnGene">Stammbaum</button>
-      <button id="btnDummy">Dummy</button>
-      <button id="btnAppOps">App-Ops</button>
-      <button id="btnDiag">Diagnose</button>
+      <div class="group">
+        <span class="group-title">Werkzeuge</span>
+        <button id="btnEditor">CRISPR-Editor</button>
+        <button id="btnGenea">Stammbaum</button>
+        <button id="btnDummy">Dummy</button>
+        <button id="btnDiag">Diagnose</button>
+        <button id="btnAppOps">App-Ops</button>
+      </div>
     </div>
 
-    <!-- Parameterleiste -->
-    <div class="row" aria-label="Parameter">
-      <span class="pill">Parameter</span>
+    <div id="ticker"></div>
+  </div>
 
-      <label for="sliderMutation" title="Mutationsrate (%)">
-        Mutation %
-        <input id="sliderMutation" type="range" min="0" max="30" step="1" value="8" />
-        <span id="lblMutation">8&nbsp;%</span>
-      </label>
+  <div id="worldWrap">
+    <canvas id="world" width="1024" height="640"></canvas>
+  </div>
 
-      <label for="sliderFood" title="Nahrung pro Sekunde">
-        Nahrung/s
-        <input id="sliderFood" type="range" min="0" max="12" step="0.5" value="6" />
-        <span id="lblFood">6/s</span>
-      </label>
+  <div id="editorPanel" class="panel hidden"></div>
+  <div id="envPanel" class="panel hidden"></div>
+  <div id="dummyPanel" class="panel hidden"></div>
+  <div id="diagPanel" class="panel hidden"></div>
+
+  <div id="errorOverlay" class="hidden">
+    <div class="errorCard">
+      <h3>Fehler</h3>
+      <pre id="errorText"></pre>
+      <button id="errorClose">Schließen</button>
     </div>
-  </header>
+  </div>
 
-  <!-- Zeichenfläche -->
-  <main role="main">
-    <canvas id="scene" width="1280" height="720" aria-label="Simulationsfeld"></canvas>
-    <noscript>
-      <p style="text-align:center;margin-top:16px">Diese App benötigt JavaScript.</p>
-    </noscript>
-  </main>
-
-  <!-- Preflight/Diagnose (manuell; kein Auto-Guard) -->
+  <!-- Preflight separat (damit ?pf=1 immer funktioniert) -->
   <script type="module" src="./preflight.js"></script>
-
-  <!-- Boot & UI-Wiring -->
-  <script type="module">
-    import { boot, setTimescale } from './engine.js';
-    import { setMutationRate, getMutationRate } from './reproduction.js';
-    import { setSpawnRate as setFoodSpawnRate } from './food.js';
-    import { openEditor } from './editor.js';
-    import { openEnvPanel } from './environment.js';
-
-    // --- Boot nach DOM-Ready ---
-    const run = () => {
-      try { boot(); }
-      catch (e) { console.error('[boot]', e); }
-    };
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', run, { once:true });
-    } else { run(); }
-
-    // --- Tempo-Buttons ---
-    document.querySelectorAll('button[data-ts]').forEach(btn=>{
-      btn.addEventListener('click', ()=>{
-        const v = +btn.dataset.ts || 1;
-        try { setTimescale(v); } catch {}
+  <!-- Boot-Loader -->
+  <script type="module" src="./bootstrap.js"></script>
+  <!-- Service Worker Registrierung (PWA) -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js').catch(()=>{});
       });
-    });
-
-    // --- Start/Pause/Reset ---
-    document.getElementById('btnStart')?.addEventListener('click', ()=> {
-      import('./engine.js').then(m=>m.start?.()).catch(console.error);
-    });
-    document.getElementById('btnPause')?.addEventListener('click', ()=> {
-      import('./engine.js').then(m=>m.pause?.()).catch(console.error);
-    });
-    document.getElementById('btnReset')?.addEventListener('click', ()=> {
-      import('./engine.js').then(m=>m.reset?.()).catch(console.error);
-    });
-
-    // --- Perf-Modus ---
-    document.getElementById('chkPerf')?.addEventListener('change', (e)=>{
-      import('./engine.js').then(m=>m.setPerfMode?.(e.target.checked)).catch(console.error);
-    });
-
-    // --- Parameter: Mutation & Nahrung/s ---
-    const sMut = document.getElementById('sliderMutation');
-    const lMut = document.getElementById('lblMutation');
-    const sFood= document.getElementById('sliderFood');
-    const lFood= document.getElementById('lblFood');
-
-    // Initial aus Modulen ziehen (falls vorhanden)
-    try { lMut.textContent = (getMutationRate?.() ?? +sMut.value) + ' %'; } catch {}
-    lFood.textContent = (+sFood.value).toFixed(1).replace('.0','') + '/s';
-
-    sMut?.addEventListener('input', (e)=>{
-      const v = +e.target.value|0;
-      lMut.textContent = v + ' %';
-      try { setMutationRate(v); } catch {}
-    });
-
-    sFood?.addEventListener('input', (e)=>{
-      const v = +e.target.value;
-      lFood.textContent = v.toFixed(1).replace('.0','') + '/s';
-      try { setFoodSpawnRate(v); } catch {}
-    });
-
-    // --- Tools: Panels/Diagnose/App-Ops ---
-    document.getElementById('btnEditor')?.addEventListener('click', ()=> {
-      try { openEditor(); } catch { import('./editor.js').then(m=>m.openEditor?.()); }
-    });
-    document.getElementById('btnEnv')?.addEventListener('click', ()=> {
-      try { openEnvPanel(); } catch { import('./environment.js').then(m=>m.openEnvPanel?.()); }
-    });
-    document.getElementById('btnGene')?.addEventListener('click', ()=> {
-      import('./genealogy.js').then(m=>m.openGenealogy?.()).catch(()=>console.warn('genealogy.js: openGenealogy() fehlt'));
-    });
-    document.getElementById('btnDummy')?.addEventListener('click', ()=> {
-      import('./dummy.js').then(m=>m.openDummyPanel?.()).catch(()=>console.warn('dummy.js: openDummyPanel() fehlt'));
-    });
-    document.getElementById('btnAppOps')?.addEventListener('click', ()=> {
-      import('./appops_panel.js')
-        .then(m=> (m.openAppOps?.() ?? m.default?.()))
-        .catch(()=>console.warn('appops_panel.js: openAppOps() fehlt'));
-    });
-    document.getElementById('btnDiag')?.addEventListener('click', ()=> {
-      import('./preflight.js').then(m=>m.diagnose?.()).catch(console.error);
-    });
+    }
   </script>
 </body>
 </html>
