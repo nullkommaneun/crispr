@@ -1,4 +1,4 @@
-// engine.js — Boot/Loop + Boot-Flag + Heartbeat + AppOps-Telemetrie
+// engine.js — Boot/Loop + Boot-Flag + Heartbeat + AppOps-Telemetrie (robust)
 
 import { initErrorManager, report } from "./errorManager.js";
 import { getCells, getFoodItems, setWorldSize, createAdamAndEve, applyEnvironment } from "./entities.js";
@@ -16,11 +16,15 @@ let lastTime = 0;
 let timescale = 1;
 let perfMode = false;
 
-/* -------------------------------- Boot-Flag -------------------------------- */
+// Hilfsflag: während Preflight/App-Ops offen -> sanfter zeichnen
+function diagOpen() {
+  return !!(window.__pfOpen || window.__opsOpen);
+}
 
+/* -------------------------------- Boot-Flag -------------------------------- */
 function markBoot(ok = true) {
   try {
-    // Preflight nutzt __bootOK; der Bootstrap-Watchdog schaut auf __APP_BOOTED
+    // Preflight nutzt __bootOK; Bootstrap-Watchdog schaut auf __APP_BOOTED
     window.__bootOK = !!ok;
     window.__APP_BOOTED = !!ok;
     document.documentElement.dataset.boot = ok ? "1" : "0";
@@ -28,7 +32,6 @@ function markBoot(ok = true) {
 }
 
 /* -------------------------------- Heartbeat -------------------------------- */
-
 function heartbeat() {
   try {
     window.__frameCount = (window.__frameCount | 0) + 1;
@@ -49,25 +52,15 @@ function heartbeat() {
 }
 
 /* ------------------------------ Public Controls ---------------------------- */
-
-export function setTimescale(x) {
-  timescale = Math.max(0.1, Math.min(50, +x || 1));
-}
+export function setTimescale(x) { timescale = Math.max(0.1, Math.min(50, +x || 1)); }
 export function setPerfMode(on) {
   perfMode = !!on;
   renderer.setPerfMode(perfMode);
   window.__perfMode = perfMode;
   emit("perf:mode", { on: perfMode });
 }
-export function start() {
-  if (!running) {
-    running = true;
-    loop();
-  }
-}
-export function pause() {
-  running = false;
-}
+export function start() { if (!running) { running = true; loop(); } }
+export function pause() { running = false; }
 export function reset() {
   try {
     running = false;
@@ -76,13 +69,10 @@ export function reset() {
     emit("app:reset", {});
     markBoot(true);
     start();
-  } catch (e) {
-    report(e, { where: "reset" });
-  }
+  } catch (e) { report(e, { where: "reset" }); }
 }
 
 /* ----------------------------------- Boot ---------------------------------- */
-
 export function boot() {
   try {
     initErrorManager();
@@ -92,9 +82,9 @@ export function boot() {
     setWorldSize(Math.max(2, r.width), Math.max(2, r.height));
 
     createAdamAndEve();
-    applyEnvironment({}); // no-op, aber sichert API-Vertrag
+    applyEnvironment({}); // API-Vertrag sichern
 
-    // initiale Slider-Werte anwenden
+    // initiale Slider ins System
     try {
       const sm = document.getElementById("sliderMutation");
       if (sm) reproduction.setMutationRate(+sm.value | 0);
@@ -106,46 +96,55 @@ export function boot() {
     markBoot(true);
     start();
 
-    // Seeding-Guard (falls leer)
+    // Seeding-Guard
     setTimeout(() => {
       try {
-        if (getCells().length === 0) {
-          console.warn("[engine] seeding Adam&Eva (guard)");
-          createAdamAndEve();
-        }
+        if (getCells().length === 0) { console.warn("[engine] seeding Adam&Eva (guard)"); createAdamAndEve(); }
         if (getFoodItems().length === 0) {
           const rate = +document.getElementById("sliderFood")?.value || 6;
           food.setSpawnRate(rate);
           for (let i = 0; i < 24; i++) food.step(0.12);
         }
-      } catch (e) {
-        console.warn("seeding-guard", e);
-      }
+      } catch (e) { console.warn("seeding-guard", e); }
     }, 250);
-  } catch (err) {
-    report(err, { where: "boot" });
-  }
+  } catch (err) { report(err, { where: "boot" }); }
 }
 
 /* --------------------------------- Game Loop -------------------------------- */
+let jankStreak = 0;
+const MAX_DT = 0.2;    // harte Kappe pro Schritt
+const JANK_MS = 500;   // >500ms Rechenzeit = "extrem"
+const JANK_LIMIT = 4;  // so oft hintereinander → Sofort-Pause
 
 function loop() {
   if (!running) return;
   const now = performance.now();
   let dt = ((now - lastTime) / 1000) * timescale;
-  if (dt > 0.2) dt = 0.2;
+  if (dt > MAX_DT) dt = MAX_DT;
   lastTime = now;
 
+  let used = 0;
   try {
+    const before = performance.now();
     step(dt, now / 1000);
+    used = performance.now() - before;
   } catch (e) {
     report(e, { where: "loop.step" });
   }
+
+  // Jank-Guard
+  if (used > JANK_MS) jankStreak++; else jankStreak = 0;
+  if (jankStreak >= JANK_LIMIT) {
+    console.warn("[engine] Emergency pause due to sustained jank");
+    pause();
+    jankStreak = 0;
+  }
+
   requestAnimationFrame(loop);
 }
 
 function step(dt, tSec) {
-  // Phasen messen
+  // 1) Phasen messen
   metrics.beginTick();
 
   let t0 = metrics.phaseStart();
@@ -160,29 +159,30 @@ function step(dt, tSec) {
   food.step(dt);
   metrics.phaseEnd("food", t0);
 
+  // 2) Zeichnen – sanft, wenn Diagnose/OPS offen
+  const frameNo = (window.__frameCount | 0);
+  const skipDraw = diagOpen() && (frameNo % 3 !== 0);
   t0 = metrics.phaseStart();
-  renderer.draw({ cells: getCells(), food: getFoodItems() }, {});
+  if (!skipDraw) renderer.draw({ cells: getCells(), food: getFoodItems() }, {});
   metrics.phaseEnd("draw", t0);
 
+  // 3) Energie/Telemetry
   emit("econ:snapshot", metrics.readEnergyAndReset());
 
-  // --------- App-Ops Telemetrie (pro Frame) ----------
   try {
-    // gewünschte vs. maximale Bildrate (Backlog-Indikator für App-Ops)
     const desired = Math.max(1, Math.round(60 * timescale));
-    const max = 60; // rAF-Deckel
+    const max = 60;
     emit("appops:frame", { desired, max });
 
-    // Timings (ms) aus Metrics übernehmen – robust falls nicht vorhanden
     const p = (metrics.getPhases && metrics.getPhases()) || {};
     emit("appops:timings", {
-      ent: Math.round(p.entities || 0),
-      repro: Math.round(p.reproduction || 0),
+      ent:  Math.round(p.entities || 0),
+      repro:Math.round(p.reproduction || 0),
       food: Math.round(p.food || 0),
       draw: Math.round(p.draw || 0)
     });
   } catch {
-    // Telemetrie darf nie den Loop stören
+    // Telemetrie darf nie blockieren
   }
 
   heartbeat();
