@@ -1,77 +1,94 @@
-// reproduction.js – Paarung & Mutation (mit Diagnose-Export getMutationRate)
-// Elternqualitäts-abhängige Mutation: gute Eltern (EFF↑, MET↓) → geringere Mutationsamplitude
+// reproduction.js — Paarungslogik (großzügiger, Mate-first-tauglich)
 
-import { getCells, createCell } from "./entities.js";
-import { emit } from "./event.js";
+import { createCell, getCells } from "./entities.js";
 import { CONFIG } from "./config.js";
+import { emit } from "./event.js";
 
-let mutationRate = 0.05; // Prozent/100 (0..1)
+let mutationRate = 8;
+export function setMutationRate(x){ mutationRate = Math.max(0, +x||0); }
+export function getMutationRate(){ return mutationRate; }
 
-export function setMutationRate(pct){
-  const p = Math.max(0, Number(pct) || 0) / 100;
-  mutationRate = p;
-}
-export function getMutationRate(){  // für Diagnose-Panel
-  return mutationRate;
-}
+const T = {
+  COOLDOWN_SEC: 6.0,      // vorher oft >8–10s
+  ENERGY_COST:  6.0,      // je Elternteil
+  E_MIN:        8.0       // minimale Energie für Paarung
+};
 
-const clamp=(x,a,b)=>Math.max(a,Math.min(b,x));
-
-// Elternqualität 0..1: gute EFF (hoch), MET (niedrig)
-function parentQuality(A,B){
-  const qEff = (A.genome.EFF + B.genome.EFF) / 20;       // ~0..1
-  const qMet = 1 - (A.genome.MET + B.genome.MET) / 20;   // ~0..1
-  return clamp(0.5*qEff + 0.5*qMet, 0, 1);
-}
-
-// mutiert Genwert um ±(3 * localRate)
-function mixGene(a, b, A, B){
-  const base = (a + b) / 2;
-  const q = parentQuality(A,B);               // 0..1
-  const localRate = mutationRate * (1 - 0.4*q); // bis −40% bei guten Eltern
-  const mut = (Math.random() * 2 - 1) * 3 * localRate;
-  return Math.max(1, Math.min(10, Math.round(base + mut)));
+function mutateInt(val){
+  // mittlere Mutation: Chance proportional zur Rate
+  if (Math.random() < mutationRate/100){
+    const dir = Math.random()<0.5 ? -1 : +1;
+    return Math.max(1, Math.min(10, val + dir));
+  }
+  return val;
 }
 
-let nextId = 2000;
+function recombine(a,b){
+  return {
+    TEM: mutateInt(Math.round((a.TEM + b.TEM)/2)),
+    "GRÖ": mutateInt(Math.round((a["GRÖ"] + b["GRÖ"])/2)),
+    EFF: mutateInt(Math.round((a.EFF + b.EFF)/2)),
+    SCH: mutateInt(Math.round((a.SCH + b.SCH)/2)),
+    MET: mutateInt(Math.round((a.MET + b.MET)/2))
+  };
+}
 
 export function step(dt){
   const cells = getCells();
-  for (let i = 0; i < cells.length; i++){
-    const A = cells[i];
-    if (A.energy < CONFIG.cell.energyCostPair || A.cooldown > 0) continue;
+  if (cells.length < 2) return;
 
-    for (let j = i + 1; j < cells.length; j++){
-      const B = cells[j];
-      if (B.energy < CONFIG.cell.energyCostPair || B.cooldown > 0) continue;
-      if (A.sex === B.sex) continue;
+  const paired = new Set();
+  // Maximal N/4 Paare pro Tick (konservativ)
+  let quota = Math.max(1, Math.floor(cells.length / 4));
 
-      const dx = A.pos.x - B.pos.x, dy = A.pos.y - B.pos.y;
-      if (dx*dx + dy*dy <= CONFIG.cell.pairDistance * CONFIG.cell.pairDistance){
-        const g = {
-          TEM: mixGene(A.genome.TEM, B.genome.TEM, A, B),
-          GRÖ: mixGene(A.genome.GRÖ, B.genome.GRÖ, A, B),
-          EFF: mixGene(A.genome.EFF, B.genome.EFF, A, B),
-          SCH: mixGene(A.genome.SCH, B.genome.SCH, A, B),
-          MET: mixGene(A.genome.MET, B.genome.MET, A, B),
-        };
+  // einfache Shuffle-Reihenfolge
+  const idx = cells.map((_,i)=>i);
+  for(let i=idx.length-1;i>0;i--){ const j=(Math.random()*(i+1))|0; [idx[i],idx[j]]=[idx[j],idx[i]]; }
 
-        const child = createCell({
-          name: `C${nextId++}`,
-          sex: Math.random() < 0.5 ? "M" : "F",
-          stammId: Math.random() < 0.15 ? A.stammId : B.stammId,
-          pos: { x: (A.pos.x + B.pos.x) / 2, y: (A.pos.y + B.pos.y) / 2 },
-          genome: g,
-          energy: Math.min(A.energy, B.energy) * 0.5
-        });
+  for (const ii of idx){
+    if (quota<=0) break;
+    const A = cells[ii];
+    if (!A || paired.has(A.id) || A.cooldown>0 || A.energy<T.E_MIN) continue;
 
-        A.energy -= CONFIG.cell.energyCostPair;
-        B.energy -= CONFIG.cell.energyCostPair;
-        A.cooldown = Math.max(1, CONFIG.cell.cooldown * (11 - A.genome.MET) / 10);
-        B.cooldown = Math.max(1, CONFIG.cell.cooldown * (11 - B.genome.MET) / 10);
+    // Suche besten Partner in Reichweite
+    let best=null, bestD=Infinity;
+    for (const jj of idx){
+      if (ii===jj) continue;
+      const B = cells[jj];
+      if (!B || paired.has(B.id) || B.cooldown>0 || B.energy<T.E_MIN) continue;
+      if (A.sex===B.sex) continue;
 
-        emit("cells:born", { child, parents: [A.id, B.id] });
-      }
+      // Paar-Distanz mit Toleranz:
+      let pairR = CONFIG.cell.pairDistance || 28;
+      // Großzügiger, wenn 1+ im Mate-Modus:
+      const aMate = A.__drive?.mode === "mate";
+      const bMate = B.__drive?.mode === "mate";
+      if (aMate || bMate) pairR *= 1.6; else pairR *= 1.25;
+
+      const dx=A.pos.x-B.pos.x, dy=A.pos.y-B.pos.y;
+      const d = Math.hypot(dx,dy);
+      if (d<=pairR && d<bestD){ best=B; bestD=d; }
     }
+
+    if (!best) continue;
+
+    // Paarung ausführen
+    const B = best;
+    const childGenome = recombine(A.genome, B.genome);
+    const mx = (A.pos.x+B.pos.x)/2 + (Math.random()*6-3);
+    const my = (A.pos.y+B.pos.y)/2 + (Math.random()*6-3);
+    const stammId = Math.random()<0.5 ? A.stammId : B.stammId;
+
+    createCell({ genome: childGenome, pos:{x:mx,y:my}, stammId });
+
+    // Kosten & Cooldowns
+    A.energy = Math.max(0, A.energy - T.ENERGY_COST);
+    B.energy = Math.max(0, B.energy - T.ENERGY_COST);
+    A.cooldown = T.COOLDOWN_SEC;
+    B.cooldown = T.COOLDOWN_SEC;
+
+    paired.add(A.id); paired.add(B.id);
+    quota--;
+    emit("cells:born", { parents:[A.id,B.id] });
   }
 }

@@ -1,11 +1,14 @@
 // entities.js — Entities & Bewegung (Spatial-Hash aktiv)
-// Tuning:
+// Tuning aktiv:
 //  - senseFood +15 %
 //  - eatPerSecond +25 %
 //  - baseMetabolic −10 % global
-//  - Kreuzungsbonus bei Partnerwahl: +0.3 (Cross-Stamm)
+//  - Kreuzungsbonus (Cross-Stamm) +0.3 bei Partnerwahl
 //  - Juvenil-Schutz: baseMetabolic ×0.8 bei Age < 15 s
-// Mate-first: entities liefert eFrac & popN an drives.getAction und übergibt echte Sim-Zeit _t
+// Mate-first-Unterstützung:
+//  - entities übergibt eFrac (E/Cap) & popN an drives.getAction
+//  - echte Sim-Zeit (_t) an Policy (Hysterese wirksam)
+//  - im Mate-Modus geringere Wandvermeidung (weniger Abbrüche kurz vor dem Ziel)
 
 import { CONFIG } from "./config.js";
 import { emit } from "./event.js";
@@ -20,7 +23,7 @@ const foodItems = [];
 let stammMeta = new Map();
 let nextCellId = 1;
 
-/* Utils */
+/* ===================== Utils ===================== */
 const clamp=(x,a,b)=>Math.max(a,Math.min(b,x));
 const len=(x,y)=>Math.hypot(x,y);
 const d2=(x1,y1,x2,y2)=>{ const dx=x2-x1, dy=y2-y1; return dx*dx+dy*dy; };
@@ -32,7 +35,7 @@ function capEnergy(c){ return CONFIG.cell.energyMax*(1+0.08*(c.genome.GRÖ-5)); 
 function worldScales(){ const BASE_H=640, BASE_W=1024; const sMin=Math.max(0.6, Math.min(W,H)/BASE_H); const areaScale=(W*H)/(BASE_W*BASE_H); return { sMin, areaScale }; }
 function sexColor(sex){ return sex==="M" ? CONFIG.colors.sexMale : CONFIG.colors.sexFemale; }
 
-/* Exporte */
+/* ===================== Exporte (World/Collections) ===================== */
 export function worldSize(){ return {width:W,height:H}; }
 export function setWorldSize(w,h){ W=w; H=h; }
 export function addFoodItem(f){ foodItems.push(f); }
@@ -40,7 +43,7 @@ export function getFoodItems(){ return foodItems; }
 export function getCells(){ return cells; }
 export function getStammCounts(){ const m={}; for(const c of cells){ m[c.stammId]=(m[c.stammId]||0)+1; } return m; }
 
-/* Zellen */
+/* ===================== Zellen erzeugen/entfernen ===================== */
 export function createCell(opts={}){
   const id=nextCellId++;
   const sex = opts.sex || (Math.random()<0.5 ? "M" : "F");
@@ -70,12 +73,13 @@ export function createCell(opts={}){
   cells.push(cell);
   return cell;
 }
+
 export function killCell(id){
   const i=cells.findIndex(c=>c.id===id);
   if(i>=0){ const c=cells[i]; cells.splice(i,1); emit("cells:died",c); }
 }
 
-/* Startpopulation */
+/* ===================== Startpopulation ===================== */
 export function createAdamAndEve(){
   cells.length=0; stammMeta=new Map(); nextCellId=1;
   const cx=W*0.5, cy=H*0.5, gap=Math.min(W,H)*0.18;
@@ -97,10 +101,10 @@ function makeChild(A,E,k){
            vel:{x:0,y:0}, energy:cap*0.75, age:0, cooldown:0, genome:g, vitality:0, wander:{vx:0,vy:0} };
 }
 
-/* Environment (no-op) */
-export function applyEnvironment(_env){}
+/* ===================== Environment (no-op) ===================== */
+export function applyEnvironment(_env){/* Umwelt ist aktuell deaktiviert */}
 
-/* Steering helpers */
+/* ===================== Steering ===================== */
 function steerSeekArrive(c,t,maxSpeed,stopR,slowR){
   const dx=t.x-c.pos.x, dy=t.y-c.pos.y; const d=len(dx,dy); if(d<stopR) return [0,0];
   let sp=maxSpeed; if(d<slowR) sp=maxSpeed*(d/slowR);
@@ -120,7 +124,7 @@ function updateWander(c,dt){
   const [ux,uy]=(len(c.vel.x,c.vel.y)>1e-3)?norm(c.vel.x,c.vel.y):[0,0]; return [c.wander.vx+0.2*ux, c.wander.vy+0.2*uy];
 }
 
-/* Spatial Grid (mit Scale-Faktor) */
+/* ===================== Spatial Grid (mit Scale-Faktor) ===================== */
 let grid = null;
 let gridMeta = { cellSize: 0, W: 0, H: 0 };
 let gridScaleFactor = 1.0;
@@ -130,7 +134,7 @@ export function getGridCellSize(){ return gridMeta.cellSize || null; }
 
 function ensureGrid(sMin){
   const baseSense = CONFIG.cell?.senseFood || 110;
-  const desiredBase = baseSense * 1.15 * sMin * gridScaleFactor; // +15% Sensorik
+  const desiredBase = baseSense * 1.15 * sMin * gridScaleFactor; // +15% Sensorik (Food)
   const desired = Math.max(80, Math.round(desiredBase));
   if (!grid || gridMeta.cellSize !== desired || gridMeta.W !== W || gridMeta.H !== H){
     grid = createGrid(desired, W, H);
@@ -139,7 +143,7 @@ function ensureGrid(sMin){
   return grid;
 }
 
-/* Grid-Queries (Food/Mate/Separation) */
+/* ===================== Grid-Queries ===================== */
 function senseFoodGrid(c, senseR, grid){
   const cand = grid.queryCircle(c.pos.x, c.pos.y, senseR);
   let nearestItem=null, nd2=Infinity; let cx=0, cy=0, n=0; const r2=senseR*senseR;
@@ -175,14 +179,14 @@ function chooseMateGrid(c, senseR, grid){
     const dist2=d2(c.pos.x,c.pos.y,o.pos.x,o.pos.y); if(dist2>rr) continue;
     const d=Math.sqrt(dist2);
     const geneScore=(o.genome.EFF*0.8+(10-o.genome.MET)*0.7+o.genome.SCH*0.2+o.genome.TEM*0.2);
-    const crossBonus=(o.stammId!==c.stammId)?0.3:0.0;
+    const crossBonus=(o.stammId!==c.stammId)?0.3:0.0; // Diversität
     const total=-0.05*d + geneScore + crossBonus;
     if(total>bestScore){ best=o; bestScore=total; bestD=d; }
   }
   return best? {cell:best,d:bestD}:null;
 }
 
-/* Langlebigkeit */
+/* ===================== Langlebigkeit ===================== */
 function effectiveAgeLimit(c){
   const L = CONFIG.longevity || {};
   const base = (L.baseAge ?? CONFIG.cell.ageMax) || 600;
@@ -195,10 +199,11 @@ function effectiveAgeLimit(c){
   return base * (1 + boost);
 }
 
-/* Hauptschritt */
+/* ===================== Hauptschritt ===================== */
 export function step(dt, _env, _t){
   const { sMin } = worldScales();
 
+  // Grid vorbereiten
   const g = ensureGrid(sMin);
   g.clear();
   for (const f of foodItems) g.insert(f.x, f.y, { type:"food", obj:f });
@@ -212,22 +217,25 @@ export function step(dt, _env, _t){
 
     const gnm=c.genome;
     const senseFoodR=CONFIG.cell.senseFood*(1.15)*(0.7+0.1*gnm.EFF)*sMin;
-    const senseMateR=CONFIG.cell.senseMate*(0.7+0.08*gnm.EFF)*sMin;
+    const senseMateR=CONFIG.cell.senseMate*(0.7+0.08*gnm.EFF)*sMin; // optional *1.15 wenn du Reichweite erhöhen willst
     const maxSpeed =  CONFIG.cell.baseSpeed*(0.7+0.08*gnm.TEM)*sMin;
     const maxForce = (CONFIG.physics.maxForceBase??140)*(0.7+0.08*gnm.TEM)*sMin;
 
     const foodS = senseFoodGrid(c, senseFoodR, g);
     const mate  = chooseMateGrid(c, senseMateR, g);
 
-    // lokale Nachbardichte (optionales Signal)
+    // Nachbardichte
     let neigh=0;{
       const R = 60*sMin, R2=R*R;
       const local = g.queryCircle(c.pos.x, c.pos.y, R);
-      for(const p of local){ if(p?.type!=="cell") continue; const o=p.obj; if(o===c) continue;
-        if(d2(c.pos.x,c.pos.y,o.pos.x,o.pos.y) <= R2) neigh++; }
+      for(const p of local){
+        if(p?.type!=="cell") continue;
+        const o=p.obj; if(o===c) continue;
+        if(d2(c.pos.x,c.pos.y,o.pos.x,o.pos.y) <= R2) neigh++;
+      }
     }
 
-    // >>>>>>>>>> Mate-first: eFrac & popN ins ctx, echte Zeit _t an drives
+    // Kontext inkl. eFrac & popN; echte Zeit _t an drives (Hysterese)
     const eFrac = c.energy / Math.max(1e-6, capEnergy(c));
     const ctx={ env:{},
       food: foodS ? { x:(foodS.item?.x ?? foodS.center?.x), y:(foodS.item?.y ?? foodS.center?.y) } : null,
@@ -239,11 +247,13 @@ export function step(dt, _env, _t){
 
     const option = drivesGetAction(c, _t, ctx);
 
-    // Avoid
-    let [fx,fy]=[0,0], rem=maxForce; const fAvoid=steerWallAvoid(c);
-    ({fx,fy,rem}=addBudget(fx,fy,rem,fAvoid[0],fAvoid[1], (CONFIG.physics.wAvoid??1.15)));
+    // Wand-Vermeidung: im Mate-Modus etwas weicher (weniger Abbrüche)
+    let [fx,fy]=[0,0], rem=maxForce;
+    const fAvoid=steerWallAvoid(c);
+    const avoidW = (option==="mate") ? (CONFIG.physics.wAvoid??1.15)*0.85 : (CONFIG.physics.wAvoid??1.15);
+    ({fx,fy,rem}=addBudget(fx,fy,rem,fAvoid[0],fAvoid[1], avoidW));
 
-    // Primär
+    // Primärziel
     let fOpt=[0,0]; const slowR=Math.max(CONFIG.physics.slowRadius??120, CONFIG.cell.pairDistance*3);
     if(option==="food" && foodS){
       const eatR = (CONFIG.food.itemRadius + radiusOf(c) + 2) * sMin, eatR2=eatR*eatR;
@@ -283,10 +293,10 @@ export function step(dt, _env, _t){
     c.pos.x=clamp(c.pos.x+c.vel.x*dt,0,W); c.pos.y=clamp(c.pos.y+c.vel.y*dt,0,H);
     c.vel.x*=0.985; c.vel.y*=0.985;
 
-    // Energie (−10% Base + Juvenil 0.8)
+    // Energie (−10% Base + Juvenil-Schutz)
     const sp=len(c.vel.x,c.vel.y);
-    let baseDrain=CONFIG.cell.baseMetabolic * 0.9 * (0.6+0.1*gnm.MET) * dt;
-    if (c.age < 15) baseDrain *= 0.8;
+    let baseDrain=CONFIG.cell.baseMetabolic * 0.9 * (0.6+0.1*gnm.MET) * dt; // global −10 %
+    if (c.age < 15) baseDrain *= 0.8; // Juvenil
     const moveDrain=(CONFIG.physics.moveCostK??0.0006)*(sp*sp)*dt / sMin;
     c.energy -= baseDrain + moveDrain;
     metrics.sampleEnergy({ base:baseDrain, move:moveDrain, env:0, intake:0, eating:false });
@@ -294,10 +304,10 @@ export function step(dt, _env, _t){
     // Vitalität
     {
       const L = CONFIG.longevity || {};
-      const eFracNow = clamp(c.energy / capEnergy(c), 0, 1);
+      const eNow = clamp(c.energy / capEnergy(c), 0, 1);
       let dv = 0;
-      if (eFracNow >= (L.energyGood ?? 0.60)) dv += (L.vitalityRate ?? 0.6) * dt;
-      else if (eFracNow <= (L.energyBad ?? 0.25)) dv -= (L.vitalityRate ?? 0.6) * dt;
+      if (eNow >= (L.energyGood ?? 0.60)) dv += (L.vitalityRate ?? 0.6) * dt;
+      else if (eNow <= (L.energyBad ?? 0.25)) dv -= (L.vitalityRate ?? 0.6) * dt;
       c.vitality = clamp((c.vitality ?? 0) + dv, -1, 1);
     }
 
@@ -308,7 +318,7 @@ export function step(dt, _env, _t){
     if(c.energy<=0 || c.age>ageLimit) killCell(c.id);
   }
 
-  // Stats
+  // Stats / commit
   {
     const n = cells.length;
     let sTEM=0,sGRO=0,sEFF=0,sSCH=0,sMET=0;
@@ -318,8 +328,13 @@ export function step(dt, _env, _t){
   }
 }
 
-/* Hilfen */
-function addBudget(fx,fy,rem,vx,vy,w){ const rx=vx*w, ry=vy*w; const m=Math.hypot(rx,ry); if(m<1e-6||rem<=0) return {fx,fy,rem};
-  const allow=Math.min(m,rem), s=allow/m; return {fx:fx+rx*s, fy:fy+ry*s, rem:rem-allow}; }
+/* ===================== Hilfen ===================== */
+function addBudget(fx,fy,rem,vx,vy,w){
+  const rx=vx*w, ry=vy*w; const m=Math.hypot(rx,ry);
+  if(m<1e-6||rem<=0) return {fx,fy,rem};
+  const allow=Math.min(m,rem), s=allow/m;
+  return {fx:fx+rx*s, fy:fy+ry*s, rem:rem-allow};
+}
 
+/* Debug-Export (Radiusberechnung) */
 export { radiusOf as __radiusForDebug };
