@@ -1,4 +1,4 @@
-// engine.js — Boot/Loop/Topbar/Events + Phasen-Instrumentierung + Boot-Flag
+// engine.js — Boot/Loop/Topbar/Events + Phasen-Instrumentierung + Boot-Flag + Heartbeat
 
 import { initErrorManager, report } from "./errorManager.js";
 import { getCells, getFoodItems, setWorldSize, createAdamAndEve, applyEnvironment } from "./entities.js";
@@ -20,6 +20,22 @@ function markBoot(ok=true){
     window.__bootOK = !!ok;
     document.documentElement.dataset.boot = ok ? "1" : "0";
   } catch {}
+}
+
+// ---- Heartbeat (für Preflight/Diag) ----
+function heartbeat(){
+  try{
+    window.__frameCount = (window.__frameCount|0) + 1;
+    window.__lastStepAt = performance.now();
+    // grobe FPS-Schätzung (EMA)
+    const dt = performance.now() - (window.__lastStepPrev||performance.now());
+    window.__lastStepPrev = performance.now();
+    if (dt > 0 && dt < 1000){
+      const fps = 1000/dt;
+      const a = 0.15;
+      window.__fpsEMA = (window.__fpsEMA==null) ? fps : window.__fpsEMA*(1-a) + fps*a;
+    }
+  }catch{}
 }
 
 // Exporte (von index.html benutzt)
@@ -55,11 +71,9 @@ export function boot(){
     applyEnvironment({}); // Umwelt aktuell deaktiviert
     lastTime = performance.now();
 
-    // Auto-Start (damit sofort Leben zu sehen ist)
+    // Auto-Start
     markBoot(true);
     start();
-
-    // Slider/Buttons werden in index.html verdrahtet; hier nichts weiter nötig
   }catch(err){ report(err,{where:"boot"}); }
 }
 
@@ -67,7 +81,7 @@ function loop(){
   if(!running) return;
   const now = performance.now();
   let dt = (now - lastTime)/1000 * timescale;
-  if (dt > 0.2) dt = 0.2;   // clamp gegen Tabsleeps
+  if (dt > 0.2) dt = 0.2;   // clamp
   lastTime = now;
 
   try{
@@ -102,4 +116,7 @@ function step(dt, tSec){
 
   const econ = metrics.readEnergyAndReset();
   emit("econ:snapshot", econ);
+
+  // Heartbeat setzen
+  heartbeat();
 }
