@@ -1,59 +1,175 @@
-// preflight.js — Deep-Check (manuell per Button oder ?pf=1)
+// preflight.js — Deep-Check + UI-Wiring + Canvas-Probe + MDC-CHK (manuell)
 
 function el(id){return document.getElementById(id);}
-export function showOverlay(text){
-  let w=el('diag-overlay'); if(!w){ w=document.createElement('div'); w.id='diag-overlay';
+function show(text){
+  let w=el('diag-overlay'); if(!w){
+    w=document.createElement('div'); w.id='diag-overlay';
     w.style.cssText='position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.65);display:flex;align-items:flex-start;justify-content:center;padding:48px;';
     const p=document.createElement('pre'); p.id='diag-box';
-    p.style.cssText='max-width:1000px;width:92%;background:#10161d;color:#d6e1ea;border:1px solid #2a3b4a;border-radius:10px;padding:16px;overflow:auto;white-space:pre-wrap;';
+    p.style.cssText='max-width:1100px;width:92%;background:#10161d;color:#d6e1ea;border:1px solid #2a3b4a;border-radius:10px;padding:16px;overflow:auto;white-space:pre-wrap;';
     const x=document.createElement('button'); x.textContent='Schließen';
     x.style.cssText='position:absolute;top:12px;right:12px;background:#243241;color:#cfe6ff;border:1px solid #47617a;border-radius:8px;padding:6px 10px;';
-    x.onclick=()=>w.remove(); w.appendChild(p); w.appendChild(x); document.body.appendChild(w); }
+    x.onclick=()=>w.remove(); w.appendChild(p); w.appendChild(x); document.body.appendChild(w);
+  }
   el('diag-box').textContent=text;
 }
+const OK='✅ ', NO='❌ ', OPT='⚠️  '; // OPT = optional fehlt/teilweise
 
-const MODS=[
-  {p:'./event.js',want:['on','emit']},
-  {p:'./errorManager.js',want:['initErrorManager','report']},
-  {p:'./entities.js',want:['setWorldSize','createAdamAndEve','step','getCells','getFoodItems','applyEnvironment']},
-  {p:'./reproduction.js',want:['step','setMutationRate']},
-  {p:'./food.js',want:['step','setSpawnRate']},
-  {p:'./renderer.js',want:['draw','setPerfMode']},
-  {p:'./metrics.js',want:['getPhases','getEconSnapshot','getPopSnapshot','getDriftSnapshot','getMateSnapshot']},
-  {p:'./drives.js',want:['getDrivesSnapshot']},
-  {p:'./editor.js',want:['openEditor'],optional:true},
-  {p:'./environment.js',want:['openEnvPanel'],optional:true},
-  {p:'./diag.js',want:[],optional:true}
+function b64(json){ return btoa(unescape(encodeURIComponent(json))); }
+
+/* ---------------- Module-Liste (Repo-basiert) ---------------- */
+const MODS = [
+  {p:'./event.js',        want:['on','emit']},
+  {p:'./config.js',       want:[], optional:true},
+  {p:'./errorManager.js', want:['initErrorManager','report']},
+
+  {p:'./engine.js',       want:['boot','start','pause','reset','setTimescale','setPerfMode']},
+  {p:'./entities.js',     want:['setWorldSize','createAdamAndEve','step','getCells','getFoodItems','applyEnvironment']},
+  {p:'./reproduction.js', want:['step','setMutationRate']},
+  {p:'./food.js',         want:['step','setSpawnRate']},
+  {p:'./renderer.js',     want:['draw','setPerfMode']},
+  {p:'./metrics.js',      want:['getPhases','getEconSnapshot','getPopSnapshot','getDriftSnapshot','getMateSnapshot']},
+  {p:'./drives.js',       want:['getDrivesSnapshot']},
+
+  // Tools/Extras (optional)
+  {p:'./editor.js',       want:['openEditor'], optional:true},
+  {p:'./environment.js',  want:['openEnvPanel'], optional:true},
+  {p:'./genealogy.js',    want:['openGenealogy'], optional:true},
+  {p:'./dummy.js',        want:['openDummyPanel'], optional:true},
+  {p:'./appops_panel.js', want:['openAppOps'], optional:true},
+  {p:'./appops.js',       want:['generateOps'], optional:true},
+  {p:'./advisor.js',      want:['setMode','getMode','scoreCell','sortCells'], optional:true},
+  {p:'./grid.js',         want:['createGrid'], optional:true},
+  {p:'./bootstrap.js',    want:[], optional:true},
+  {p:'./sw.js',           want:[], optional:true}, // Service Worker Hinweis separat
+  {p:'./diag.js',         want:[], optional:true},
 ];
 
-async function chk(m){try{const r=await import(m.p+'?v='+Date.now());const miss=(m.want||[]).filter(k=>!(k in r));
-  return {ok:miss.length===0,p:m.p,miss,err:null,opt:!!m.optional};}
-  catch(e){return {ok:false,p:m.p,miss:m.want||[],err:String(e),opt:!!m.optional};}}
+async function chkModule({p, want=[], optional=false}){
+  try{
+    const m = await import(p+'?v='+Date.now());
+    const miss = want.filter(k => !(k in m));
+    return {ok: miss.length===0, path:p, miss, optional, err:null};
+  }catch(e){
+    return {ok:false, path:p, miss:want, optional, err:String(e && e.message || e)};
+  }
+}
 
-function rt(){
+/* ---------------- UI-Wiring ---------------- */
+async function uiCheck(){
+  const ui = {
+    btnStart: !!el('btnStart'), btnPause: !!el('btnPause'), btnReset: !!el('btnReset'),
+    chkPerf: !!el('chkPerf'),
+    btnEditor: !!el('btnEditor'), btnEnv: !!el('btnEnv'), btnGene: !!el('btnGene'),
+    btnDummy: !!el('btnDummy'), btnAppOps: !!el('btnAppOps'), btnDiag: !!el('btnDiag'),
+    sliderMutation: !!el('sliderMutation'), sliderFood: !!el('sliderFood'),
+    canvas: !!el('scene')
+  };
+
+  const fn = {};
+  try{ const m=await import('./engine.js?v='+Date.now());
+    fn.start=typeof m.start==='function'; fn.pause=typeof m.pause==='function'; fn.reset=typeof m.reset==='function';
+    fn.setTS=typeof m.setTimescale==='function'; fn.setPerf=typeof m.setPerfMode==='function';
+  }catch(e){ fn._engineErr=String(e); }
+
+  try{ const m=await import('./reproduction.js?v='+Date.now());
+    fn.setMutation=typeof m.setMutationRate==='function';
+  }catch(e){ fn._reproErr=String(e); }
+
+  try{ const m=await import('./food.js?v='+Date.now());
+    fn.setFood=typeof m.setSpawnRate==='function';
+  }catch(e){ fn._foodErr=String(e); }
+
+  try{ const m=await import('./editor.js?v='+Date.now());      fn.openEditor = typeof m.openEditor==='function'; }catch(e){ fn._edErr = String(e); }
+  try{ const m=await import('./environment.js?v='+Date.now()); fn.openEnv    = typeof m.openEnvPanel==='function'; }catch(e){ fn._envErr= String(e); }
+  try{ const m=await import('./genealogy.js?v='+Date.now());   fn.openGene   = typeof m.openGenealogy==='function'; }catch(e){ fn._geErr = String(e); }
+  try{ const m=await import('./dummy.js?v='+Date.now());       fn.openDummy  = typeof m.openDummyPanel==='function'; }catch(e){ fn._duErr = String(e); }
+  try{ const m=await import('./appops_panel.js?v='+Date.now());fn.openOps    = typeof m.openAppOps==='function'; }catch(e){ fn._opErr = String(e); }
+
+  // Canvas-Probe
+  const can = el('scene'); let canvasOK=false;
+  try{ canvasOK = !!(can && can.getContext && can.getContext('2d')); }catch{}
+  ui.canvas2D = canvasOK;
+
+  // SW-Status (kann Cache-Probleme machen)
+  let sw = null;
+  try{
+    if ('serviceWorker' in navigator){
+      sw = { controller: !!navigator.serviceWorker.controller };
+    }
+  }catch{}
+
+  return { ui, fn, sw };
+}
+
+/* ---------------- Runtime-Zusammenfassung ---------------- */
+function runtime(){
   const boot=!!window.__bootOK, fc=window.__frameCount|0;
   const fps=window.__fpsEMA? window.__fpsEMA.toFixed(0):'–';
   const cells=window.__cellsN|0, food=window.__foodN|0;
   const last=window.__lastStepAt? new Date(window.__lastStepAt).toLocaleTimeString():'–';
   const errs=(Array.isArray(window.__runtimeErrors)?window.__runtimeErrors.length:0)|0;
-  return `Boot-Flag: ${boot?'gesetzt':'fehlt'}
-Frames: ${fc}  ·  FPS≈ ${fps}
-Zellen: ${cells}  ·  Food: ${food}
-Letzter Step: ${last}
-Runtime-Fehler im Log: ${errs}`;
+  return { boot, fc, fps, cells, food, last, errs };
 }
 
+/* ---------------- Diagnose (öffentl.) ---------------- */
 export async function diagnose(){
-  const out=[ 'Start-Diagnose (Deep-Check)','', rt(), '', 'Module/Exporte:' ];
-  for (const m of MODS){
-    const r=await chk(m);
-    if (r.ok) out.push('✅ '+r.p+' OK');
-    else out.push('❌ '+r.p+(r.miss.length?(' · fehlt: '+r.miss.join(', ')):'')+(r.err?(' · '+r.err):'')+(r.opt?' (optional)':''));
+  const rt = runtime();
+
+  // Module prüfen
+  const modRows=[], modResults=[];
+  for (const spec of MODS){
+    const r = await chkModule(spec);
+    modResults.push(r);
+    if (r.ok)       modRows.push(OK + r.path + ' OK');
+    else if (r.optional) modRows.push(OPT + r.path + (r.miss.length?(' · fehlt: '+r.miss.join(', ')):'') + (r.err?(' · '+r.err):'') + ' (optional)');
+    else            modRows.push(NO + r.path + (r.miss.length?(' · fehlt: '+r.miss.join(', ')):'') + (r.err?(' · '+r.err):''));
   }
+
+  // UI/Wiring
+  const wiring = await uiCheck();
+  const W=[];
+  const mark = (ok,label,hint='')=> W.push((ok?OK:NO)+label+(hint?(' — '+hint):''));
+  mark(wiring.ui.btnStart && wiring.fn.start, 'Start-Button → engine.start()', !wiring.ui.btnStart?'Button fehlt':(!wiring.fn.start?'engine.start fehlt':''));
+  mark(wiring.ui.btnPause && wiring.fn.pause, 'Pause-Button → engine.pause()', !wiring.ui.btnPause?'Button fehlt':(!wiring.fn.pause?'engine.pause fehlt':''));
+  mark(wiring.ui.btnReset && wiring.fn.reset, 'Reset-Button → engine.reset()', !wiring.ui.btnReset?'Button fehlt':(!wiring.fn.reset?'engine.reset fehlt':''));
+  mark(wiring.ui.chkPerf  && wiring.fn.setPerf,'Perf-Checkbox → engine.setPerfMode()', !wiring.ui.chkPerf?'Checkbox fehlt':(!wiring.fn.setPerf?'API fehlt':''));
+  mark(wiring.ui.sliderMutation && wiring.fn.setMutation, 'Slider Mutation% → reproduction.setMutationRate()', !wiring.ui.sliderMutation?'Slider fehlt':(!wiring.fn.setMutation?'API fehlt':''));
+  mark(wiring.ui.sliderFood && wiring.fn.setFood, 'Slider Nahrung/s → food.setSpawnRate()', !wiring.ui.sliderFood?'Slider fehlt':(!wiring.fn.setFood?'API fehlt':''));
+  mark(wiring.ui.btnEditor && wiring.fn.openEditor, 'CRISPR-Editor → editor.openEditor()', !wiring.ui.btnEditor?'Button fehlt':(!wiring.fn.openEditor?'API fehlt':''));
+  mark(wiring.ui.btnEnv && wiring.fn.openEnv, 'Umwelt-Panel → environment.openEnvPanel()', !wiring.ui.btnEnv?'Button fehlt':(!wiring.fn.openEnv?'API fehlt':''));
+  mark(wiring.ui.btnGene && wiring.fn.openGene, 'Stammbaum → genealogy.openGenealogy()', !wiring.ui.btnGene?'Button fehlt':(!wiring.fn.openGene?'API fehlt':''));
+  mark(wiring.ui.btnDummy && wiring.fn.openDummy, 'Dummy → dummy.openDummyPanel()', !wiring.ui.btnDummy?'Button fehlt':(!wiring.fn.openDummy?'API fehlt':''));
+  mark(wiring.ui.btnAppOps && wiring.fn.openOps, 'App-Ops → appops_panel.openAppOps()', !wiring.ui.btnAppOps?'Button fehlt':(!wiring.fn.openOps?'API fehlt':''));
+  W.push((wiring.ui.canvas?OK:NO)+'Canvas #scene vorhanden');
+  W.push((wiring.ui.canvas2D?OK:NO)+'2D-Context erzeugbar');
+
+  // SW-Hinweis
+  const swNote = (wiring.sw && wiring.sw.controller) ? '\nHinweis: Service Worker aktiv → bei Asset-Updates ggf. harter Reload / SW unregister.' : '';
+
+  // MDC-CHK
+  const payload = { v:1, kind:'ui-diagnose', ts:Date.now(), runtime:rt, wiring, modules:modResults };
+  const mdc = `MDC-CHK-${(Math.random().toString(16).slice(2,6))}-${b64(JSON.stringify(payload))}`;
+
+  // Ausgabe
+  const lines=[];
+  lines.push('Start-Diagnose (Deep-Check + UI-Wiring)\n');
+  lines.push(`Boot-Flag: ${rt.boot?'gesetzt':'fehlt'}`);
+  lines.push(`Frames: ${rt.fc}  ·  FPS≈ ${rt.fps}`);
+  lines.push(`Zellen: ${rt.cells}  ·  Food: ${rt.food}`);
+  lines.push(`Letzter Step: ${rt.last}`);
+  lines.push(`Runtime-Fehler im Log: ${rt.errs}\n`);
+  lines.push('UI/Wiring:'); lines.push(...W,'');
+  lines.push('Module/Exporte:'); lines.push(...modRows,'');
   const errs = Array.isArray(window.__runtimeErrors)? window.__runtimeErrors.slice(-4):[];
-  if (errs.length){ out.push('', 'Laufzeitfehler:',''); errs.forEach(e=>out.push(`[${new Date(e.ts).toLocaleTimeString()}] ${e.where||e.when}\n${String(e.msg||'')}`)); }
-  out.push('', 'Hinweis: Cache-Buster: ?ts='+Date.now());
-  showOverlay(out.join('\n'));
+  if (errs.length){ lines.push('Laufzeitfehler (letzte 4):',''); errs.forEach(e=>lines.push(`[${new Date(e.ts).toLocaleTimeString()}] ${e.where||e.when}\n${String(e.msg||'')}`,'')); }
+  lines.push('Maschinencode:', mdc, '');
+  lines.push('Hinweis: Cache-Buster: ?ts='+Date.now()+swNote);
+  show(lines.join('\n'));
 }
 
-(function hook(){ try{ const q=new URLSearchParams(location.search); if(q.get('pf')==='1') window.addEventListener('load', ()=>diagnose()); }catch{} })();
+// Manuell via ?pf=1
+(function hook(){ try{
+  const q=new URLSearchParams(location.search);
+  if(q.get('pf')==='1') window.addEventListener('load', ()=>diagnose());
+}catch{} })();
