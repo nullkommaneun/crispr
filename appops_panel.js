@@ -1,6 +1,5 @@
 // appops_panel.js — App-Ops (Optimierer) Panel, robust mit Fallbacks
 
-/* ---------- kleine UI-Hilfen ---------- */
 function buildHeader(title, onClose){
   const wrap = document.createElement("div");
   wrap.className = "panel-header";
@@ -46,25 +45,18 @@ function codeField(value){
 }
 const fmt = v => (v!=null && v===v) ? (typeof v==='number'? v.toFixed(1): String(v)) : "–";
 
-/* ---------- Host (bestehendes Panel oder Fallback-Overlay) ---------- */
 function ensurePanelHost(){
   let host = document.getElementById("diagPanel");
   if (host) return { host, isOverlay:false, close:()=>host.classList.add("hidden") };
   const overlay = document.createElement("div");
-  overlay.style.cssText = "position:fixed;inset:0;z-index:99990;background:rgba(0,0,0,.55);" +
-                          "display:flex;align-items:flex-start;justify-content:center;padding:24px;";
+  overlay.style.cssText = "position:fixed;inset:0;z-index:99990;background:rgba(0,0,0,.55);display:flex;align-items:flex-start;justify-content:center;padding:24px;";
   overlay.addEventListener("click", e=>{ if (e.target===overlay) overlay.remove(); });
   const panel = document.createElement("div");
-  panel.style.cssText =
-    "max-width:1100px;width:94%;max-height:86vh;overflow:auto;background:#10161d;" +
-    "border:1px solid #2a3b4a;border-radius:12px;color:#d6e1ea;padding:14px;" +
-    "box-shadow:0 30px 70px rgba(0,0,0,.45);";
-  overlay.appendChild(panel);
-  document.body.appendChild(overlay);
+  panel.style.cssText = "max-width:1100px;width:94%;max-height:86vh;overflow:auto;background:#10161d;border:1px solid #2a3b4a;border-radius:12px;color:#d6e1ea;padding:14px;box-shadow:0 30px 70px rgba(0,0,0,.45);";
+  overlay.appendChild(panel); document.body.appendChild(overlay);
   return { host:panel, isOverlay:true, close:()=>overlay.remove() };
 }
 
-/* ---------- App-Ops APIs sicher laden ---------- */
 async function loadAppOps(){
   try{
     const m = await import("./appops.js?v="+Date.now());
@@ -89,20 +81,17 @@ async function loadAppOps(){
 /* ---------- öffentlich ---------- */
 export async function openAppOps(){
   const { host, isOverlay, close } = ensurePanelHost();
-  host.innerHTML = "";
-  if (!isOverlay) host.classList.remove("hidden");
+  host.innerHTML = ""; if (!isOverlay) host.classList.remove("hidden");
 
   const head = buildHeader("App-Ops (Optimierer) — Smart Mode", close);
   host.append(head);
 
-  // „Preflight“-Button im Header
+  // Preflight direkt aus Smart-Ops öffnen
   head.querySelector("#btnPref").onclick = async()=>{
     try{ const m = await import("./preflight.js?v="+Date.now()); m.diagnose(); }catch{}
   };
 
-  const body = document.createElement("div");
-  body.className = "panel-body";
-  host.append(body);
+  const body = document.createElement("div"); body.className = "panel-body"; host.append(body);
 
   const { startCollectors, getAppOpsSnapshot, runModuleMatrix, generateOps, getMdcCodes } = await loadAppOps();
   try{ startCollectors(); }catch{}
@@ -110,11 +99,9 @@ export async function openAppOps(){
   // Performance
   {
     const { box, copyBtn } = section("Performance");
-    const s = getAppOpsSnapshot();
-    const codes = getMdcCodes();
+    const s = getAppOpsSnapshot(); const codes = getMdcCodes();
     copyBtn.style.visibility="visible";
     copyBtn.onclick = async()=>{ try{ await navigator.clipboard.writeText(codes.perf); copyBtn.textContent="Kopiert ✓"; setTimeout(()=>copyBtn.textContent="Code kopieren",1200);}catch{} };
-
     box.append(
       row("FPS (aktuell / Ø)", `<b>${fmt(s.perf.fpsNow)}</b> / <b>${fmt(s.perf.fpsAvg)}</b>`),
       row("Jank (Frames >50ms)", `${fmt(s.perf.jank)} · Summe ~${fmt(s.perf.jankMs)}ms`),
@@ -127,30 +114,24 @@ export async function openAppOps(){
   // Timings
   {
     const { box, copyBtn } = section("Timings (pro Frame, ms – EMA)");
-    const t = (getAppOpsSnapshot()?.timings) || {};
-    const codes = getMdcCodes();
+    const t = (getAppOpsSnapshot()?.timings) || {}; const codes = getMdcCodes();
     copyBtn.style.visibility="visible";
     copyBtn.onclick = async()=>{ try{ await navigator.clipboard.writeText(codes.timings); copyBtn.textContent="Kopiert ✓"; setTimeout(()=>copyBtn.textContent="Code kopieren",1200);}catch{} };
-
     const table=document.createElement("div");
     table.innerHTML = `
       <div class="row"><span>Entities</span><span><b>${fmt(t.ent)}</b> ms</span></div>
       <div class="row"><span>Reproduction</span><span><b>${fmt(t.repro)}</b> ms</span></div>
       <div class="row"><span>Food</span><span><b>${fmt(t.food)}</b> ms</span></div>
-      <div class="row"><span>Draw</span><span><b>${fmt(t.draw)}</b> ms</span></div>
-    `;
-    box.append(table);
-    body.append(box);
+      <div class="row"><span>Draw</span><span><b>${fmt(t.draw)}</b> ms</span></div>`;
+    box.append(table); body.append(box);
   }
 
   // Layout
   {
     const { box, copyBtn } = section("Layout / Topbar");
-    const s = getAppOpsSnapshot();
-    const codes = getMdcCodes();
+    const s = getAppOpsSnapshot(); const codes = getMdcCodes();
     copyBtn.style.visibility="visible";
     copyBtn.onclick = async()=>{ try{ await navigator.clipboard.writeText(codes.layout); copyBtn.textContent="Kopiert ✓"; setTimeout(()=>copyBtn.textContent="Code kopieren",1200);}catch{} };
-
     box.append(
       row("Reflow-Zähler", `${fmt(s.layout?.reflows)}`),
       row("Höhenverlauf", `${(s.layout?.heights||[]).join(" → ") || "–"}`)
@@ -161,11 +142,9 @@ export async function openAppOps(){
   // Ressourcen
   {
     const { box, copyBtn } = section("Ressourcen (größte Assets)");
-    const s = getAppOpsSnapshot();
-    const codes = getMdcCodes();
+    const s = getAppOpsSnapshot(); const codes = getMdcCodes();
     copyBtn.style.visibility="visible";
     copyBtn.onclick = async()=>{ try{ await navigator.clipboard.writeText(codes.res); copyBtn.textContent="Kopiert ✓"; setTimeout(()=>copyBtn.textContent="Code kopieren",1200);}catch{} };
-
     const list=document.createElement("div");
     for(const r of (s.resources?.largest||[])){
       const line=document.createElement("div"); line.className="row";
@@ -173,40 +152,35 @@ export async function openAppOps(){
       list.append(line);
     }
     if(!list.children.length) list.textContent="–";
-    box.append(list);
-    body.append(box);
+    box.append(list); body.append(box);
   }
 
-  // Module – **Preflight-äquivalent** (kein separater eigener Check mehr)
+  // Module (Preflight-äquivalent)
   {
     const { box } = section("Module / Exporte");
     const btnRun=document.createElement("button"); btnRun.textContent="Module prüfen (Preflight)";
     const pre=document.createElement("pre"); pre.style.whiteSpace="pre-wrap"; pre.style.marginTop="8px";
     btnRun.onclick=async()=>{ pre.textContent=await runModuleMatrix(); };
-    box.append(btnRun, pre);
-    body.append(box);
+    box.append(btnRun, pre); body.append(box);
   }
 
-  // OPS + Gesamt-Maschinencode
+  // OPS + Gesamtmaschine
   {
     const { box } = section("Vorschläge (MDC-OPS)");
     const opsJSON = generateOps();
     box.append(codeField(opsJSON));
-
-    const codes = document.createElement("div");
-    codes.style.marginTop="8px";
-    const all = (await import("./appops.js?v="+Date.now())).getMdcCodes?.() || {};
-    codes.append(codeField(all.all||""));
+    const codes = document.createElement("div"); codes.style.marginTop="8px";
+    try{
+      const all = (await import("./appops.js?v="+Date.now())).getMdcCodes?.() || {};
+      codes.append(codeField(all.all||""));
+    }catch{ codes.append(codeField("// getMdcCodes() nicht verfügbar")); }
     box.append(codes);
-
     body.append(box);
   }
 
-  // Refresh
   const footer=document.createElement("div");
   Object.assign(footer.style,{display:"flex",gap:"8px",marginTop:"8px"});
   const btnRefresh=document.createElement("button"); btnRefresh.textContent="Aktualisieren";
   btnRefresh.onclick=()=> openAppOps();
-  footer.append(btnRefresh);
-  body.append(footer);
+  footer.append(btnRefresh); body.append(footer);
 }

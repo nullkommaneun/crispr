@@ -181,7 +181,7 @@ function step(dt, tSec) {
       food: Math.round(p.food || 0),
       draw: Math.round(p.draw || 0)
     });
-  } catch (e) {
+  } catch {
     // Telemetrie darf nie den Loop stören
   }
 
