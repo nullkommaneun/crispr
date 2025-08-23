@@ -1,101 +1,31 @@
-<!doctype html>
-<html lang="de">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>CRISPR Genetics Lab</title>
-  <link rel="stylesheet" href="./style.css" />
-</head>
-<body>
-  <!-- Topbar -->
-  <div id="topbar" class="topbar">
-    <div class="toolbar">
-      <span class="group-label">Simulation</span>
-      <button id="btnStart">Start</button>
-      <button id="btnPause">Pause</button>
-      <button id="btnReset">Reset</button>
+<script type="module">
+(async () => {
+  const q = new URLSearchParams(location.search);
+  const wantPF = q.get('pf') === '1' || location.hash === '#pf';
+  if (!wantPF) return;
 
-      <span class="sep"></span>
-      <span class="group-label">Tempo</span>
-      <button data-ts="1">×1</button>
-      <button data-ts="5">×5</button>
-      <button data-ts="10">×10</button>
-      <button data-ts="50">×50</button>
+  // 1) SW & Cache entschärfen (iOS/Safari vermeidet sonst dynamische Import-Hänger)
+  try {
+    if ('serviceWorker' in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      for (const r of regs) await r.unregister();
+    }
+    if (window.caches) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map(k => caches.delete(k)));
+    }
+  } catch {}
 
-      <span class="sep"></span>
-      <label><input id="chkPerf" type="checkbox" /> Perf-Modus</label>
+  // 2) Engine-Start unterbinden, bis Preflight läuft
+  window.__NO_BOOT = true;
+  window.__suppressBootGuard = true;  // kein rotes Boot-Overlay
 
-      <span class="flex"></span>
-
-      <button id="btnEditor">CRISPR-Editor</button>
-      <button id="btnEnv">Umwelt</button>
-      <button id="btnAppOps">App-Ops</button>
-      <button id="btnDiag">Diagnose</button>
-    </div>
-
-    <div class="toolbar toolbar-params">
-      <span class="group-label">Parameter</span>
-      <label class="slider">
-        <span>Mutation&nbsp;%</span>
-        <input id="sliderMutation" type="range" min="0" max="30" step="1" value="8" />
-      </label>
-      <label class="slider">
-        <span>Nahrung/s</span>
-        <input id="sliderFood" type="range" min="0" max="12" step="0.5" value="6" />
-      </label>
-    </div>
-  </div>
-
-  <!-- Canvas -->
-  <main id="main">
-    <canvas id="scene" width="1280" height="720"></canvas>
-  </main>
-
-  <!-- Panel-Host für Editor/Preflight/App-Ops -->
-  <div id="diagPanel" class="panel hidden"></div>
-
-  <!-- Bootstrap (lädt engine.js und überwacht Boot) -->
-  <script type="module" src="./bootstrap.js"></script>
-
-  <!-- UI-Wiring (bewusst schlank & robust) -->
-  <script type="module">
-    import * as engine from "./engine.js";
-    import * as reproduction from "./reproduction.js";
-    import * as food from "./food.js";
-    import { openEditor } from "./editor.js";
-    import { openEnvPanel } from "./environment.js";
-    import { openAppOps } from "./appops_panel.js";
-    import { diagnose } from "./preflight.js";
-
-    // Buttons
-    const $ = id => document.getElementById(id);
-    $("btnStart").onclick = () => engine.start();
-    $("btnPause").onclick = () => engine.pause();
-    $("btnReset").onclick = () => engine.reset();
-
-    // Timescale Buttons
-    document.querySelectorAll('button[data-ts]').forEach(btn=>{
-      btn.onclick = ()=> engine.setTimescale(+btn.getAttribute('data-ts'));
-    });
-
-    // Perf Mode
-    $("chkPerf").onchange = (e)=> engine.setPerfMode(!!e.target.checked);
-
-    // Slider
-    $("sliderMutation").oninput = (e)=> reproduction.setMutationRate( +e.target.value|0 );
-    $("sliderFood").oninput     = (e)=> food.setSpawnRate( +e.target.value || 0 );
-
-    // Tools / Panels
-    $("btnEditor").onclick = ()=> openEditor();
-    $("btnEnv").onclick    = ()=> openEnvPanel();
-    $("btnAppOps").onclick = ()=> openAppOps();
-    $("btnDiag").onclick   = ()=> diagnose();
-
-    // Komfort: Diagnose im Fenster verfügbar
-    window.openDiag = diagnose;
-
-    // initiale UI → Engine liest beim boot() die aktuellen Slider-Werte nochmal ein
-    engine.setTimescale(1);
-  </script>
-</body>
-</html>
+  // 3) Preflight laden und starten (ohne Cache)
+  try {
+    const m = await import('./preflight.js?ts=' + Date.now());
+    await m.diagnose();
+  } catch (e) {
+    alert('Preflight konnte nicht geladen werden:\n' + (e?.message || e));
+  }
+})();
+</script>
