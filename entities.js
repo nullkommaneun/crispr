@@ -1,6 +1,6 @@
 // entities.js — Zellen- & Weltzustand, Bewegung/Sensing, Energie & Tod
 // Exports: setWorldSize, createAdamAndEve, step, getCells, getFoodItems, applyEnvironment
-// (zusätzlich: spawnCell, spawnFoodAt – hilfreiche öffentliche Helfer)
+// Hilfs-Exports: spawnCell, spawnFoodAt
 
 import { getAction, afterStep, initDrives } from "./drives.js";
 
@@ -29,23 +29,31 @@ const E_FOOD = 12;              // Energie pro Partikel
 const DEATH_YIELD = 0.5;        // Anteil Restenergie → Food bei Tod
 const DEATH_SPREAD = 12;        // Streuung beim Drop (px)
 
-// Reproduktion (für Sanity & Anzeige, eigentliche Koppelung in reproduction.js)
-const R_PAIR = 32;              // Paarungsdistanz (Anzeige/Stop-Hilfe)
-const AGE_MATURE = 8;           // s, geschlechtsreif
+// Reproduktion / Anzeige
+const R_PAIR = 32;              // Paarungsdistanz (Stop-Hilfe)
+const AGE_MATURE = 8;           // s
 
-// IDs
+// IDs & Namen
 let NEXT_ID = 1;
+let NAME_SEQ = 3;               // fortlaufende #Nummern ab #3
+
+/* --------------------- Start-Push (Adam/Eva + Kinder) ------------------- */
+const START_PUSH = {
+  active: false,
+  baseSimT: null,             // tSec bei erstem step
+  events: [],                 // {offset, parentId}
+  nextIdx: 0,
+  sexFlip: 0                  // alternierende Geschlechter
+};
 
 /* ------------------------------ Helpers ------------------------------- */
 const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
-const lerp  = (a,b,t)=>a+(b-a)*t;
 const rnd   = (a,b)=>a+Math.random()*(b-a);
 const len2  = (dx,dy)=>dx*dx+dy*dy;
 const len   = (dx,dy)=>Math.sqrt(len2(dx,dy));
-const norm01 = g => clamp((g+1)*0.5, 0, 1); // [-1,1] -> [0,1]
+const norm01 = g => clamp((g+1)*0.5, 0, 1);
 
 function deriveFromGenome(g){
-  // Robust gegen fehlende Keys
   const EFF = clamp(+g?.EFF || 0, -1, +1);
   const MET = clamp(+g?.MET || 0, -1, +1);
   const GRO = clamp(+g?.["GRÖ"] ?? +g?.GRO ?? 0, -1, +1);
@@ -58,11 +66,12 @@ function deriveFromGenome(g){
   return { moveCoeff, basal, eMax, radius };
 }
 
-function makeCell(genome, sex, x, y, energyFrac=0.7){
+function makeCell(genome, sex, x, y, energyFrac=0.7, opts={}){
   const d = deriveFromGenome(genome);
   return {
     id: NEXT_ID++,
-    name: `C${Date.now()%10000}${Math.floor(Math.random()*90+10)}`,
+    name: opts.name ?? `#${NAME_SEQ++}`,
+    stammId: opts.stammId ?? 0,
     sex: sex || (Math.random()<0.5?'M':'F'),
     pos:{x:x|0, y:y|0},
     vel:{x:0, y:0},
@@ -86,8 +95,8 @@ function makeCell(genome, sex, x, y, energyFrac=0.7){
 }
 
 /* ------------------------- Öffentliche Helfer ------------------------- */
-export function spawnCell(genome, sex, x, y, energyFrac=0.5){
-  CELLS.push(makeCell(genome, sex, x, y, energyFrac));
+export function spawnCell(genome, sex, x, y, energyFrac=0.5, opts={}){
+  CELLS.push(makeCell(genome, sex, x, y, energyFrac, opts));
 }
 export function spawnFoodAt(x, y, n=1, spread=DEATH_SPREAD){
   for(let i=0;i<n;i++){
@@ -102,13 +111,27 @@ export function getFoodItems(){ return FOODS; }
 export function applyEnvironment(_env){ /* aktuell keine globalen Felder */ }
 
 export function createAdamAndEve(){
-  if (!CELLS.length){
-    initDrives(); // einmalig sicherstellen
-    const g0 = { EFF:0, MET:0, ["GRÖ"]:0, TEM:0, SCH:0 };
-    const ax = rnd(0.2*W, 0.4*W), ay = rnd(0.3*H, 0.7*H);
-    const bx = rnd(0.6*W, 0.8*W), by = rnd(0.3*H, 0.7*H);
-    CELLS.push(makeCell(g0, 'M', ax, ay, 0.75));
-    CELLS.push(makeCell(g0, 'F', bx, by, 0.75));
+  if (CELLS.length) return;
+
+  initDrives();
+  NAME_SEQ = 3;               // Nummerierung ab #3
+  START_PUSH.active   = true;
+  START_PUSH.baseSimT = null;
+  START_PUSH.events   = [];
+  START_PUSH.nextIdx  = 0;
+  START_PUSH.sexFlip  = 0;
+
+  // nahe beieinander mittig platzieren
+  const cx = W*0.5, cy = H*0.5;
+  const ADAM = makeCell({EFF:0,MET:0,["GRÖ"]:0,TEM:0,SCH:0}, 'M', cx-12, cy, 0.75, {name:"Adam", stammId:1});
+  const EVA  = makeCell({EFF:0,MET:0,["GRÖ"]:0,TEM:0,SCH:0}, 'F', cx+12, cy, 0.75, {name:"Eva",  stammId:2});
+  CELLS.push(ADAM, EVA);
+
+  // je 5 Kinder, alle 0.75s — Start-Push-Plan
+  const OFF = 0.75;
+  for (let k=0;k<5;k++){
+    START_PUSH.events.push({ offset: OFF*k, parentId: ADAM.id });
+    START_PUSH.events.push({ offset: OFF*k, parentId: EVA.id  });
   }
 }
 
@@ -117,7 +140,7 @@ function findNearestFood(x,y, maxR=S_FOOD){
   const r2 = maxR*maxR;
   let bestI=-1, bestD2=r2+1;
   for(let i=FOODS.length-1; i>=0; i--){
-    const f=FOODS[i]; const d2 = len2(f.x-x, f.y-y);
+    const f=FOODS[i]; const d2 = (f.x-x)*(f.x-x) + (f.y-y)*(f.y-y);
     if(d2 < bestD2 && d2 <= r2) { bestD2=d2; bestI=i; }
   }
   if(bestI<0) return null;
@@ -131,10 +154,10 @@ function findNearestMate(me, maxR=S_MATE){
     const c = CELLS[i];
     if (c===me) continue;
     if (c.sex === me.sex) continue;
-    // einfache Gatings (sanity); drives macht den Rest energetisch
     if (c.age < AGE_MATURE || me.age < AGE_MATURE) continue;
     if (c.cooldown > 0 || me.cooldown > 0) continue;
-    const d2 = len2(c.pos.x-me.pos.x, c.pos.y-me.pos.y);
+    const dx=c.pos.x-me.pos.x, dy=c.pos.y-me.pos.y;
+    const d2=dx*dx+dy*dy;
     if(d2 < bestD2 && d2 <= r2){ bestD2=d2; best=c; }
   }
   if (!best) return null;
@@ -144,10 +167,8 @@ function findNearestMate(me, maxR=S_MATE){
 /* ------------------------------ Aufnahme ----------------------------- */
 function tryEat(c){
   if (c.eatCd > 0) return;
-  // Schnellprüfung: naheliegendes Food suchen
   const f = findNearestFood(c.pos.x, c.pos.y, R_EAT);
   if (!f) return;
-  // aufheben (ein Partikel)
   FOODS.splice(f.index, 1);
   c.energy = Math.min(c.eMax, c.energy + E_FOOD);
   c.eatCd = EAT_COOLDOWN;
@@ -155,12 +176,10 @@ function tryEat(c){
 
 /* --------------------------- Integration Schritt ---------------------- */
 function integrate(c, dt, desiredVx, desiredVy){
-  // Limp-Mode & Maxspeed
   const limp = (c.energy <= LIMP_E);
   const vmax = (limp ? LIMP_FACTOR : 1) * V_MAX;
 
-  // gewünschte Geschwindigkeit als Richtung * vmax
-  const dLen = len(desiredVx, desiredVy);
+  const dLen = Math.hypot(desiredVx, desiredVy);
   let vx=0, vy=0;
   if (dLen > 1e-6){
     vx = desiredVx / dLen * vmax;
@@ -169,17 +188,14 @@ function integrate(c, dt, desiredVx, desiredVy){
   c.vel.x = vx;
   c.vel.y = vy;
 
-  // Position
   c.pos.x += c.vel.x * dt;
   c.pos.y += c.vel.y * dt;
 
-  // Ränder: Bounce
   if (c.pos.x < c.radius){ c.pos.x = c.radius; c.vel.x = Math.abs(c.vel.x); }
   if (c.pos.x > W - c.radius){ c.pos.x = W - c.radius; c.vel.x = -Math.abs(c.vel.x); }
   if (c.pos.y < c.radius){ c.pos.y = c.radius; c.vel.y = Math.abs(c.vel.y); }
   if (c.pos.y > H - c.radius){ c.pos.y = H - c.radius; c.vel.y = -Math.abs(c.vel.y); }
 
-  // Energieverbrauch (basal + bewegung)
   const v2 = c.vel.x*c.vel.x + c.vel.y*c.vel.y;
   c.energy -= dt * (c.basal + c.moveCoeff * v2);
   c.energy = clamp(c.energy, 0, c.eMax);
@@ -187,23 +203,54 @@ function integrate(c, dt, desiredVx, desiredVy){
 
 /* ------------------------------ Tod / Drop ---------------------------- */
 function dieAndDrop(c){
-  // Futter aus Restenergie
   const n = Math.min(12, Math.max(0, Math.round((c.energy * DEATH_YIELD) / E_FOOD)));
   if (n > 0) spawnFoodAt(c.pos.x, c.pos.y, n, DEATH_SPREAD);
 }
 
+/* ---------------------- Start-Push Ausführung (sim) -------------------- */
+function doStartPush(tSec){
+  if (!START_PUSH.active) return;
+  if (START_PUSH.baseSimT == null) START_PUSH.baseSimT = tSec;
+  const rel = tSec - START_PUSH.baseSimT;
+
+  while (START_PUSH.nextIdx < START_PUSH.events.length &&
+         START_PUSH.events[START_PUSH.nextIdx].offset <= rel){
+    const ev = START_PUSH.events[START_PUSH.nextIdx++];
+    const parent = CELLS.find(c=>c.id===ev.parentId);
+    if (!parent) continue;
+
+    // Kind nahe am Elternteil, Genome = parent ± kleine Mutation
+    const childGenome = {
+      EFF: clamp(parent.genome.EFF + rnd(-0.05, 0.05), -1, 1),
+      MET: clamp(parent.genome.MET + rnd(-0.05, 0.05), -1, 1),
+      ["GRÖ"]: clamp(parent.genome["GRÖ"] + rnd(-0.05, 0.05), -1, 1),
+      TEM: clamp(parent.genome.TEM + rnd(-0.05, 0.05), -1, 1),
+      SCH: clamp(parent.genome.SCH + rnd(-0.05, 0.05), -1, 1),
+    };
+    const sex = (START_PUSH.sexFlip++ % 2 === 0) ? 'M' : 'F';
+    const px = parent.pos.x + rnd(-8, 8);
+    const py = parent.pos.y + rnd(-8, 8);
+
+    spawnCell(childGenome, sex, px, py, 0.4, { stammId: parent.stammId });
+  }
+
+  if (START_PUSH.nextIdx >= START_PUSH.events.length){
+    START_PUSH.active = false;
+  }
+}
+
 /* --------------------------------- STEP -------------------------------- */
 export function step(dt, _env, tSec){
-  // Zähler & Cooldowns
+  // Start-Push ggf. abarbeiten (simulation time)
+  doStartPush(tSec);
+
   for (let i=CELLS.length-1; i>=0; i--){
     const c = CELLS[i];
 
-    // Aging / Cooldowns
     c.age += dt;
     if (c.cooldown > 0) c.cooldown = Math.max(0, c.cooldown - dt);
     if (c.eatCd    > 0) c.eatCd    = Math.max(0, c.eatCd - dt);
 
-    // Sanity: Tod durch Alter oder Energie
     if (c.age >= AGE_MAX || c.energy <= 0){
       dieAndDrop(c);
       CELLS.splice(i,1);
@@ -216,15 +263,14 @@ export function step(dt, _env, tSec){
 
     // Drives-Entscheidung
     const act = getAction(c, tSec, {
-      food: !!foodN,             // bool
-      mate: !!mateN?.mate,       // bool
-      mateDist: mateN?.d ?? null // Zahl oder null
+      food: !!foodN,
+      mate: !!mateN?.mate,
+      mateDist: mateN?.d ?? null
     });
 
-    // Zielrichtung setzen
+    // Zielrichtung
     let tx = 0, ty = 0;
     if (act === "mate" && mateN){
-      // sanft auf Partner zusteuern, beim Kontakt leicht abbremsen
       const dx = (mateN.mate.pos.x - c.pos.x);
       const dy = (mateN.mate.pos.y - c.pos.y);
       const d  = Math.max(1e-6, mateN.d);
@@ -238,24 +284,14 @@ export function step(dt, _env, tSec){
       const scale = stop ? 0.25 : 1.0;
       tx = dx * scale; ty = dy * scale;
     } else {
-      // Wander: leichte Rauschdrift + sehr sanftes Zurück in Bounds
       tx = (Math.random()-0.5)*0.6;
       ty = (Math.random()-0.5)*0.6;
-      // weiches Zentrum
       tx += (W*0.5 - c.pos.x) * 0.0006;
       ty += (H*0.5 - c.pos.y) * 0.0006;
     }
 
-    // Integration & Energie
     integrate(c, dt, tx, ty);
-
-    // Essen (nach dem Bewegen, wenn nahe dran)
     tryEat(c);
-
-    // Feedback-Hook (optional analytics)
     afterStep(c, dt, { act });
   }
 }
-
-/* ------------------------- Debug/Dev-Helfer (optional) ---------------- */
-// (keine weiteren Exports nötig, API bleibt kompatibel)
