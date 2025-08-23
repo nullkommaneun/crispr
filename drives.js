@@ -1,12 +1,16 @@
 // drives.js — Policy: Mate-first (Pop-aware Gating + Hysterese)
 // Bietet: initDrives, setTracing, getDrivesSnapshot, getTraceText, getAction, afterStep
 
+import { on } from "./event.js";
+import { CONFIG } from "./config.js";
+
 let TRACE = false;
+let SUBBED = false;
 
 const CFG = {
-  E_ENTER_MATE: 0.50,   // Energie-Schwelle zum Einsteigen (Fraktion 0..1)
+  E_ENTER_MATE: 0.50,   // Energie-Schwelle zum Einsteigen (0..1)
   E_EXIT_MATE:  0.40,   // Energie-Schwelle zum Aussteigen
-  MATE_STICKY_SEC: 8.0  // im Mate-Modus „kleben“
+  MATE_STICKY_SEC: 8.0  // Im Mate-Modus „kleben“
 };
 
 // leichte Telemetrie
@@ -22,22 +26,34 @@ function ensureDS(c){
   return c.__drive;
 }
 
-export function initDrives(){ /* noop */ }
-export function setTracing(on){ TRACE = !!on; }
+export function initDrives(){
+  if (SUBBED) return;
+  SUBBED = true;
+  // Jede Geburt als „erfolgreiches Duell“ zählen
+  on("cells:born", () => { MISC.duels++; MISC.wins++; });
+}
+
+export function setTracing(onFlag){ TRACE = !!onFlag; }
 
 export function getDrivesSnapshot(){
+  // Parameter, die Dein Diagnose-Panel erwartet
+  const params = {
+    K_DIST: 0.05,                                            // Distanzabzug in chooseMate (entities)
+    R_PAIR: CONFIG?.cell?.pairDistance ?? 28,                // Basis-Pair-Radius
+    WIN:    [MISC.wins, MISC.duels]                          // [wins, duels]
+  };
   return {
     misc: { ...MISC },
-    cfg:  { E_ENTER_MATE: CFG.E_ENTER_MATE, E_EXIT_MATE: CFG.E_EXIT_MATE, MATE_STICKY_SEC: CFG.MATE_STICKY_SEC }
+    cfg:  { E_ENTER_MATE: CFG.E_ENTER_MATE, E_EXIT_MATE: CFG.E_EXIT_MATE, MATE_STICKY_SEC: CFG.MATE_STICKY_SEC },
+    params
   };
 }
 
-// WICHTIG: kompakte Ein-Zeilen-Zusammenfassung für Preflight
+// kompakter Ein-Zeilen-Trace für Preflight
 export function getTraceText(){
   const m = MISC, c = CFG;
-  return `mate-first | enter=${(c.E_ENTER_MATE*100)|0}% exit=${(c.E_EXIT_MATE*100)|0}% sticky=${c.MATE_STICKY_SEC}s | ` +
-         `choose: mate=${m.chooseMate} food=${m.chooseFood} wander=${m.chooseWander} stick=${m.stickMate} | ` +
-         `duels=${m.duels} wins=${m.wins}`;
+  return `mate-first | enter=${(c.E_ENTER_MATE*100)|0}% exit=${(c.E_EXIT_MATE*100)|0}% sticky=${c.MATE_STICKY_SEC}s | `
+       + `choose: M=${m.chooseMate} F=${m.chooseFood} W=${m.chooseWander} stick=${m.stickMate} | duels=${m.duels} wins=${m.wins}`;
 }
 
 // Hauptentscheidung
@@ -49,9 +65,9 @@ export function getAction(c, t, ctx){
   const hasFood = !!ctx.food;
   const hasMate = !!ctx.mate && (ctx.mateDist != null);
 
-  // Energieanteil (exakt von entities geliefert), falls nicht: robuste Notfallnormierung
-  const eFrac = typeof ctx.eFrac === "number" ? ctx.eFrac :
-                Math.max(0, Math.min(1, (c.energy||0)/100));
+  // Energieanteil (exakt von entities geliefert) – Fallback, falls nicht vorhanden
+  const eFrac = typeof ctx.eFrac === "number" ? ctx.eFrac
+                : Math.max(0, Math.min(1, (c.energy||0)/100));
 
   // kleine Population → Schwellen absenken
   const popN = ctx.popN || 0;
@@ -59,7 +75,7 @@ export function getAction(c, t, ctx){
   let exit  = CFG.E_EXIT_MATE;
   if (popN <= 12){ enter = Math.max(0.35, enter - 0.10); exit = Math.max(0.25, exit - 0.15); }
 
-  // Hysterese (im Mate-Modus bleiben, solange Energie nicht unter Exit fällt und Stickyzeit läuft)
+  // Hysterese: im Mate-Modus bleiben
   if (ds.mode === "mate"){
     const stick = (now - (ds.modeSince||0)) <= CFG.MATE_STICKY_SEC;
     if (eFrac >= exit && stick){
@@ -88,5 +104,5 @@ export function getAction(c, t, ctx){
   return "wander";
 }
 
-// Platzhalter – hier könnte man Paarungserfolg zählen (wins++)
+// Platzhalter – hier könntest du künftig Paarungserfolge differenziert zählen
 export function afterStep(/* c, dt, ctx */){ /* noop */ }
