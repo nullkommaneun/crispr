@@ -1,84 +1,103 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="de">
 <head>
   <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover,user-scalable=no"/>
+  <meta name="theme-color" content="#0b1218"/>
   <title>CRISPR Genetics Lab</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-  <link rel="stylesheet" href="./style.css">
-  <!-- TensorFlow.js (für Prognose im Editor) -->
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.16.0/dist/tf.min.js"></script>
+  <link rel="stylesheet" href="./style.css"/>
+  <style>
+    :root{color-scheme:dark}
+    body{margin:0;background:#0b1218;color:#d6e1ea;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto}
+    .bar{position:sticky;top:0;z-index:60;display:grid;gap:8px;padding:8px 12px;
+         background:linear-gradient(to bottom,rgba(9,14,20,.95),rgba(9,14,20,.85));
+         border-bottom:1px solid rgba(70,96,120,.25);backdrop-filter:blur(6px)}
+    .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+    .sep{width:1px;height:22px;background:rgba(90,120,150,.35);margin:0 6px}
+    .bar button{background:#243241;border:1px solid #3a5166;color:#cfe6ff;border-radius:10px;padding:6px 10px;cursor:pointer}
+    .bar button:hover{filter:brightness(1.12)}
+    .bar input[type=range]{width:180px}
+    #scene{display:block;width:min(1400px,94vw);height:min(72vh,78svh);margin:10px auto 18px;background:#0f1720;
+           border:1px solid rgba(70,96,120,.25);border-radius:14px;box-shadow:inset 0 6px 30px rgba(0,0,0,.35)}
+    *{touch-action:manipulation}
+  </style>
 </head>
 <body>
-  <div id="topbar">
-    <div class="controls">
-      <div class="group">
-        <span class="group-title">Simulation</span>
-        <button id="btnStart">Start</button>
-        <button id="btnPause">Pause</button>
-        <button id="btnReset">Reset</button>
-      </div>
 
-      <div class="group">
-        <span class="group-title">Tempo</span>
-        <button id="btnSpeed">Tempo ×1</button>
-        <label title="Performance-Modus: Grafik & Nebenrechnungen reduziert">
-          <input id="perfmode" type="checkbox"> Perf-Modus
-        </label>
-      </div>
-
-      <div class="group">
-        <span class="group-title">Parameter</span>
-        <label>Mutation %
-          <input id="mutation" type="range" min="0" max="30" step="1" value="5">
-          <span id="mutVal" class="value-badge">5%</span>
-        </label>
-        <label>Nahrung/s
-          <input id="foodrate" type="range" min="0" max="40" step="1" value="6">
-          <span id="foodVal" class="value-badge">6/s</span>
-        </label>
-      </div>
-
-      <div class="group">
-        <span class="group-title">Werkzeuge</span>
-        <button id="btnEditor">CRISPR-Editor</button>
-        <button id="btnGenea">Stammbaum</button>
-        <button id="btnDummy">Dummy</button>
-        <button id="btnDiag">Diagnose</button>
-        <button id="btnAppOps">App-Ops</button>
-      </div>
-    </div>
-
-    <div id="ticker"></div>
+<header class="bar">
+  <div class="row">
+    <strong>Simulation</strong>
+    <button id="btnStart">Start</button>
+    <button id="btnPause">Pause</button>
+    <button id="btnReset">Reset</button>
+    <span>Tempo</span>
+    <button data-ts="1">×1</button><button data-ts="5">×5</button>
+    <button data-ts="10">×10</button><button data-ts="50">×50</button>
+    <span class="sep"></span>
+    <label><input id="chkPerf" type="checkbox"/> Perf-Modus</label>
+    <span class="sep"></span>
+    <button id="btnEditor">CRISPR-Editor</button>
+    <button id="btnEnv">Umwelt</button>
+    <button id="btnGene">Stammbaum</button>
+    <button id="btnDummy">Dummy</button>
+    <button id="btnAppOps">App-Ops</button>
+    <button id="btnDiag">Diagnose</button>
   </div>
-
-  <div id="worldWrap">
-    <canvas id="world" width="1024" height="640"></canvas>
+  <div class="row">
+    <span>Parameter</span>
+    <label>Mutation %
+      <input id="sliderMutation" type="range" min="0" max="30" step="1" value="8"/>
+      <span id="lblMutation">8&nbsp;%</span>
+    </label>
+    <label>Nahrung/s
+      <input id="sliderFood" type="range" min="0" max="12" step="0.5" value="6"/>
+      <span id="lblFood">6/s</span>
+    </label>
   </div>
+</header>
 
-  <div id="editorPanel" class="panel hidden"></div>
-  <div id="envPanel" class="panel hidden"></div>
-  <div id="dummyPanel" class="panel hidden"></div>
-  <div id="diagPanel" class="panel hidden"></div>
+<main>
+  <canvas id="scene" width="1280" height="720" aria-label="Simulationsfeld"></canvas>
+</main>
 
-  <div id="errorOverlay" class="hidden">
-    <div class="errorCard">
-      <h3>Fehler</h3>
-      <pre id="errorText"></pre>
-      <button id="errorClose">Schließen</button>
-    </div>
-  </div>
+<!-- Diagnose (manuell) -->
+<script type="module" src="./preflight.js"></script>
 
-  <!-- Preflight separat (damit ?pf=1 immer funktioniert) -->
-  <script type="module" src="./preflight.js"></script>
-  <!-- Boot-Loader -->
-  <script type="module" src="./bootstrap.js"></script>
-  <!-- Service Worker Registrierung (PWA) -->
-  <script>
-    if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => {
-        navigator.serviceWorker.register('./sw.js').catch(()=>{});
-      });
-    }
-  </script>
+<!-- Boot & UI-Wiring (robust + Cache-Buster für engine.js) -->
+<script type="module">
+  const V = '?v=' + Date.now();
+  const eng = await import('./engine.js'+V).catch(e=>{ console.error('engine import',e); });
+  const { boot, setTimescale } = eng || {};
+
+  const run = ()=> { try{ boot?.(); }catch(e){ console.error('[boot]', e); } };
+  (document.readyState==='loading')
+    ? document.addEventListener('DOMContentLoaded', run, {once:true})
+    : run();
+
+  // Tempo
+  document.querySelectorAll('button[data-ts]').forEach(b=>b.addEventListener('click',()=>setTimescale?.(+b.dataset.ts||1)));
+  // Start/Pause/Reset
+  btnStart.onclick = ()=> import('./engine.js'+V).then(m=>m.start?.());
+  btnPause.onclick = ()=> import('./engine.js'+V).then(m=>m.pause?.());
+  btnReset.onclick = ()=> import('./engine.js'+V).then(m=>m.reset?.());
+  // Perf
+  chkPerf.onchange = (e)=> import('./engine.js'+V).then(m=>m.setPerfMode?.(e.target.checked));
+  // Slider
+  const sMut = sliderMutation, sFood = sliderFood;
+  const lMut = lblMutation,    lFood = lblFood;
+  lMut.textContent = (sMut.value|0)+' %';
+  lFood.textContent = (+sFood.value).toFixed(1).replace('.0','')+'/s';
+  sMut.oninput  = e=> import('./reproduction.js'+V).then(m=>m.setMutationRate?.(e.target.value|0));
+  sFood.oninput = e=> { const v=+e.target.value; lFood.textContent=v.toFixed(1).replace('.0','')+'/s';
+                        import('./food.js'+V).then(m=>m.setSpawnRate?.(v)); };
+
+  // Tools
+  btnEditor.onclick = ()=> import('./editor.js'+V).then(m=>m.openEditor?.());
+  btnEnv.onclick    = ()=> import('./environment.js'+V).then(m=>m.openEnvPanel?.());
+  btnGene.onclick   = ()=> import('./genealogy.js'+V).then(m=>m.openGenealogy?.());
+  btnDummy.onclick  = ()=> import('./dummy.js'+V).then(m=>m.openDummyPanel?.());
+  btnAppOps.onclick = ()=> import('./appops_panel.js'+V).then(m=>m.openAppOps?.());
+  btnDiag.onclick   = ()=> import('./preflight.js'+V).then(m=>m.diagnose?.());
+</script>
 </body>
 </html>

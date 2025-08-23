@@ -1,75 +1,46 @@
-// renderer.js — Canvas-Rendering mit einfachem Culling (nur Sichtbereich + Puffer zeichnen)
+// renderer.js — Minimalzeichner (sichtbar & robust)
+let ctx=null, perf=false;
 
-import { getCells, getFoodItems, worldSize } from "./entities.js";
-import { CONFIG } from "./config.js";
+export function setPerfMode(on){ perf=!!on; }
+function ensureCtx(){
+  if (ctx) return ctx;
+  const c=document.getElementById('scene');
+  ctx = c.getContext('2d', { alpha:false });
+  return ctx;
+}
 
-let perfMode=false;
-export function setPerfMode(on){ perfMode=!!on; }
+export function draw(state){
+  const g=ensureCtx(); if(!g) return;
+  const c=g.canvas, W=c.width, H=c.height;
 
-export function draw(){
-  const canvas = document.getElementById("world");
-  if (!canvas) return;
-  const ctx = canvas.getContext("2d");
-  const { width:W, height:H } = worldSize();
+  // Clear
+  g.fillStyle='#0f1720'; g.fillRect(0,0,W,H);
 
-  // Hintergrund (dezente Grid/Glow – billig)
-  ctx.clearRect(0,0,canvas.width,canvas.height);
-  if (!perfMode){
-    ctx.fillStyle = "rgba(255,255,255,0.02)";
-    for(let x=0; x<canvas.width; x+=30){ ctx.fillRect(x,0,1,canvas.height); }
-    for(let y=0; y<canvas.height; y+=30){ ctx.fillRect(0,y,canvas.width,1); }
+  // Optional: dezentes Grid für Orientierung
+  if (!perf){
+    g.strokeStyle='rgba(80,110,140,.15)'; g.lineWidth=1;
+    for(let x=0;x<W;x+=80){ g.beginPath(); g.moveTo(x,0); g.lineTo(x,H); g.stroke(); }
+    for(let y=0;y<H;y+=80){ g.beginPath(); g.moveTo(0,y); g.lineTo(W,y); g.stroke(); }
   }
 
-  // Sichtbereich (Viewport = Canvas), kleiner Puffer
-  const pad = 24;
-
-  // FOOD (kleine Quadrate/Kreuze, Matrix-Grün)
-  {
-    const food = getFoodItems();
-    ctx.save();
-    ctx.translate(0,0);
-    ctx.strokeStyle = "#2ee56a";
-    ctx.fillStyle   = "#2ee56a";
-    for(const f of food){
-      if (f.x < -pad || f.x > W+pad || f.y < -pad || f.y > H+pad) continue; // culling
-      if (perfMode){
-        ctx.fillRect(f.x-1, f.y-1, 2, 2);
-      }else{
-        ctx.beginPath();
-        ctx.moveTo(f.x-2, f.y); ctx.lineTo(f.x+2, f.y);
-        ctx.moveTo(f.x, f.y-2); ctx.lineTo(f.x, f.y+2);
-        ctx.stroke();
-      }
-    }
-    ctx.restore();
+  // Food (grün, kleine Quadrate)
+  const foods = state?.food || [];
+  g.fillStyle='#44d07a';
+  for (let i=0;i<foods.length;i++){
+    const f=foods[i]; const x=f.x|0, y=f.y|0;
+    g.fillRect(x-2, y-2, 4, 4);
   }
 
-  // CELLS (runde Marker, Geschlechtsfarbe)
-  {
-    const cells = getCells();
-    ctx.save();
-    for(const c of cells){
-      const r = CONFIG.cell.radius*(0.7+0.1*(c.genome.GRÖ));
-      if (c.pos.x < -pad-r || c.pos.x > W+pad+r || c.pos.y < -pad-r || c.pos.y > H+pad+r) continue; // culling
-
-      ctx.beginPath();
-      ctx.fillStyle = c.color || "#27c7ff";
-      ctx.strokeStyle = "rgba(0,0,0,0.35)";
-      ctx.lineWidth = 1;
-      ctx.arc(c.pos.x, c.pos.y, r, 0, Math.PI*2);
-      ctx.fill();
-      if (!perfMode) ctx.stroke();
-
-      if (!perfMode){
-        // dezente Mini-Info: Energie als kleiner Bogen
-        const eFrac = Math.max(0, Math.min(1, c.energy / (CONFIG.cell.energyMax*(1+0.08*(c.genome.GRÖ-5)))));
-        ctx.beginPath();
-        ctx.strokeStyle="rgba(255,255,255,0.35)";
-        ctx.lineWidth=1;
-        ctx.arc(c.pos.x, c.pos.y, r+1.5, -Math.PI/2, -Math.PI/2 + eFrac*2*Math.PI);
-        ctx.stroke();
-      }
+  // Cells (M blau, F pink)
+  const cells = state?.cells || [];
+  for (let i=0;i<cells.length;i++){
+    const c0=cells[i]; const x=c0.pos?.x||0, y=c0.pos?.y||0;
+    const r = Math.max(3, Math.min(10, (c0.genome?.['GRÖ']||5)));
+    g.beginPath(); g.arc(x, y, r, 0, Math.PI*2);
+    g.fillStyle = (c0.sex==='M') ? '#4aa3ff' : '#ff7bc1';
+    g.fill();
+    if (!perf){
+      g.strokeStyle='rgba(255,255,255,.15)'; g.lineWidth=1; g.stroke();
     }
-    ctx.restore();
   }
 }
