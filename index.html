@@ -1,84 +1,113 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="de">
 <head>
   <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, user-scalable=no"
+  />
+  <meta name="theme-color" content="#0b1218" />
   <title>CRISPR Genetics Lab</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-  <link rel="stylesheet" href="./style.css">
-  <!-- TensorFlow.js (für Prognose im Editor) -->
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.16.0/dist/tf.min.js"></script>
+
+  <!-- App-Styles (dein bestehendes style.css) -->
+  <link rel="stylesheet" href="./style.css" />
+
+  <!-- Fallback-Ministyle, falls style.css nicht lädt -->
+  <style>
+    :root { color-scheme: dark; }
+    body { margin:0; background:#0b1218; color:#d6e1ea; font-family: ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Ubuntu; }
+    #topbar {
+      position: sticky; top: 0; z-index: 50;
+      display: grid; grid-template-columns: 1fr auto; gap: 8px;
+      align-items: center;
+      padding: 8px 12px;
+      background: linear-gradient(to bottom, rgba(9,14,20,.95), rgba(9,14,20,.85));
+      border-bottom: 1px solid rgba(70, 96, 120, .25);
+      backdrop-filter: blur(6px);
+    }
+    #topbar .group { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+    #topbar button, #topbar label, #topbar input[type="checkbox"] {
+      font: inherit; color: inherit;
+    }
+    #topbar button {
+      background:#243241; color:#cfe6ff; border:1px solid #3a5166; border-radius:10px;
+      padding:6px 10px; cursor:pointer;
+    }
+    #topbar button:hover { filter: brightness(1.15); }
+    #scene {
+      display:block; width: min(1400px, 94vw); height: min(70vh, 76svh);
+      margin: 10px auto; background: #0f1720;
+      border: 1px solid rgba(70,96,120,.25); border-radius: 14px;
+      box-shadow: 0 6px 30px rgba(0,0,0,.35) inset;
+    }
+    /* iOS: Verhindere page-zoom bei schneller Button-Folge */
+    * { touch-action: manipulation; }
+  </style>
 </head>
 <body>
-  <div id="topbar">
-    <div class="controls">
-      <div class="group">
-        <span class="group-title">Simulation</span>
-        <button id="btnStart">Start</button>
-        <button id="btnPause">Pause</button>
-        <button id="btnReset">Reset</button>
-      </div>
 
-      <div class="group">
-        <span class="group-title">Tempo</span>
-        <button id="btnSpeed">Tempo ×1</button>
-        <label title="Performance-Modus: Grafik & Nebenrechnungen reduziert">
-          <input id="perfmode" type="checkbox"> Perf-Modus
-        </label>
-      </div>
+  <!-- Topbar / Controls (IDs werden in engine.js verdrahtet) -->
+  <header id="topbar" role="banner" aria-label="Top-Leiste">
+    <div class="group" aria-label="Simulation">
+      <strong>Simulation</strong>
+      <button id="btnStart">Start</button>
+      <button id="btnPause">Pause</button>
+      <button id="btnReset">Reset</button>
 
-      <div class="group">
-        <span class="group-title">Parameter</span>
-        <label>Mutation %
-          <input id="mutation" type="range" min="0" max="30" step="1" value="5">
-          <span id="mutVal" class="value-badge">5%</span>
-        </label>
-        <label>Nahrung/s
-          <input id="foodrate" type="range" min="0" max="40" step="1" value="6">
-          <span id="foodVal" class="value-badge">6/s</span>
-        </label>
-      </div>
-
-      <div class="group">
-        <span class="group-title">Werkzeuge</span>
-        <button id="btnEditor">CRISPR-Editor</button>
-        <button id="btnGenea">Stammbaum</button>
-        <button id="btnDummy">Dummy</button>
-        <button id="btnDiag">Diagnose</button>
-        <button id="btnAppOps">App-Ops</button>
-      </div>
+      <!-- Tempo-Hinweis (Timescale steuerst du in deinem UI/JS) -->
+      <span style="margin-left:10px; opacity:.8;">Tempo</span>
+      <!-- Beispiel-Buttons (optional eigenes UI) -->
+      <button data-ts="1"   onclick="window.__setTS?.(1)">×1</button>
+      <button data-ts="5"   onclick="window.__setTS?.(5)">×5</button>
+      <button data-ts="10"  onclick="window.__setTS?.(10)">×10</button>
+      <button data-ts="50"  onclick="window.__setTS?.(50)">×50</button>
     </div>
 
-    <div id="ticker"></div>
-  </div>
-
-  <div id="worldWrap">
-    <canvas id="world" width="1024" height="640"></canvas>
-  </div>
-
-  <div id="editorPanel" class="panel hidden"></div>
-  <div id="envPanel" class="panel hidden"></div>
-  <div id="dummyPanel" class="panel hidden"></div>
-  <div id="diagPanel" class="panel hidden"></div>
-
-  <div id="errorOverlay" class="hidden">
-    <div class="errorCard">
-      <h3>Fehler</h3>
-      <pre id="errorText"></pre>
-      <button id="errorClose">Schließen</button>
+    <div class="group" aria-label="Werkzeuge">
+      <label title="Performance-Modus">
+        <input id="chkPerf" type="checkbox" />
+        Perf-Modus
+      </label>
+      <button id="btnEditor">CRISPR-Editor</button>
+      <button id="btnEnv">Umwelt</button>
+      <button id="btnDiag" onclick="import('./preflight.js').then(m=>m.diagnose())">Diagnose</button>
     </div>
-  </div>
+  </header>
 
-  <!-- Preflight separat (damit ?pf=1 immer funktioniert) -->
+  <!-- Zeichenfläche -->
+  <main role="main">
+    <canvas id="scene" width="1280" height="720" aria-label="Simulationsfeld"></canvas>
+    <noscript>
+      <p style="text-align:center;margin-top:16px">
+        Diese App benötigt JavaScript.
+      </p>
+    </noscript>
+  </main>
+
+  <!-- Preflight/Diagnose – manuell via ?pf=1 oder Button -->
   <script type="module" src="./preflight.js"></script>
-  <!-- Boot-Loader -->
-  <script type="module" src="./bootstrap.js"></script>
-  <!-- Service Worker Registrierung (PWA) -->
-  <script>
-    if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => {
-        navigator.serviceWorker.register('./sw.js').catch(()=>{});
-      });
+
+  <!-- Sauberer Boot-Loader (ruft engine.boot() sicher nach DOM-Ready) -->
+  <script type="module">
+    import { boot, setTimescale } from './engine.js';
+
+    // Optionale kleine Bridge für die Tempo-Buttons im Topbar
+    window.__setTS = (x)=> { try { setTimescale(x); } catch{} };
+
+    const run = () => {
+      try { boot(); }
+      catch (e) {
+        console.error('[boot]', e);
+        // errorManager.js sammelt zusätzlich im window.__runtimeErrors
+      }
+    };
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', run, { once:true });
+    } else {
+      run();
     }
   </script>
+
 </body>
 </html>
