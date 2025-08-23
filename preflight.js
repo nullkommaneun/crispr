@@ -1,30 +1,29 @@
 // preflight.js — Deep-Check + UI-Wiring + Canvas-Probe + MDC-CHK (stand-alone)
 
 const OK='✅ ', NO='❌ ', OPT='⚠️  ';
-const $ = id => document.getElementById(id);
+const $  = id => document.getElementById(id);
 const b64 = s => btoa(unescape(encodeURIComponent(s)));
 let __lastMdc = "";
 
+// ---------- Overlay ----------
 function show(text){
   let w = $('diag-overlay');
   if(!w){
     w = document.createElement('div'); w.id='diag-overlay';
     w.style.cssText='position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.65);display:flex;align-items:flex-start;justify-content:center;padding:48px;';
-    const wrap = document.createElement('div');
+    const wrap=document.createElement('div');
     wrap.style.cssText='max-width:1100px;width:92%;background:#10161d;color:#d6e1ea;border:1px solid #2a3b4a;border-radius:10px;padding:16px;overflow:auto;';
-    const p=document.createElement('pre'); p.id='diag-box'; p.style.whiteSpace='pre-wrap';
-    const bar=document.createElement('div');
-    bar.style.cssText='display:flex;gap:8px;justify-content:flex-end;margin:6px 0 0 0';
+    const pre=document.createElement('pre'); pre.id='diag-box'; pre.style.whiteSpace='pre-wrap';
+    const bar=document.createElement('div'); bar.style.cssText='display:flex;gap:8px;justify-content:flex-end;margin-top:6px;';
     const btnCopy=document.createElement('button'); btnCopy.id='diag-copy'; btnCopy.textContent='MDC kopieren';
     btnCopy.onclick=async()=>{ try{ await navigator.clipboard.writeText(__lastMdc); btnCopy.textContent='Kopiert ✓'; setTimeout(()=>btnCopy.textContent='MDC kopieren',1200);}catch{} };
-    const btnClose=document.createElement('button'); btnClose.textContent='Schließen';
-    btnClose.onclick=()=>w.remove();
-    bar.append(btnCopy,btnClose); wrap.append(p,bar); w.append(wrap); document.body.appendChild(w);
+    const btnClose=document.createElement('button'); btnClose.textContent='Schließen'; btnClose.onclick=()=>w.remove();
+    bar.append(btnCopy,btnClose); wrap.append(pre,bar); w.append(wrap); document.body.appendChild(w);
   }
   $('diag-box').textContent = text;
 }
 
-// Module/Exporte (ohne Genealogy/Genea)
+// ---------- Modul-Liste (ohne Genealogy/Genea) ----------
 const MODS = [
   {p:'./event.js',        want:['on','emit']},
   {p:'./config.js',       want:[], optional:true},
@@ -48,15 +47,25 @@ const MODS = [
   {p:'./diag.js',         want:['openDiagPanel'], optional:true},
 ];
 
-async function checkOne({p,want=[],optional=false}){
+// Import + HTTP/MIME Diagnostik
+async function checkOne({p, want=[], optional=false}){
   try{
     const m = await import(p);
     const miss = want.filter(k => !(k in m));
-    if (miss.length) return { ok:false, line:(optional?OPT:NO)+`${p} · fehlt: ${miss.join(', ')}${optional?' (optional)':''}` };
-    return { ok:true, line:OK+p+' OK' };
+    if (miss.length) return { ok:false, line: (optional?OPT:NO)+`${p} · fehlt: ${miss.join(', ')}${optional?' (optional)':''}` };
+    return { ok:true, line: OK+p+' OK' };
   }catch(e){
-    const msg = String(e?.message || e);
-    return { ok:false, line:(optional?OPT:NO)+`${p} · Import/Parse fehlgeschlagen → ${msg}${optional?' (optional)':''}` };
+    let msg = String(e?.message || e);
+    // zweiter Pfad: Head/GET prüfen
+    try{
+      const resp = await fetch(p, { cache:'no-store' });
+      msg += ` | http ${resp.status} ${resp.statusText || ''}`.trim();
+      const ct = resp.headers.get('content-type');
+      if (ct) msg += ` | ct=${ct}`;
+    }catch(fe){
+      msg += ` | fetch:${String(fe?.message||fe)}`;
+    }
+    return { ok:false, line: (optional?OPT:NO)+`${p} · Import/Parse fehlgeschlagen → ${msg}${optional?' (optional)':''}` };
   }
 }
 export async function runModuleMatrix(){
@@ -64,6 +73,7 @@ export async function runModuleMatrix(){
   return out.join('\n');
 }
 
+// ---------- UI/Wiring ----------
 async function uiCheck(){
   const ui = {
     btnStart:!!$('btnStart'), btnPause:!!$('btnPause'), btnReset:!!$('btnReset'),
@@ -87,6 +97,7 @@ async function uiCheck(){
   ui.canvas2D=canvas2D; return {ui,fn};
 }
 
+// ---------- Runtime/Overlay ----------
 function runtime(){
   const boot=!!window.__bootOK, fc=window.__frameCount|0;
   const fps=window.__fpsEMA? Math.round(window.__fpsEMA):0;
@@ -97,27 +108,26 @@ function runtime(){
 }
 
 export async function diagnose(){
-  window.__suppressBootGuard = true; // Boot-Watchdog ruhigstellen
-  const rt = runtime();
+  window.__suppressBootGuard = true;
 
-  const W = [];
-  const mark=(ok,label,hint='')=>W.push((ok?OK:NO)+label+(hint?(' — '+hint):''));
+  const rt = runtime();
   const wiring = await uiCheck();
+  const W=[]; const mark=(ok,label,hint='')=>W.push((ok?OK:NO)+label+(hint?(' — '+hint):''));
 
   mark(wiring.ui.btnStart && wiring.fn.start,'Start-Button → engine.start()',!wiring.ui.btnStart?'Button fehlt':(!wiring.fn.start?'API fehlt':''));
   mark(wiring.ui.btnPause && wiring.fn.pause,'Pause-Button → engine.pause()',!wiring.ui.btnPause?'Button fehlt':(!wiring.fn.pause?'API fehlt':''));
   mark(wiring.ui.btnReset && wiring.fn.reset,'Reset-Button → engine.reset()',!wiring.ui.btnReset?'Button fehlt':(!wiring.fn.reset?'API fehlt':''));
   mark(wiring.ui.chkPerf  && wiring.fn.setPerf,'Perf-Checkbox → engine.setPerfMode()',!wiring.ui.chkPerf?'Checkbox fehlt':(!wiring.fn.setPerf?'API fehlt':''));
   mark(wiring.ui.sliderMutation && wiring.fn.setMutation,'Slider Mutation% → reproduction.setMutationRate()',!wiring.ui.sliderMutation?'Slider fehlt':(!wiring.fn.setMutation?'API fehlt':''));
-  mark(wiring.ui.sliderFood     && wiring.fn.setFood,'Slider Nahrung/s → food.setSpawnRate()',!wiring.ui.sliderFood?'Slider fehlt':(!wiring.fn.setFood?'API fehlt':''));
+  mark(wiring.ui.sliderFood && wiring.fn.setFood,'Slider Nahrung/s → food.setSpawnRate()',!wiring.ui.sliderFood?'Slider fehlt':(!wiring.fn.setFood?'API fehlt':''));
   mark(wiring.ui.btnEditor && wiring.fn.openEditor,'CRISPR-Editor → editor.openEditor()',!wiring.ui.btnEditor?'Button fehlt':(!wiring.fn.openEditor?'API fehlt':''));
-  mark(wiring.ui.btnEnv    && wiring.fn.openEnv,'Umwelt-Panel → environment.openEnvPanel()',!wiring.ui.btnEnv?'Button fehlt':(!wiring.fn.openEnv?'API fehlt':''));
+  mark(wiring.ui.btnEnv && wiring.fn.openEnv,'Umwelt-Panel → environment.openEnvPanel()',!wiring.ui.btnEnv?'Button fehlt':(!wiring.fn.openEnv?'API fehlt':''));
   mark(wiring.ui.btnAppOps && wiring.fn.openOps,'App-Ops → appops_panel.openAppOps()',!wiring.ui.btnAppOps?'Button fehlt':(!wiring.fn.openOps?'API fehlt':''));
   W.push((wiring.ui.canvas?OK:NO)+'Canvas #scene vorhanden');
   W.push((wiring.ui.canvas2D?OK:NO)+'2D-Context erzeugbar');
 
   const modText = await runModuleMatrix();
-  const payload = { v:1, kind:'ui-diagnose', ts:Date.now(), runtime:rt, wiring, modules:modText };
+  const payload={v:1,kind:'ui-diagnose',ts:Date.now(),runtime:rt,wiring,modules:modText};
   __lastMdc = `MDC-CHK-${(Math.random().toString(16).slice(2,6))}-${b64(JSON.stringify(payload))}`;
 
   const lines=[];
@@ -127,15 +137,15 @@ export async function diagnose(){
   lines.push(`Zellen: ${rt.cells}  ·  Food: ${rt.food}`);
   lines.push(`Letzter Step: ${rt.last}`);
   lines.push(`Runtime-Fehler im Log: ${rt.errs}\n`);
-  lines.push('UI/Wiring:');      lines.push(...W,'');
+  lines.push('UI/Wiring:'); lines.push(...W,'');
   lines.push('Module/Exporte:'); lines.push(modText,'');
-  const errs = Array.isArray(window.__runtimeErrors)? window.__runtimeErrors.slice(-4):[];
-  if (errs.length){ lines.push('Laufzeitfehler (letzte 4):',''); errs.forEach(e=>lines.push(`[${new Date(e.ts).toLocaleTimeString()}] ${e.where||e.when}\n${String(e.msg||'')}`,'')); }
+  const errs=Array.isArray(window.__runtimeErrors)?window.__runtimeErrors.slice(-4):[];
+  if(errs.length){ lines.push('Laufzeitfehler (letzte 4):',''); errs.forEach(e=>lines.push(`[${new Date(e.ts).toLocaleTimeString()}] ${e.where||e.when}\n${String(e.msg||'')}`,'')); }
   lines.push('Maschinencode:', __lastMdc,'');
   show(lines.join('\n'));
 }
 
-// manueller Hook via ?pf=1 (und #pf)
+// manueller Hook (?pf=1 oder #pf)
 (function(){
   try{
     const q=new URLSearchParams(location.search);
