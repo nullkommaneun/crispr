@@ -1,121 +1,67 @@
-// bootstrap.js — robuster Boot-Loader: Engine starten, Fehler transparent zeigen
+// bootstrap.js — UI verkabeln + robust booten (+ pf=1 respektieren)
+import * as eng from "./engine.js";
 
-const OVERLAY_ID = "errorOverlay";
+const $ = (id) => document.getElementById(id);
 
-// kleines Flag, damit Preflight/Guard wissen, dass Bootstrap lief
-window.__BOOTSTRAP_OK = true;
+function wireUI(){
+  // Grundbedienung
+  $("#btnStart")?.addEventListener("click", ()=>eng.start());
+  $("#btnPause")?.addEventListener("click", ()=>eng.pause());
+  $("#btnReset")?.addEventListener("click", ()=>eng.reset());
 
-function ensureOverlay() {
-  let el = document.getElementById(OVERLAY_ID);
-  if (el) return el;
+  // Tempo (optional)
+  $("#t1")?.addEventListener("click", ()=>eng.setTimescale(1));
+  $("#t5")?.addEventListener("click", ()=>eng.setTimescale(5));
+  $("#t10")?.addEventListener("click", ()=>eng.setTimescale(10));
+  $("#t50")?.addEventListener("click", ()=>eng.setTimescale(50));
 
-  el = document.createElement("div");
-  el.id = OVERLAY_ID;
-  el.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.72);display:none;z-index:9000;color:#d1e7ff";
+  // Perf-Modus
+  $("#chkPerf")?.addEventListener("change", (e)=>eng.setPerfMode(!!e.target.checked));
 
-  const card = document.createElement("div");
-  card.className = "errorCard";
-  card.style.cssText = "max-width:900px;width:92%;margin:48px auto;background:#10161d;border:1px solid #2a3b4a;border-radius:12px;padding:16px";
+  // Slider → Module
+  $("#sliderMutation")?.addEventListener("input", async (e)=>{
+    try{ const m = await import("./reproduction.js"); m.setMutationRate?.(+e.target.value|0); }catch{}
+  });
+  $("#sliderFood")?.addEventListener("input", async (e)=>{
+    try{ const m = await import("./food.js"); m.setSpawnRate?.(+e.target.value||0); }catch{}
+  });
 
-  const h3 = document.createElement("h3");
-  h3.textContent = "Fehler";
-  h3.style.marginTop = "0";
-
-  const pre = document.createElement("pre");
-  pre.id = "errorText";
-  pre.style.whiteSpace = "pre-wrap";
-
-  const row = document.createElement("div");
-  row.style.cssText = "display:flex;gap:8px;justify-content:flex-end";
-
-  const btnDiag = document.createElement("button");
-  btnDiag.textContent = "Diagnose öffnen";
-  btnDiag.onclick = async () => {
-    try { const m = await import("./preflight.js"); m.diagnose(); } catch {}
-  };
-
-  const btnClose = document.createElement("button");
-  btnClose.textContent = "Schließen";
-  btnClose.onclick = () => { el.style.display = "none"; };
-
-  row.append(btnDiag, btnClose);
-  card.append(h3, pre, row);
-  el.append(card);
-  document.body.appendChild(el);
-  return el;
+  // Tools
+  $("#btnEditor")?.addEventListener("click", async ()=>{
+    try{ const m = await import("./editor.js"); m.openEditor?.(); }catch{}
+  });
+  $("#btnEnv")?.addEventListener("click", async ()=>{
+    try{ const m = await import("./environment.js"); m.openEnvPanel?.(); }catch{}
+  });
+  $("#btnAppOps")?.addEventListener("click", async ()=>{
+    try{ const m = await import("./appops_panel.js"); m.openAppOps?.(); }catch{}
+  });
+  $("#btnDiag")?.addEventListener("click", async ()=>{
+    try{ const m = await import("./preflight.js"); m.diagnose?.(); }catch{}
+  });
 }
 
-function showError(msg) {
-  const el = ensureOverlay();
-  const pre = el.querySelector("#errorText");
-  pre.textContent = msg;
-  el.style.display = "block";
+function canvasReady(){
+  const c = $("#scene"); if(!c) return false;
+  // Falls Styles noch nicht gesetzt sind → Mindestgrößen vergeben
+  if (!c.width  || c.width  < 2) c.width  = Math.max(2, c.clientWidth  || 1280);
+  if (!c.height || c.height < 2) c.height = Math.max(2, c.clientHeight || 720);
+  return true;
 }
 
-// Topbar-Höhe einmal setzen (falls Engine nicht startet)
-function setTopbarHeightVar() {
-  try {
-    const topbar = document.getElementById("topbar");
-    const h = topbar ? (topbar.offsetHeight || 56) : 56;
-    document.documentElement.style.setProperty("--topbar-h", h + "px");
-  } catch {}
-}
-document.addEventListener("DOMContentLoaded", setTopbarHeightVar);
+async function bootIfAllowed(){
+  const q = new URLSearchParams(location.search);
+  if (q.get("pf")==="1") return; // Preflight kontrolliert den Boot
 
-// --------- Boot ----------
-(async function boot() {
-  try {
-    // 1) Engine laden
-    const eng = await import("./engine.js");
-
-    // 2) Engine starten (entscheidend!)
-    if (typeof eng.boot === "function") {
-      try {
-        await eng.boot();
-      } catch (err) {
-        showError(
-`Engine konnte nicht gestartet werden.
-
-Ursache:
-${String(err && err.stack || err)}
-
-Tipps:
-- Syntaxfehler in engine/Entities?
-- Module kürzlich geändert (Pages-Caching)?`
-        );
-        return;
-      }
-    } else {
-      showError("Engine geladen, aber 'boot()' fehlt.");
-      return;
-    }
-
-  } catch (e) {
-    // Importfehler
-    const msg = String(e && e.message || e);
-    showError(
-`Engine konnte nicht geladen werden.
-
-Ursache:
-${msg}
-
-Tipps:
-- Existiert ./engine.js (korrekter Pfad, Groß/Klein)?
-- Neu deployt? Seite mit Cache-Buster neu laden.`
-    );
-    return;
+  if (canvasReady()) {
+    try { await eng.boot(); } catch(e){ console.error("[bootstrap] boot:", e); }
+  } else {
+    // Canvas ist noch 0×0 → kurz später probieren
+    setTimeout(bootIfAllowed, 40);
   }
+}
 
-  // 3) Boot-Guard: falls boot() nicht sauber markiert
-  setTimeout(() => {
-    if (!window.__APP_BOOTED && !window.__suppressBootGuard) {
-      showError(
-`Die Anwendung scheint nicht gestartet zu sein (Boot-Flag fehlt).
-
-Mögliche Ursachen:
-- engine.boot() wurde nicht aufgerufen (Boot-Guard?),
-- ein Fehler in einem Modul verhindert den Start (siehe Preflight).`
-      );
-    }
-  }, 2200);
-})();
+window.addEventListener("DOMContentLoaded", ()=>{
+  try{ wireUI(); }catch{}
+  bootIfAllowed();
+});
