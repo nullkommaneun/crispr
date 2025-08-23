@@ -52,51 +52,10 @@
     <canvas id="scene" width="1280" height="720"></canvas>
   </main>
 
-  <!-- Panel-Host für Diagnose/Editor/App-Ops -->
+  <!-- Host für Panels (Editor, Diagnose, App-Ops) -->
   <div id="diagPanel" class="hidden panel"></div>
 
-  <script type="module">
-    import { boot, start, pause, reset, setTimescale, setPerfMode } from "./engine.js";
-    import * as reproduction from "./reproduction.js";
-    import * as food from "./food.js";
-
-    // Buttons
-    const $ = id => document.getElementById(id);
-    const qsAll = (sel,root=document) => Array.from(root.querySelectorAll(sel));
-
-    $('btnStart').onclick = () => start();
-    $('btnPause').onclick = () => pause();
-    $('btnReset').onclick = () => reset();
-
-    // Tempo-Buttons
-    qsAll('[data-ts]').forEach(b=>{
-      b.onclick = () => setTimescale(+b.dataset.ts || 1);
-    });
-
-    // Perf-Modus
-    $('chkPerf').onchange = (e)=> setPerfMode(!!e.target.checked);
-
-    // Slider (touch-sicher, mit Output)
-    const sm = $('sliderMutation'), om = $('outMutation');
-    const sf = $('sliderFood'),     of = $('outFood');
-    const syncM = ()=> { om.textContent = `${sm.value} %`; reproduction.setMutationRate(+sm.value|0); };
-    const syncF = ()=> { of.textContent = `${(+sf.value).toFixed(1)}/s`.replace('.0',''); food.setSpawnRate(+sf.value||0); };
-    ['input','change'].forEach(ev=> sm.addEventListener(ev, syncM, {passive:true}));
-    ['input','change'].forEach(ev=> sf.addEventListener(ev, syncF, {passive:true}));
-
-    // Tools
-    $('btnEditor').onclick = async ()=> { try{ (await import('./editor.js')).openEditor(); }catch{} };
-    $('btnEnv').onclick    = async ()=> { try{ (await import('./environment.js')).openEnvPanel(); }catch{} };
-    $('btnAppOps').onclick = async ()=> { try{ (await import('./appops_panel.js')).openAppOps(); }catch{} };
-    $('btnDiag').onclick   = async ()=> { try{ (await import('./preflight.js')).diagnose(); }catch{} };
-
-    // Service Worker (optional)
-    if ('serviceWorker' in navigator) {
-      try { navigator.serviceWorker.register('./sw.js'); } catch {}
-    }
-
-    // Erstwerte der Slider in die Engine pushen, dann booten
-    syncM(); syncF(); boot();
-  </script>
+  <!-- EINEN Loader benutzen: verdrahtet UI + bootet Engine + Fehleroverlay -->
+  <script type="module" src="./bootstrap.js"></script>
 </body>
 </html>
