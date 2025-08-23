@@ -1,20 +1,23 @@
 // preflight.js — Deep-Check + UI-Wiring + Canvas-Probe + MDC-CHK (manuell)
 
-function el(id){return document.getElementById(id);}
+function el(id){ return document.getElementById(id); }
 function show(text){
-  let w=el('diag-overlay'); if(!w){
-    w=document.createElement('div'); w.id='diag-overlay';
-    w.style.cssText='position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.65);display:flex;align-items:flex-start;justify-content:center;padding:48px;';
-    const p=document.createElement('pre'); p.id='diag-box';
-    p.style.cssText='max-width:1100px;width:92%;background:#10161d;color:#d6e1ea;border:1px solid #2a3b4a;border-radius:10px;padding:16px;overflow:auto;white-space:pre-wrap;';
-    const x=document.createElement('button'); x.textContent='Schließen';
+  let w = el('diag-overlay');
+  if(!w){
+    w = document.createElement('div'); w.id = 'diag-overlay';
+    w.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.65);display:flex;align-items:flex-start;justify-content:center;padding:48px;';
+    const p = document.createElement('pre'); p.id = 'diag-box';
+    p.style.cssText = 'max-width:1100px;width:92%;background:#10161d;color:#d6e1ea;border:1px solid #2a3b4a;border-radius:10px;padding:16px;overflow:auto;white-space:pre-wrap;';
+    const x = document.createElement('button'); x.textContent='Schließen';
     x.style.cssText='position:absolute;top:12px;right:12px;background:#243241;color:#cfe6ff;border:1px solid #47617a;border-radius:8px;padding:6px 10px;';
-    x.onclick=()=>w.remove(); w.appendChild(p); w.appendChild(x); document.body.appendChild(w);
+    x.onclick=()=>w.remove();
+    w.append(p,x);
+    document.body.appendChild(w);
   }
-  el('diag-box').textContent=text;
+  el('diag-box').textContent = text;
 }
 const OK='✅ ', NO='❌ ', OPT='⚠️  ';
-const b64 = (s)=> btoa(unescape(encodeURIComponent(s)));
+const b64 = s => btoa(unescape(encodeURIComponent(s)));
 
 const MODS = [
   {p:'./event.js',        want:['on','emit']},
@@ -26,8 +29,9 @@ const MODS = [
   {p:'./food.js',         want:['step','setSpawnRate']},
   {p:'./renderer.js',     want:['draw','setPerfMode']},
   {p:'./metrics.js',      want:['getPhases','getEconSnapshot','getPopSnapshot','getDriftSnapshot','getMateSnapshot']},
-  {p:'./drives.js',       want:['getDrivesSnapshot']},
-  // Tools/Extras (optional)
+  {p:'./drives.js',       want:['getDrivesSnapshot','getTraceText'], optional:true},
+
+  // Tools/Extras (optional – keine Genealogy/Genea mehr)
   {p:'./editor.js',       want:['openEditor'], optional:true},
   {p:'./environment.js',  want:['openEnvPanel'], optional:true},
   {p:'./dummy.js',        want:['openDummyPanel'], optional:true},
@@ -37,7 +41,7 @@ const MODS = [
   {p:'./grid.js',         want:['createGrid'], optional:true},
   {p:'./bootstrap.js',    want:[], optional:true},
   {p:'./sw.js',           want:[], optional:true},
-  {p:'./diag.js',         want:[], optional:true},
+  {p:'./diag.js',         want:['openDiagPanel'], optional:true},
 ];
 
 async function chkModule({p,want=[],optional=false}){
@@ -55,7 +59,6 @@ async function uiCheck(){
     btnStart:!!el('btnStart'), btnPause:!!el('btnPause'), btnReset:!!el('btnReset'),
     chkPerf:!!el('chkPerf'),
     btnEditor:!!el('btnEditor'), btnEnv:!!el('btnEnv'),
-    // Stammbaum entfernt
     btnDummy:!!el('btnDummy'), btnAppOps:!!el('btnAppOps'), btnDiag:!!el('btnDiag'),
     sliderMutation:!!el('sliderMutation'), sliderFood:!!el('sliderFood'),
     canvas:!!el('scene')
@@ -81,7 +84,7 @@ async function uiCheck(){
 
 function runtime(){
   const boot=!!window.__bootOK, fc=window.__frameCount|0;
-  const fps=window.__fpsEMA? window.__fpsEMA.toFixed(0):'–';
+  const fps=window.__fpsEMA? Math.round(window.__fpsEMA) : 0;
   const cells=window.__cellsN|0, food=window.__foodN|0;
   const last=window.__lastStepAt? new Date(window.__lastStepAt).toLocaleTimeString():'–';
   const errs=(Array.isArray(window.__runtimeErrors)?window.__runtimeErrors.length:0)|0;
@@ -89,6 +92,9 @@ function runtime(){
 }
 
 export async function diagnose(){
+  // Preflight-Läufe unterdrücken Boot-Guard-Overlay
+  window.__suppressBootGuard = true;
+
   const rt=runtime();
 
   const modRows=[], modResults=[];
@@ -110,7 +116,6 @@ export async function diagnose(){
   mark(wiring.ui.sliderFood && wiring.fn.setFood,'Slider Nahrung/s → food.setSpawnRate()',!wiring.ui.sliderFood?'Slider fehlt':(!wiring.fn.setFood?'API fehlt':''));
   mark(wiring.ui.btnEditor && wiring.fn.openEditor,'CRISPR-Editor → editor.openEditor()',!wiring.ui.btnEditor?'Button fehlt':(!wiring.fn.openEditor?'API fehlt':''));
   mark(wiring.ui.btnEnv && wiring.fn.openEnv,'Umwelt-Panel → environment.openEnvPanel()',!wiring.ui.btnEnv?'Button fehlt':(!wiring.fn.openEnv?'API fehlt':''));
-  // Genealogy entfernt
   mark(wiring.ui.btnDummy && wiring.fn.openDummy,'Dummy → dummy.openDummyPanel()',!wiring.ui.btnDummy?'Button fehlt':(!wiring.fn.openDummy?'API fehlt':''));
   mark(wiring.ui.btnAppOps && wiring.fn.openOps,'App-Ops → appops_panel.openAppOps()',!wiring.ui.btnAppOps?'Button fehlt':(!wiring.fn.openOps?'API fehlt':''));
   W.push((wiring.ui.canvas?OK:NO)+'Canvas #scene vorhanden');
@@ -137,25 +142,10 @@ export async function diagnose(){
   show(lines.join('\n'));
 }
 
-// === Export: Module-Matrix (für Smart-Ops) ==================================
-export async function moduleMatrix(){
-  const rows = [];
-  const results = [];
-  for (const spec of MODS) {
-    const r = await chkModule(spec);
-    results.push({ path: spec.p, ok: r.ok, miss: r.miss, optional: !!spec.optional, err: r.err || null });
-    if (r.ok) rows.push(`✅ ${spec.p} OK`);
-    else if (spec.optional)
-      rows.push(`⚠️  ${spec.p}${r.miss.length ? " · fehlt: " + r.miss.join(", ") : ""}${r.err ? " · " + r.err : ""} (optional)`);
-    else
-      rows.push(`❌ ${spec.p}${r.miss.length ? " · fehlt: " + r.miss.join(", ") : ""}${r.err ? " · " + r.err : ""}`);
-  }
-  const payload = { v:1, kind:"module-matrix", ts:Date.now(), results };
-  const mdcMods = `MDC-MODS-${Math.random().toString(16).slice(2,6)}-${b64(JSON.stringify(payload))}`;
-  return { text: rows.join("\n"), mdc: mdcMods };
-}
-
-(function hook(){ try{
-  const q=new URLSearchParams(location.search);
-  if(q.get('pf')==='1') window.addEventListener('load', ()=>diagnose());
-}catch{} })();
+// manueller Hook via ?pf=1
+(function hook(){
+  try{
+    const q=new URLSearchParams(location.search);
+    if(q.get('pf')==='1') window.addEventListener('load', ()=>diagnose());
+  }catch{}
+})();

@@ -1,4 +1,4 @@
-// appops.js — App-Telemetrie & MDC-OPS; jetzt zusätzlich: Micro-Profiler-Timings (moving average)
+// appops.js — App-Telemetrie & MDC-OPS; inkl. Micro-Profiler-Timings (EMA)
 
 import { on } from "./event.js";
 
@@ -9,12 +9,10 @@ const state = {
   layout:{ reflowCount:0, lastHeights:[] },
   resources:{ scannedAt:0, total:0, largest:[] },
   modules:{ lastReport:null },
-  timings:{ // moving avg (EMA)
-    ent:0, repro:0, food:0, draw:0, alpha:0.2
-  }
+  timings:{ ent:0, repro:0, food:0, draw:0, alpha:0.2 }
 };
 
-// RAF Sampler
+/* ---------- Sammler ---------- */
 function startRafSampler(){
   const r=state.perf.raf;
   function loop(t){
@@ -28,12 +26,14 @@ function startRafSampler(){
   }
   requestAnimationFrame(loop);
 }
-// Long Tasks
 function startLongTaskObserver(){
   try{
     const po=new PerformanceObserver(list=>{
       list.getEntries().forEach(e=>{
-        if(e.entryType==="longtask"){ state.perf.longTasks.count++; state.perf.longTasks.totalMs += e.duration||0; }
+        if(e.entryType==="longtask"){
+          state.perf.longTasks.count++;
+          state.perf.longTasks.totalMs += e.duration||0;
+        }
       });
     });
     po.observe({ entryTypes:["longtask"] });
@@ -43,18 +43,18 @@ function startLongTaskObserver(){
 on("appops:frame",(e)=>{
   state.engine.frames++;
   if((e?.desired??0)>(e?.max??0)) state.engine.cappedFrames++;
-  const f=state.engine.frames||1; state.engine.backlogRatio=state.engine.cappedFrames/f;
+  const f=state.engine.frames||1;
+  state.engine.backlogRatio = state.engine.cappedFrames/f;
 });
 // Micro-Profiler Timings (EMA)
 on("appops:timings", (t)=>{
   const a=state.timings.alpha;
-  state.timings.ent   = state.timings.ent  *(1-a) + (t.ent||0)*a;
+  state.timings.ent   = state.timings.ent  *(1-a) + (t.ent  ||0)*a;
   state.timings.repro = state.timings.repro*(1-a) + (t.repro||0)*a;
-  state.timings.food  = state.timings.food *(1-a) + (t.food||0)*a;
-  state.timings.draw  = state.timings.draw *(1-a) + (t.draw||0)*a;
+  state.timings.food  = state.timings.food *(1-a) + (t.food ||0)*a;
+  state.timings.draw  = state.timings.draw *(1-a) + (t.draw ||0)*a;
 });
-
-// Topbar Reflows
+// Topbar-Resize
 function startTopbarObserver(){
   const el=document.getElementById("topbar"); if(!el) return;
   try{
@@ -82,27 +82,54 @@ function scanResources(){
   }catch{}
 }
 
-// -------- Modulmatrix: Delegation an Preflight --------
-export async function runModuleMatrix(){
+/* ---------- Modul-Matrix (wie Preflight, ohne Genealogy) ---------- */
+async function checkModule(path, expects){
   try{
-    const pf = await import('./preflight.js?v=' + Date.now());
-    const { text, mdc } = await pf.moduleMatrix();
-    state.modules.lastReport = text + "\n\nMDC-MODS: " + mdc + "\n";
-    return state.modules.lastReport;
+    const m=await import(path+`?v=${Date.now()}`);
+    if(!expects?.length) return `✅ ${path}`;
+    const miss=expects.filter(x=> !(x in m));
+    return miss.length? `❌ ${path}: fehlt Export ${miss.join(", ")}` : `✅ ${path}`;
   }catch(e){
-    const msg = "// Fehler beim Modul-Check: " + (e?.message || e);
-    state.modules.lastReport = msg; return msg;
+    let msg=String(e?.message||e);
+    if(/failed to fetch|404/i.test(msg)) msg+=" (Pfad/Case?)";
+    return `❌ ${path}: Import/Parse fehlgeschlagen → ${msg}`;
   }
 }
+export async function runModuleMatrix(){
+  const lines=[];
+  const checks=[
+    ["./event.js",["on","emit"]],
+    ["./config.js",[]],
+    ["./errorManager.js",["initErrorManager","report"]],
+    ["./engine.js",["boot","start","pause","reset","setTimescale","setPerfMode"]],
+    ["./entities.js",["setWorldSize","createAdamAndEve","step","getCells","getFoodItems","applyEnvironment"]],
+    ["./reproduction.js",["step","setMutationRate"]],
+    ["./food.js",["step","setSpawnRate"]],
+    ["./renderer.js",["draw","setPerfMode"]],
+    ["./metrics.js",["getPhases","getEconSnapshot","getPopSnapshot","getDriftSnapshot","getMateSnapshot"]],
+    ["./drives.js",["getDrivesSnapshot","getTraceText"]],
+    ["./editor.js",["openEditor"]],                 // optional in Preflight, hier ok zur Sichtbarkeit
+    ["./environment.js",["openEnvPanel"]],
+    ["./dummy.js",["openDummyPanel"]],
+    ["./appops_panel.js",["openAppOps"]],
+    ["./appops.js",["generateOps"]],
+    ["./advisor.js",["setMode","getMode","scoreCell","sortCells"]],
+    ["./grid.js",["createGrid"]],
+    ["./bootstrap.js",[]],
+    ["./sw.js",[]],
+    ["./diag.js",["openDiagPanel"]]
+  ];
+  for(const [p, exp] of checks){ lines.push(await checkModule(p, exp)); }
+  state.modules.lastReport=lines.join("\n");
+  return state.modules.lastReport;
+}
 
-// Start
+/* ---------- Start/Snapshot ---------- */
 export function startCollectors(){
   if(state.started) return; state.started=true;
   startRafSampler(); startLongTaskObserver(); startTopbarObserver(); scanResources();
   setInterval(scanResources, 15000);
 }
-
-// Snapshot inkl. Timings
 export function getAppOpsSnapshot(){
   const s=state.perf.raf.samples;
   const fpsNow=s.length? s[s.length-1].fps : 0;
@@ -119,17 +146,32 @@ export function getAppOpsSnapshot(){
   };
 }
 
-// OPS-Heuristiken (unverändert)
+/* ---------- MDC-OPS: Snapshot-Codes + Vorschläge ---------- */
+const tag = (name,obj)=>`MDC-OPS-${name}-${btoa(unescape(encodeURIComponent(JSON.stringify({v:1,ts:Date.now(),snapshot:obj}))))}`;
+
+export function getMdcCodes(){
+  const s = getAppOpsSnapshot();
+  return {
+    all: tag('ALL', s),
+    perf: tag('PERF', s.perf),
+    timings: tag('TIMINGS', s.timings),
+    layout: tag('LAYOUT', s.layout),
+    res: tag('RES', s.resources)
+  };
+}
+
 export function generateOps(){
   const s = getAppOpsSnapshot();
   const ops = { v: 1, title: "Auto-OPS Vorschläge", goals: [], changes: [], accept: [] };
 
+  // 1) Manuelle Preflight-Öffnung (?pf=1)
   ops.changes.push({
     file: "preflight.js", op: "append",
-    code:"// === Dev-Hook: manuelle Preflight-Anzeige mit ?pf=1 ===\n(function devHook(){\n  try{\n    const q=new URLSearchParams(location.search);\n    if(q.get('pf')==='1') diagnose().then(r=>showOverlay('Manuelle Diagnose (pf=1):\\n\\n'+r));\n  }catch{}\n})();\n"
+    code:"// === Dev-Hook: manuelle Preflight-Anzeige mit ?pf=1 ===\n(function devHook(){\n  try{\n    const q=new URLSearchParams(location.search);\n    if(q.get('pf')==='1') import('./preflight.js').then(m=>m.diagnose());\n  }catch{}\n})();\n"
   });
   ops.goals.push("Preflight jederzeit manuell abrufbar (?pf=1)");
 
+  // 2) Ticker beruhigen bei Unruhe
   if (s.perf.jank > 5 || s.layout.reflows > 5) {
     ops.changes.push(
       { file:"ticker.js", op:"patch", find:"setInterval\\(updateSnapshot, 5000\\);", replace:"setInterval(updateSnapshot, 7000);" },
@@ -138,6 +180,7 @@ export function generateOps(){
     ops.goals.push("Ticker ruhiger/kompakter zur Reflow-Reduktion");
   }
 
+  // 3) Spatial-Grid vorbereiten, wenn Backlog sichtbar
   if ((s.engine.capRatio||0) > 0.15) {
     ops.changes.push(
       { file:"grid.js", op:"replace", code:
