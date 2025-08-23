@@ -82,40 +82,17 @@ function scanResources(){
   }catch{}
 }
 
-// Modulmatrix
-async function checkModule(path, expects){
-  try{
-    const m=await import(path+`?v=${Date.now()}`);
-    if(!expects?.length) return `✅ ${path}`;
-    const miss=expects.filter(x=> !(x in m));
-    return miss.length? `❌ ${path}: fehlt Export ${miss.join(", ")}` : `✅ ${path}`;
-  }catch(e){
-    let msg=String(e?.message||e); if(/failed to fetch|404/i.test(msg)) msg+=" (Pfad/Case?)";
-    return `❌ ${path}: Import/Parse fehlgeschlagen → ${msg}`;
-  }
-}
+// -------- Modulmatrix: Delegation an Preflight --------
 export async function runModuleMatrix(){
-  const lines=[];
-  const checks=[
-    ["./event.js",["on","off","emit"]],
-    ["./config.js",["CONFIG"]],
-    ["./errorManager.js",["initErrorManager","report"]],
-    ["./entities.js",["step","createAdamAndEve","setWorldSize","applyEnvironment","getCells","getFoodItems"]],
-    ["./reproduction.js",["step","setMutationRate","getMutationRate"]],
-    ["./food.js",["step","setSpawnRate","spawnClusters"]],
-    ["./renderer.js",["draw","setPerfMode"]],
-    ["./editor.js",["openEditor","closeEditor","setAdvisorMode","getAdvisorMode"]],
-    ["./environment.js",["getEnvState","setEnvState","openEnvPanel"]],
-    ["./ticker.js",["initTicker","setPerfMode","pushFrame"]],
-    ["./genealogy.js",["getNode","getParents","getChildren","getSubtree","searchByNameOrId","exportJSON","getStats","getAll"]],
-    ["./genea.js",["openGenealogyPanel"]],
-    ["./metrics.js",["beginTick","sampleEnergy","commitTick","addSpawn","getEconSnapshot","getMateSnapshot","mateStart","mateEnd","getPopSnapshot","getDriftSnapshot"]],
-    ["./drives.js",["initDrives","getTraceText","getAction","afterStep","getDrivesSnapshot","setTracing"]],
-    ["./diag.js",["openDiagPanel"]]
-  ];
-  for(const [p, exp] of checks){ lines.push(await checkModule(p, exp)); }
-  state.modules.lastReport=lines.join("\n");
-  return state.modules.lastReport;
+  try{
+    const pf = await import('./preflight.js?v=' + Date.now());
+    const { text, mdc } = await pf.moduleMatrix();
+    state.modules.lastReport = text + "\n\nMDC-MODS: " + mdc + "\n";
+    return state.modules.lastReport;
+  }catch(e){
+    const msg = "// Fehler beim Modul-Check: " + (e?.message || e);
+    state.modules.lastReport = msg; return msg;
+  }
 }
 
 // Start

@@ -103,8 +103,8 @@ export async function diagnose(){
   const wiring=await uiCheck(), W=[];
   const mark=(ok,label,hint='')=>W.push((ok?OK:NO)+label+(hint?(' — '+hint):''));
   mark(wiring.ui.btnStart && wiring.fn.start,'Start-Button → engine.start()',!wiring.ui.btnStart?'Button fehlt':(!wiring.fn.start?'engine.start fehlt':''));
-  mark(wiring.ui.btnPause && wiring.fn.pause,'Pause-Button → engine.pause()',!wiring.ui.btnPause?'Button fehlt':(!wiring.fn.pause?'engine.pause fehlt':''));
-  mark(wiring.ui.btnReset && wiring.fn.reset,'Reset-Button → engine.reset()',!wiring.ui.btnReset?'Button fehlt':(!wiring.fn.reset?'engine.reset fehlt':''));
+  mark(wiring.ui.btnPause && wiring.fn.pause,'Pause-Button → engine.pause()',!wiring.ui.btnPause?'Button fehlt':(!wiring.fn.pause?'API fehlt':''));
+  mark(wiring.ui.btnReset && wiring.fn.reset,'Reset-Button → engine.reset()',!wiring.ui.btnReset?'Button fehlt':(!wiring.fn.reset?'API fehlt':''));
   mark(wiring.ui.chkPerf  && wiring.fn.setPerf,'Perf-Checkbox → engine.setPerfMode()',!wiring.ui.chkPerf?'Checkbox fehlt':(!wiring.fn.setPerf?'API fehlt':''));
   mark(wiring.ui.sliderMutation && wiring.fn.setMutation,'Slider Mutation% → reproduction.setMutationRate()',!wiring.ui.sliderMutation?'Slider fehlt':(!wiring.fn.setMutation?'API fehlt':''));
   mark(wiring.ui.sliderFood && wiring.fn.setFood,'Slider Nahrung/s → food.setSpawnRate()',!wiring.ui.sliderFood?'Slider fehlt':(!wiring.fn.setFood?'API fehlt':''));
@@ -135,6 +135,24 @@ export async function diagnose(){
   lines.push('Maschinencode:', mdc,'');
   lines.push('Hinweis: Cache-Buster: ?ts='+Date.now());
   show(lines.join('\n'));
+}
+
+// === Export: Module-Matrix (für Smart-Ops) ==================================
+export async function moduleMatrix(){
+  const rows = [];
+  const results = [];
+  for (const spec of MODS) {
+    const r = await chkModule(spec);
+    results.push({ path: spec.p, ok: r.ok, miss: r.miss, optional: !!spec.optional, err: r.err || null });
+    if (r.ok) rows.push(`✅ ${spec.p} OK`);
+    else if (spec.optional)
+      rows.push(`⚠️  ${spec.p}${r.miss.length ? " · fehlt: " + r.miss.join(", ") : ""}${r.err ? " · " + r.err : ""} (optional)`);
+    else
+      rows.push(`❌ ${spec.p}${r.miss.length ? " · fehlt: " + r.miss.join(", ") : ""}${r.err ? " · " + r.err : ""}`);
+  }
+  const payload = { v:1, kind:"module-matrix", ts:Date.now(), results };
+  const mdcMods = `MDC-MODS-${Math.random().toString(16).slice(2,6)}-${b64(JSON.stringify(payload))}`;
+  return { text: rows.join("\n"), mdc: mdcMods };
 }
 
 (function hook(){ try{
