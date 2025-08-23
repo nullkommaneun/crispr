@@ -1,6 +1,6 @@
-// bootstrap.js — schlanker Boot-Loader + Fehler-Overlay + Slider-Init
+// bootstrap.js — Boot-Loader + Fehler-Overlay + UI-Init
 import * as engine from "./engine.js";
-import { initSliders } from "./ui_controls.js";
+import { initUI } from "./ui_controls.js";
 
 const OVERLAY_ID = "errorOverlay";
 
@@ -16,7 +16,7 @@ function ensureOverlay(){
       <pre id="errorText" style="white-space:pre-wrap"></pre>
       <div style="display:flex;gap:8px;justify-content:flex-end">
         <button id="errorOpenPF" style="background:#17334d;border:1px solid #355a78;color:#cfe6ff;border-radius:8px;padding:6px 10px">Diagnose öffnen</button>
-        <button id="errorClose" style="background:#243241;border:1px solid #47617a;color:#cfe6ff;border-radius:8px;padding:6px 10px">Schließen</button>
+        <button id="errorClose"  style="background:#243241;border:1px solid #47617a;color:#cfe6ff;border-radius:8px;padding:6px 10px">Schließen</button>
       </div>
     </div>`;
   document.body.appendChild(el);
@@ -41,8 +41,8 @@ document.addEventListener("DOMContentLoaded", setTopbarHeightVar);
 
 window.addEventListener("load", async ()=>{
   try {
-    // Sliders zuerst initialisieren (setzt Startwerte live in die Engine-Module)
-    try { initSliders(); } catch(e){ console.warn("[ui_controls] initSliders", e); }
+    // UI-Bindings (Slider, Tempo, Perf, Buttons)
+    try { initUI(); } catch(e){ console.warn("[ui_controls] initUI", e); }
 
     // Engine booten
     try { engine.boot(); }
@@ -54,12 +54,12 @@ Ursache:
 ${String(e?.message || e)}
 
 Tipps:
-- Syntax in engine.js prüfen (fehlt eine Klammer/Export?).
+- Syntax/Exports in engine.js prüfen.
 - Neu laden mit Cache-Buster (z. B. ?ts=${Date.now()}).`);
       return;
     }
 
-    // Watchdog (falls boot() lief, aber kein Boot-Flag gesetzt wurde)
+    // Watchdog (falls boot() lief, aber kein Boot-Flag)
     setTimeout(()=>{
       if (!window.__bootOK) {
         showError(
@@ -75,7 +75,7 @@ Mögliche Ursachen:
   }
 });
 
-// freiwillig: Preflight beim Laden, falls ?pf=1
+// freiwillig: Preflight automatisch bei ?pf=1
 try{
   if (new URLSearchParams(location.search).get("pf")==="1"){
     import("./preflight.js").then(m=>m.diagnose()).catch(()=>{});
