@@ -1,4 +1,4 @@
-// engine.js — Boot/Loop/Topbar/Events
+// engine.js — Boot/Loop/Topbar/Events + Phasen-Instrumentierung + Boot-Flag
 
 import { initErrorManager, report } from "./errorManager.js";
 import { getCells, getFoodItems } from "./entities.js";
@@ -16,6 +16,14 @@ let lastTime = 0;
 let timescale = 1;
 let perfMode = false;
 
+// ---- Boot-Flag für Preflight/Guard ----
+function markBoot(ok=true){
+  try {
+    window.__bootOK = !!ok;
+    document.documentElement.dataset.boot = ok ? "1" : "0";
+  } catch {}
+}
+
 export function boot(){
   try{
     initErrorManager();
@@ -23,9 +31,10 @@ export function boot(){
     const rect = canvas.getBoundingClientRect();
     entities.setWorldSize(rect.width, rect.height);
     entities.createAdamAndEve();
-    entities.applyEnvironment({}); // Umwelteffekte derzeit aus
+    entities.applyEnvironment({}); // Umwelt aktuell deaktiviert
     lastTime = performance.now();
     hookUI();
+    markBoot(true); // << wichtig
   }catch(err){ report(err,{where:"boot"}); }
 }
 
@@ -41,14 +50,17 @@ function hookUI(){
 
 export function start(){ if(!running){ running=true; loop(); } }
 export function pause(){ running=false; }
+
 export function reset(){
   try{
     running=false;
     entities.createAdamAndEve();
     lastTime = performance.now();
     emit("app:reset",{});
+    markBoot(true); // << Boot-Flag nach Reset
   }catch(e){ report(e,{where:"reset"}); }
 }
+
 export function setTimescale(x){ timescale = Math.max(0.1, Math.min(50, +x||1)); }
 export function setPerfMode(on){
   perfMode = !!on;
@@ -93,7 +105,7 @@ function step(dt, tSec){
   renderer.draw({ cells:getCells(), food:getFoodItems() }, {});
   metrics.phaseEnd("draw", t0);
 
-  // optional: Ökonomie zur Anzeige berechnen/lesen
+  // Ökonomie-Sample an UI
   const econ = metrics.readEnergyAndReset();
   emit("econ:snapshot", econ);
 }
