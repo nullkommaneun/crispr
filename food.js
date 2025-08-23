@@ -1,90 +1,63 @@
-// food.js — Cluster-basierter Food-Spawner (Gauß)
-// Patch: Spread (σ) −15 % → enger um die Cluster zentriert
+// food.js — Spawner (Uniform + Cluster) + globale Rate & Cap
 
-import { worldSize, addFoodItem } from "./entities.js";
-import { emit } from "./event.js";
+import { getFoodItems, getCells } from "./entities.js";
 
-const CLUSTERS = [];
-let ratePerSec = 6;         // wird via setSpawnRate(x) gesetzt (UI-Basis)
-const SPAWN_BOOST = 1.15;   // globaler Boost (falls gewünscht, hier 1.15 aktiv)
+let spawnRate = 6;           // Partikel / Sekunde (UI-Slider)
+let acc = 0;                 // Akkumulator für Uniform-Spawns
+let clusterT = 0;            // Zeit seit letztem Cluster
+const CLUSTER_INTERVAL = 8;  // s
+const CLUSTER_COUNT    = 12; // Partikel pro Cluster
+const CLUSTER_R        = 80; // px
 
-let acc = 0;
+export function setSpawnRate(r){ spawnRate = Math.max(0, +r||0); }
 
-// Cluster-Params (σ von 42 → 36, also −15 %)
-const CFG = {
-  nClusters: 3,
-  drift: 18,             // px/s
-  spread: 36,            // Gauß σ (vorher 42)
-  itemRadius: 2,
-  decay: 0.000,          // optionaler Zerfall
-};
-
-export function setSpawnRate(perSec){
-  // Anwenderwert * optionaler globaler Boost
-  ratePerSec = Math.max(0, +perSec || 0) * SPAWN_BOOST;
+function foodCap(){
+  // adaptiv: 300 + 10·N
+  const n = getCells().length|0;
+  return 300 + 10*n;
 }
 
-export function spawnClusters(n){
-  CLUSTERS.length = 0;
-  const { width:W, height:H } = worldSize();
-  const k = n ?? CFG.nClusters;
-  for(let i=0;i<k;i++){
-    CLUSTERS.push({
-      x: 40 + Math.random()*(W-80),
-      y: 40 + Math.random()*(H-80),
-      vx: (Math.random()*2-1) * CFG.drift,
-      vy: (Math.random()*2-1) * CFG.drift,
-    });
-  }
-  emit("food:clusters", { n: CLUSTERS.length });
+// Poisson-artige Anzahl aus Rate·dt
+function poisson(rateDt){
+  const k = Math.floor(rateDt);
+  if (Math.random() < (rateDt - k)) return k+1;
+  return k;
 }
-
-// Gauß-Zufall
-function gauss(mu=0, sigma=1){
-  let u=0,v=0;
-  while(u===0) u=Math.random();
-  while(v===0) v=Math.random();
-  const z=Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);
-  return mu + z*sigma;
-}
-
-function clamp(x,a,b){ return Math.max(a,Math.min(b,x)); }
 
 export function step(dt){
-  const { width:W, height:H } = worldSize();
+  const foods = getFoodItems();
+  const cap = foodCap();
 
-  // Cluster drift
-  for(const c of CLUSTERS){
-    c.x = clamp(c.x + c.vx*dt, 20, W-20);
-    c.y = clamp(c.y + c.vy*dt, 20, H-20);
-    // leichte Rücklenkung zur Mitte
-    c.vx += (-Math.sign(c.x-W/2))*0.3*dt;
-    c.vy += (-Math.sign(c.y-H/2))*0.3*dt;
+  // Uniform-Tröpfeln
+  acc += spawnRate * dt;
+  let n = poisson(acc); // Anzahl, die wir gern hätten
+  if (n>0){
+    acc = 0; // zurücksetzen
+    const toAdd = Math.max(0, Math.min(n, cap - foods.length));
+    for (let i=0;i<toAdd;i++){
+      foods.push({ x: Math.random()*innerW(), y: Math.random()*innerH() });
+    }
   }
 
-  // Spawn-Akkumulator
-  acc += ratePerSec * dt;
-
-  while(acc >= 1){
-    acc -= 1;
-
-    // wähle Cluster proportional zufällig
-    const c = CLUSTERS.length ? CLUSTERS[(Math.random()*CLUSTERS.length)|0] : null;
-    if (!c) continue;
-
-    // Gauß-Offset (mit engerem σ)
-    const ox = gauss(0, CFG.spread);
-    const oy = gauss(0, CFG.spread);
-
-    const x = clamp(c.x + ox, 4, W-4);
-    const y = clamp(c.y + oy, 4, H-4);
-
-    addFoodItem({ x, y, amount: 1.0, r: CFG.itemRadius });
-    emit("food:spawn", { x, y });
+  // Cluster-Ereignis
+  clusterT += dt;
+  if (clusterT >= CLUSTER_INTERVAL){
+    clusterT = 0;
+    const want = CLUSTER_COUNT;
+    const free = Math.max(0, cap - foods.length);
+    const take = Math.min(want, free);
+    if (take > 0){
+      const cx = Math.random()*innerW();
+      const cy = Math.random()*innerH();
+      for(let i=0;i<take;i++){
+        const a = Math.random()*Math.PI*2;
+        const r = Math.random()*CLUSTER_R;
+        foods.push({ x: cx + Math.cos(a)*r, y: cy + Math.sin(a)*r });
+      }
+    }
   }
-
-  // optionaler Zerfall (derzeit 0)
 }
 
-// Initiale Cluster
-spawnClusters(CFG.nClusters);
+// „sichtbare“ Fläche (ohne harte Bindung an canvas)
+function innerW(){ return (document.getElementById('scene')?.width || 1024); }
+function innerH(){ return (document.getElementById('scene')?.height || 640); }
