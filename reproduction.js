@@ -1,35 +1,44 @@
 // reproduction.js — Paarungslogik (zeitbasiert, ressourcengekoppelt, drosselbar)
+//
+// Features
+// - Zeitbasiertes Paarungs-Budget (pro Sekunde), nicht pro Frame
+// - Budget an Ressourcenlage gekoppelt (Food/Zelle)
+// - Kosten & Cooldown steigen bei großer Population (Crowding)
+// - Partnerwahl stochastisch (schnell), großzügiger Radius im Mate-Modus
+// - Mutation gemäß mutationRate (%)
+// - Emit('cells:born', { parents:[idA,idB], child:{ id, stammId } }) für Diagnose/POOLS
 
 import { createCell, getCells, getFoodItems } from "./entities.js";
 import { CONFIG } from "./config.js";
 import { emit } from "./event.js";
 
-let mutationRate = 8;
+/* =================== API: Mutation-Rate =================== */
+let mutationRate = 8; // %
 export function setMutationRate(x){ mutationRate = Math.max(0, +x || 0); }
 export function getMutationRate(){ return mutationRate; }
 
-// ==== Drosselung: Budget in "Paarungen pro Sekunde"
-let pairBudget = 0;                   // kumuliertes Budget (in Paarungen)
-const HARD_MAX_PER_SEC = 12;          // Obergrenze (safety)
+/* =================== Zeitbudget (Paarungen/s) =================== */
+let pairBudget = 0;                   // kumuliert in "Paarungen"
+const HARD_MAX_PER_SEC = 12;          // absolute Sicherheitsobergrenze
 
-// Basiskosten/Cooldown (werden unten dynamisch angepasst)
+/* =================== Baseline für Kosten / Cooldown =================== */
 const BASE = {
-  COST_ENERGY: 12,    // je Elternteil (fixe, konservative Kosten)
-  COOLDOWN_S:  7,     // Basis-Cooldown (wird bei hoher Pop verlängert)
-  E_MIN:       10     // minimale Energie (absolut) je Elternteil
+  COST_ENERGY: 12,    // je Elternteil (Energie)
+  COOLDOWN_S:  7,     // Sekunden
+  E_MIN:       10     // minimale Energie je Elternteil
 };
 
-// Hilfen
-function clamp(v, a, b){ return Math.max(a, Math.min(b, v)); }
+/* =================== Helpers =================== */
+const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
 
-// Mutationshelfer (diskret, ±1, mit rate %)
 function mutateInt(val){
   if (Math.random() < mutationRate/100){
-    const dir = Math.random() < 0.5 ? -1 : +1;
+    const dir = Math.random()<0.5 ? -1 : +1;
     return clamp(val + dir, 1, 10);
   }
   return val;
 }
+
 function recombine(a,b){
   return {
     TEM: mutateInt(Math.round((a.TEM + b.TEM)/2)),
@@ -40,27 +49,26 @@ function recombine(a,b){
   };
 }
 
-// Wie viele Paarungen pro Sekunde sind ok? -> abhängig von Pop & Food-Verfügbarkeit
+// Wie viele Paarungen/s sind ok? -> abhängig von Pop & Food-Verfügbarkeit
 function perSecLimit(pop, foodN){
   if (pop <= 0) return 0;
-  const ratio = foodN / Math.max(1, pop);      // Food pro Zelle
-  // Basis: ~1% der Pop pro Sekunde (aber gedeckelt)
-  let base = Math.max(1, Math.round(pop * 0.01));      // 1%/s
-  // Ressourcen-Kopplung: wenig Food → stark runter, viel Food → leicht rauf
-  if (ratio < 0.4)      base *= 0.25;
-  else if (ratio < 0.7) base *= 0.60;
-  else if (ratio > 1.2) base *= 1.20;
 
-  // Hartdeckel
+  const ratio = foodN / Math.max(1, pop);  // Food pro Zelle
+  let base = Math.max(1, Math.round(pop * 0.01)); // ~1% der Pop pro Sekunde
+
+  if (ratio < 0.40)      base *= 0.25;
+  else if (ratio < 0.70) base *= 0.60;
+  else if (ratio > 1.20) base *= 1.20;
+
   return Math.max(1, Math.min(HARD_MAX_PER_SEC, Math.floor(base)));
 }
 
-// Partner-Suche (stochastisch, O(1) im Mittel): einige Zufallsproben
-function findPartner(cells, A, pairR, eMin, sampledIdx, maxSamples=40){
+// Partner-Suche per Random-Sampling (O(1) im Mittel)
+function findPartner(cells, A, pairR, eMin, sampledIdx, maxSamples=48){
   let best=null, bestD=Infinity;
   const N = cells.length;
   for(let k=0; k<maxSamples; k++){
-    const j = Math.floor(Math.random()*N);
+    const j = (Math.random()*N)|0;
     if (sampledIdx.has(j)) continue;
     sampledIdx.add(j);
 
@@ -77,77 +85,75 @@ function findPartner(cells, A, pairR, eMin, sampledIdx, maxSamples=40){
   return best;
 }
 
+/* =================== Hauptschritt =================== */
 export function step(dt){
   const cells = getCells();
   const foodN = getFoodItems().length;
-  const pop = cells.length;
+  const pop   = cells.length;
   if (pop < 2) return;
 
-  // 1) Budget erhöhen (zeitbasiert)
+  // 1) Zeitbasiertes Budget erhöhen
   const perSec = perSecLimit(pop, foodN);
   pairBudget += perSec * dt;
 
-  // Zusatz: Wenn Pop sehr groß, Cooldown erhöhen & Energie-Minimum anheben
+  // 2) Crowding-Anpassungen (große Pop -> höhere Kosten/Cooldown)
   const crowd = pop > 200 ? (pop > 400 ? 2.0 : 1.4) : 1.0;
-  const COOLDOWN = BASE.COOLDOWN_S * crowd;            // 7s → bis 14s
-  const E_MIN    = BASE.E_MIN * (crowd > 1 ? 1.2 : 1); // 10 → 12 bei hoher Pop
-  const COST     = BASE.COST_ENERGY * (crowd > 1.4 ? 1.2 : 1); // 12 → 14 bei sehr hoher Pop
+  const COOLDOWN = BASE.COOLDOWN_S * crowd;                 // 7 → 14 s
+  const E_MIN    = BASE.E_MIN * (crowd > 1 ? 1.2 : 1);      // 10 → 12
+  const COST     = BASE.COST_ENERGY * (crowd > 1.4 ? 1.2 : 1); // 12 → 14
 
-  // 2) Pro Tick nur ganzzahlige Budgets umsetzen, außerdem Limit pro Tick
-  let toMake = Math.min(Math.floor(pairBudget), 8); // ≤8 Paarungen pro Tick (Safety)
+  // 3) Ganzzahliges Budget umsetzen; harte Tick-Grenze
+  let toMake = Math.min(Math.floor(pairBudget), 8); // ≤8 Paarungen/Tick
   if (toMake <= 0) return;
 
-  // 3) Pärchen bilden (stochastisch), Pair-Radius leicht großzügiger wenn A/B im Mate-Modus
-  let made = 0;
-  const triesPerPair = 2; // zwei Anläufe je Paar, um unnötige Vollscans zu vermeiden
-
-  // optional: Pair-Distanz-Grundwert
   const basePairR = (CONFIG.cell?.pairDistance || 28);
+  const popIdxStart = (Math.random()*pop)|0; // zufälliger Start im Array
 
-  // zufällige Startreihenfolge (leichter Shuffle)
-  const startIdx = Math.floor(Math.random()*pop);
-
+  let made = 0;
   for (let quota=0; quota<toMake; quota++){
-    // Wähle A per Scan mit Wrap-around
-    let A=null, ai=-1;
+    // A wählen (Wrap-around-Scan ab Zufallsindex)
+    let A=null;
     for (let off=0; off<pop; off++){
-      const i=(startIdx+off)%pop;
-      const cand=cells[i];
-      if (!cand || cand.cooldown>0 || cand.energy<E_MIN) continue;
-      A=cand; ai=i; break;
+      const i = (popIdxStart + off) % pop;
+      const cand = cells[i];
+      if (!cand) continue;
+      if (cand.cooldown>0) continue;
+      if (cand.energy < E_MIN) continue;
+      A = cand; break;
     }
-    if (!A) break; // niemand geeignet
+    if (!A) break;
 
     let success=false;
-    for (let attempt=0; attempt<triesPerPair && !success; attempt++){
-      const sampled = new Set();
-      const aMate = A.__drive?.mode === "mate";
-      // Paar-Radius: wenn einer im Mate-Modus ist → 1.4×, sonst 1.2×
-      const pairR = basePairR * (aMate ? 1.4 : 1.2);
+    const sampled = new Set();
 
-      const B = findPartner(cells, A, pairR, E_MIN, sampled, 60);
-      if (!B) continue;
+    // Mate-Modus → größerer Radius
+    const aMate = A.__drive?.mode === "mate";
+    const pairR = basePairR * (aMate ? 1.4 : 1.2);
 
-      // Erzeuge Kind (einfaches Recombine + Mutation)
-      const g = recombine(A.genome, B.genome);
+    // Partner suchen
+    const B = findPartner(cells, A, pairR, E_MIN, sampled, 64);
+    if (B){
+      // Kind erzeugen
+      const g  = recombine(A.genome, B.genome);
       const mx = (A.pos.x+B.pos.x)/2 + (Math.random()*6-3);
       const my = (A.pos.y+B.pos.y)/2 + (Math.random()*6-3);
       const stammId = Math.random()<0.5 ? A.stammId : B.stammId;
 
-      createCell({ genome: g, pos:{x:mx,y:my}, stammId });
+      const child = createCell({ genome: g, pos:{x:mx,y:my}, stammId });
 
-      // Kosten & Cooldown
+      // Kosten & Cooldowns
       A.energy = Math.max(0, A.energy - COST);
       B.energy = Math.max(0, B.energy - COST);
       A.cooldown = COOLDOWN;
       B.cooldown = COOLDOWN;
 
-      emit("cells:born", { parents:[A.id,B.id] });
+      // Diagnose/POOLS
+      emit("cells:born", { parents:[A.id,B.id], child:{ id: child.id, stammId } });
+
       success = true; made++;
     }
-    // Budget nur bei Erfolg abbuchen (verhindert „Verschwinden“)
+
     if (success) pairBudget -= 1;
-    // Schutz vor endlosen Schleifen
-    if (made >= 24) break;
+    if (made >= 24) break; // extra Safety
   }
 }

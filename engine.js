@@ -1,167 +1,99 @@
-// engine.js — Orchestrierung: Game-Loop, UI, Timescale, Annealing, Panels
-// Micro-Profiler: Timings je Phase; emit('appops:timings', ...)
+// engine.js — Boot/Loop/Topbar/Events
 
-import { initErrorManager, breadcrumb } from "./errorManager.js";
-import { setWorldSize, createAdamAndEve, step as entitiesStep } from "./entities.js";
-import { step as reproductionStep, setMutationRate } from "./reproduction.js";
-import { step as foodStep, setSpawnRate } from "./food.js";
-import { draw, setPerfMode as rendererPerf } from "./renderer.js";
+import { initErrorManager, report } from "./errorManager.js";
+import { getCells, getFoodItems } from "./entities.js";
+import * as entities from "./entities.js";
+import * as reproduction from "./reproduction.js";
+import * as food from "./food.js";
+import * as renderer from "./renderer.js";
+import { on, emit } from "./event.js";
+import * as metrics from "./metrics.js";
 import { openEditor } from "./editor.js";
-import { initTicker, setPerfMode as tickerPerf, pushFrame } from "./ticker.js";
-import { emit, on } from "./event.js";
-import { openDummyPanel, handleCanvasClickForDummy } from "./dummy.js";
-import { initDrives } from "./drives.js";
-import { getEnvState } from "./environment.js";
+import { openEnvPanel } from "./environment.js";
 
-/* Laufzeit-Flags */
-let running=false, timescale=1, perfMode=false;
-const SPEED_STEPS=[1,5,10,50]; let speedIdx=0;
-let lastTime=0, acc=0; const fixedDt=1/60; let simTime=0;
-let annealAccum=0;
+let running = false;
+let lastTime = 0;
+let timescale = 1;
+let perfMode = false;
 
-/* Topbar Height → CSS */
-function setTopbarHeightVar() {
-  const topbar = document.getElementById("topbar");
-  const h = topbar ? (topbar.offsetHeight || 56) : 56;
-  document.documentElement.style.setProperty("--topbar-h", h + "px");
-}
-let _topbarRO=null;
-function installTopbarObserver(){
-  const topbar=document.getElementById("topbar");
-  if(!topbar) return;
-  try{
-    _topbarRO?.disconnect();
-    _topbarRO = new ResizeObserver(()=>{
-      setTopbarHeightVar();
-      const canvas=document.getElementById("world");
-      if(canvas){
-        const rect=canvas.getBoundingClientRect();
-        canvas.width=Math.round(rect.width);
-        canvas.height=Math.round(rect.height);
-        setWorldSize(canvas.width, canvas.height);
-      }
-    });
-    _topbarRO.observe(topbar);
-  }catch{}
-}
-function resizeCanvas(){
-  setTopbarHeightVar();
-  const canvas=document.getElementById("world");
-  const rect=canvas.getBoundingClientRect();
-  canvas.width=Math.round(rect.width);
-  canvas.height=Math.round(rect.height);
-  setWorldSize(canvas.width, canvas.height);
-}
-
-/* UI-Bindings */
-function bindUI(){
-  const btnStart  = document.getElementById("btnStart");
-  const btnPause  = document.getElementById("btnPause");
-  const btnReset  = document.getElementById("btnReset");
-  const btnEditor = document.getElementById("btnEditor");
-  const btnGenea  = document.getElementById("btnGenea");
-  const btnDummy  = document.getElementById("btnDummy");
-  const btnDiag   = document.getElementById("btnDiag");
-  const btnAppOps = document.getElementById("btnAppOps");
-  const btnHUD    = document.getElementById("btnHUD");
-  const btnSpeed  = document.getElementById("btnSpeed");
-
-  btnStart.onclick = ()=>{ breadcrumb("ui:btn","Start"); start(); };
-  btnPause.onclick = ()=>{ breadcrumb("ui:btn","Pause"); pause(); };
-  btnReset.onclick = ()=>{ breadcrumb("ui:btn","Reset"); reset(); };
-  btnEditor.onclick= ()=>{ breadcrumb("ui:btn","Editor"); openEditor(); };
-  if (btnGenea) btnGenea.onclick = ()=> import("./genea.js").then(m=>m.openGenealogyPanel());
-  if (btnDummy) btnDummy.onclick = ()=> openDummyPanel();
-  if (btnDiag)  btnDiag.onclick  = ()=> import("./diag.js").then(m=>m.openDiagPanel());
-  if (btnAppOps) btnAppOps.onclick = ()=> import("./appops_panel.js").then(m=>m.openAppOpsPanel());
-  if (btnHUD) btnHUD.onclick     = ()=> import("./hud.js").then(m=>m.toggleHUD());
-  btnSpeed.onclick               = ()=> cycleSpeed();
-
-  const mu=document.getElementById("mutation");
-  const fr=document.getElementById("foodrate");
-  const pm=document.getElementById("perfmode");
-  const mutVal=document.getElementById("mutVal");
-  const foodVal=document.getElementById("foodVal");
-  function updVals(){ if(mutVal) mutVal.textContent=`${Math.round(parseFloat(mu.value||"0"))}%`; if(foodVal) foodVal.textContent=`${Math.round(parseFloat(fr.value||"0"))}/s`; }
-  mu.oninput=()=>{ setMutationRate(parseFloat(mu.value)); updVals(); };
-  fr.oninput=()=>{ setSpawnRate(parseFloat(fr.value)); updVals(); };
-  pm.oninput =()=> setPerfMode(pm.checked);
-  [mu,fr].forEach(el=> el?.addEventListener("touchmove",(e)=>{ e.preventDefault(); },{passive:false}));
-
-  const canvas=document.getElementById("world");
-  canvas.addEventListener("click",(e)=>{ const r=canvas.getBoundingClientRect(); handleCanvasClickForDummy(e.clientX-r.left, e.clientY-r.top); });
-
-  // Startwerte anwenden
-  setMutationRate(parseFloat(mu.value));
-  setSpawnRate(parseFloat(fr.value)); // food.js wendet global +15% an
-  setPerfMode(pm.checked);
-  updVals();
-  setTimescale(SPEED_STEPS[speedIdx]); updateSpeedButton();
-}
-function updateSpeedButton(){ const sp=document.getElementById("btnSpeed"); if(sp) sp.textContent=`Tempo ×${SPEED_STEPS[speedIdx]}`; }
-function cycleSpeed(){ speedIdx=(speedIdx+1)%SPEED_STEPS.length; setTimescale(SPEED_STEPS[speedIdx]); updateSpeedButton(); }
-
-/* Mutation-Annealing (angepasst) */
-function annealMutation(dt){
-  annealAccum += dt;
-  if (annealAccum < 1) return; // 1x pro Sekunde
-  annealAccum = 0;
-
-  // NEU: 0–120 s → 12 %; danach → 8 %
-  if (simTime <= 120) setMutationRate(12);
-  else setMutationRate(8);
-}
-
-/* Game-Loop mit Micro-Profiler */
-function frame(now){
-  if(!running) return;
-  now/=1000;
-  if(!lastTime) lastTime=now;
-  const delta=Math.min(0.1, now-lastTime);
-  lastTime=now;
-
-  acc += delta * timescale;
-  const desiredSteps=Math.floor(acc/fixedDt);
-  const maxSteps=Math.min(60, Math.max(8, Math.ceil(timescale*1.2)));
-  const steps=Math.min(desiredSteps, maxSteps);
-  const env=getEnvState(); // neutral
-
-  let tEnt=0, tRep=0, tFood=0;
-  for(let s=0;s<steps;s++){
-    let t0=performance.now(); entitiesStep(fixedDt, env, simTime); tEnt += performance.now()-t0;
-    t0=performance.now(); reproductionStep(fixedDt); tRep += performance.now()-t0;
-    t0=performance.now(); foodStep(fixedDt);        tFood+= performance.now()-t0;
-    simTime += fixedDt; acc -= fixedDt;
-    annealMutation(fixedDt);
-  }
-  const backlogAfter = Math.floor(acc / fixedDt);
-  if (backlogAfter > maxSteps) acc = fixedDt * maxSteps;
-
-  const tDraw0=performance.now(); draw(); const tDraw=performance.now()-tDraw0;
-
-  emit("appops:frame",   { desired: desiredSteps, max: maxSteps, steps, delta, timescale });
-  emit("appops:timings", { ent:tEnt, repro:tRep, food:tFood, draw:tDraw, steps });
-
-  pushFrame(fixedDt, 1/delta);
-  requestAnimationFrame(frame);
-}
-
-/* Public API */
 export function boot(){
-  try{ initErrorManager({ pauseOnError:true, captureConsole:true }); }catch{}
-  on("error:panic", ()=> pause()); on("error:resume", ()=> start());
-  resizeCanvas(); installTopbarObserver(); window.addEventListener("resize", resizeCanvas);
-  initDrives(); createAdamAndEve(); initTicker(); bindUI(); draw();
-  window.__APP_BOOTED = true;
+  try{
+    initErrorManager();
+    const canvas = document.getElementById("scene");
+    const rect = canvas.getBoundingClientRect();
+    entities.setWorldSize(rect.width, rect.height);
+    entities.createAdamAndEve();
+    entities.applyEnvironment({}); // Umwelteffekte derzeit aus
+    lastTime = performance.now();
+    hookUI();
+  }catch(err){ report(err,{where:"boot"}); }
 }
-export function start(){ if(!running){ running=true; lastTime=0; requestAnimationFrame(frame); } }
-export function pause(){ running=false; }
-export function reset(){ running=false; import("./food.js").then(m=>m.spawnClusters()); import("./entities.js").then(m=>m.createAdamAndEve()); draw(); }
-export function setTimescale(x){ timescale=Math.max(0.1, Math.min(50, x)); emit("ui:speed", timescale); }
-export function setPerfMode(on){ perfMode=!!on; rendererPerf(perfMode); tickerPerf(perfMode); }
 
-/* Boot-Guard */
-(function ensureBoot(){
-  if (document.readyState === "loading") window.addEventListener("DOMContentLoaded", boot);
-  else try{ boot(); }catch(e){ console.error("boot() error", e); }
-})();
+function hookUI(){
+  document.getElementById("btnStart")?.addEventListener("click", start);
+  document.getElementById("btnPause")?.addEventListener("click", pause);
+  document.getElementById("btnReset")?.addEventListener("click", reset);
+  document.getElementById("btnEditor")?.addEventListener("click", openEditor);
+  document.getElementById("btnEnv")?.addEventListener("click", openEnvPanel);
+  const perf = document.getElementById("chkPerf");
+  perf?.addEventListener("change", ()=> setPerfMode(!!perf.checked));
+}
+
+export function start(){ if(!running){ running=true; loop(); } }
+export function pause(){ running=false; }
+export function reset(){
+  try{
+    running=false;
+    entities.createAdamAndEve();
+    lastTime = performance.now();
+    emit("app:reset",{});
+  }catch(e){ report(e,{where:"reset"}); }
+}
+export function setTimescale(x){ timescale = Math.max(0.1, Math.min(50, +x||1)); }
+export function setPerfMode(on){
+  perfMode = !!on;
+  renderer.setPerfMode(perfMode);
+  emit("perf:mode", { on:perfMode });
+}
+
+function loop(){
+  if(!running) return;
+  const now = performance.now();
+  let dt = (now - lastTime)/1000 * timescale;
+  if (dt > 0.2) dt = 0.2;   // clamp
+  lastTime = now;
+
+  try{
+    step(dt, now/1000);
+  }catch(e){ report(e,{where:"loop.step"}); }
+
+  requestAnimationFrame(loop);
+}
+
+function step(dt, tSec){
+  metrics.beginTick();
+
+  // ==== Entities ====
+  let t0 = metrics.phaseStart();
+  entities.step(dt, {}, tSec);
+  metrics.phaseEnd("entities", t0);
+
+  // ==== Reproduction ====
+  t0 = metrics.phaseStart();
+  reproduction.step(dt);
+  metrics.phaseEnd("reproduction", t0);
+
+  // ==== Food ====
+  t0 = metrics.phaseStart();
+  food.step(dt);
+  metrics.phaseEnd("food", t0);
+
+  // ==== Render ====
+  t0 = metrics.phaseStart();
+  renderer.draw({ cells:getCells(), food:getFoodItems() }, {});
+  metrics.phaseEnd("draw", t0);
+
+  // optional: Ökonomie zur Anzeige berechnen/lesen
+  const econ = metrics.readEnergyAndReset();
+  emit("econ:snapshot", econ);
+}
