@@ -16,7 +16,7 @@
     .sep{width:1px;height:22px;background:rgba(90,120,150,.35);margin:0 6px}
     .bar button{background:#243241;border:1px solid #3a5166;color:#cfe6ff;border-radius:10px;padding:6px 10px;cursor:pointer}
     .bar button:hover{filter:brightness(1.12)}
-    .bar input[type=range]{width:180px}
+    .bar input[type=range]{width:180px;touch-action:none} /* besseres Touch-Drag */
     #scene{display:block;width:min(1400px,94vw);height:min(72vh,78svh);margin:10px auto 18px;background:#0f1720;
            border:1px solid rgba(70,96,120,.25);border-radius:14px;box-shadow:inset 0 6px 30px rgba(0,0,0,.35)}
     *{touch-action:manipulation}
@@ -38,7 +38,7 @@
     <span class="sep"></span>
     <button id="btnEditor">CRISPR-Editor</button>
     <button id="btnEnv">Umwelt</button>
-    <button id="btnGene">Stammbaum</button>
+    <!-- Stammbaum entfernt -->
     <button id="btnDummy">Dummy</button>
     <button id="btnAppOps">App-Ops</button>
     <button id="btnDiag">Diagnose</button>
@@ -63,16 +63,13 @@
 <!-- Diagnose (manuell) -->
 <script type="module" src="./preflight.js"></script>
 
-<!-- Boot & UI-Wiring (robust + Cache-Buster für engine.js) -->
+<!-- Boot & UI-Wiring -->
 <script type="module">
-  const V = '?v=' + Date.now();
-  const eng = await import('./engine.js'+V).catch(e=>{ console.error('engine import',e); });
-  const { boot, setTimescale } = eng || {};
-
-  const run = ()=> { try{ boot?.(); }catch(e){ console.error('[boot]', e); } };
-  (document.readyState==='loading')
-    ? document.addEventListener('DOMContentLoaded', run, {once:true})
-    : run();
+  const V='?v='+Date.now();
+  const eng = await import('./engine.js'+V).catch(e=>console.error('engine import',e));
+  const { boot, setTimescale } = eng||{};
+  const run=()=>{ try{ boot?.(); }catch(e){ console.error('[boot]',e);} };
+  (document.readyState==='loading') ? document.addEventListener('DOMContentLoaded',run,{once:true}) : run();
 
   // Tempo
   document.querySelectorAll('button[data-ts]').forEach(b=>b.addEventListener('click',()=>setTimescale?.(+b.dataset.ts||1)));
@@ -83,10 +80,9 @@
   // Perf
   chkPerf.onchange = (e)=> import('./engine.js'+V).then(m=>m.setPerfMode?.(e.target.checked));
   // Slider
-  const sMut = sliderMutation, sFood = sliderFood;
-  const lMut = lblMutation,    lFood = lblFood;
-  lMut.textContent = (sMut.value|0)+' %';
-  lFood.textContent = (+sFood.value).toFixed(1).replace('.0','')+'/s';
+  const sMut=sliderMutation,sFood=sliderFood,lMut=lblMutation,lFood=lblFood;
+  lMut.textContent=(sMut.value|0)+' %';
+  lFood.textContent=(+sFood.value).toFixed(1).replace('.0','')+'/s';
   sMut.oninput  = e=> import('./reproduction.js'+V).then(m=>m.setMutationRate?.(e.target.value|0));
   sFood.oninput = e=> { const v=+e.target.value; lFood.textContent=v.toFixed(1).replace('.0','')+'/s';
                         import('./food.js'+V).then(m=>m.setSpawnRate?.(v)); };
@@ -94,7 +90,7 @@
   // Tools
   btnEditor.onclick = ()=> import('./editor.js'+V).then(m=>m.openEditor?.());
   btnEnv.onclick    = ()=> import('./environment.js'+V).then(m=>m.openEnvPanel?.());
-  btnGene.onclick   = ()=> import('./genealogy.js'+V).then(m=>m.openGenealogy?.());
+  // btnGene entfernt
   btnDummy.onclick  = ()=> import('./dummy.js'+V).then(m=>m.openDummyPanel?.());
   btnAppOps.onclick = ()=> import('./appops_panel.js'+V).then(m=>m.openAppOps?.());
   btnDiag.onclick   = ()=> import('./preflight.js'+V).then(m=>m.diagnose?.());
