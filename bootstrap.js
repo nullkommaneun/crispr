@@ -1,4 +1,4 @@
-// bootstrap.js — robuster Booter + UI-Wiring + Fehleroverlay + SW-Schutz
+// bootstrap.js — robuster Booter + UI-Wiring + Fehleroverlay + SW-Schutz + PF-First
 const BOOT_FLAG = "__APP_BOOTED";
 const OVERLAY_ID = "errorOverlay";
 
@@ -27,6 +27,21 @@ function showError(msg){
   el.classList.remove("hidden");
   el.style.display = "block";
 }
+
+// ---- PF-First: sofortige Diagnose, falls ?pf=1 (oder #pf) ----
+(function preflightFirst(){
+  try{
+    const q = new URLSearchParams(location.search);
+    const force = q.get('pf') === '1' || location.hash === '#pf';
+    if (force) {
+      // Boot-Guard stummschalten, damit kein rotes Overlay die PF überlagert
+      window.__suppressBootGuard = true;
+      import('./preflight.js?v=' + Date.now())
+        .then(m => m.diagnose && m.diagnose())
+        .catch(e => { try{console.error('[PF hook]', e);}catch{} });
+    }
+  }catch{}
+})();
 
 // Topbar-Höhe -> CSS-Var (falls Engine nicht sofort läuft)
 (function setTopbarHeightVar(){
@@ -64,27 +79,28 @@ function wireUI(){
   const sf = $('sliderFood'),     of = $('outFood');
 
   const syncM = async ()=>{
-    om.textContent = `${sm.value} %`;
+    if (om) om.textContent = `${sm.value} %`;
     try{ (await import('./reproduction.js')).setMutationRate(+sm.value|0); }catch{}
   };
   const syncF = async ()=>{
-    of.textContent = `${(+sf.value).toFixed(1)}/s`.replace('.0','');
+    if (of) of.textContent = `${(+sf.value).toFixed(1)}/s`.replace('.0','');
     try{ (await import('./food.js')).setSpawnRate(+sf.value||0); }catch{}
   };
-  ['input','change'].forEach(ev=> sm.addEventListener(ev, syncM, {passive:true}));
-  ['input','change'].forEach(ev=> sf.addEventListener(ev, syncF, {passive:true}));
+  if (sm) ['input','change'].forEach(ev=> sm.addEventListener(ev, syncM, {passive:true}));
+  if (sf) ['input','change'].forEach(ev=> sf.addEventListener(ev, syncF, {passive:true}));
 
   // Tools
   $('btnEditor').onclick = async ()=> { try{ (await import('./editor.js')).openEditor(); }catch(e){ showError(String(e)); } };
   $('btnEnv').onclick    = async ()=> { try{ (await import('./environment.js')).openEnvPanel(); }catch(e){ showError(String(e)); } };
   $('btnAppOps').onclick = async ()=> { try{ (await import('./appops_panel.js')).openAppOps(); }catch(e){ showError(String(e)); } };
-  $('btnDiag').onclick   = async ()=> { try{ (await import('./preflight.js')).diagnose(); }catch(e){ showError(String(e)); } };
+  $('btnDiag').onclick   = async ()=> { try{ (await import('./preflight.js?v='+Date.now())).diagnose(); }catch(e){ showError(String(e)); } };
 
-  // Startwerte in die Sim schieben
-  syncM(); syncF();
+  // Startwerte in die Sim schieben (falls vorhanden)
+  if (sm) syncM();
+  if (sf) syncF();
 }
 
-// ---------- Engine booten ----------
+// ---------- Engine booten + Fallback-Preflight ----------
 (async function boot(){
   try{
     wireUI();
@@ -93,7 +109,14 @@ function wireUI(){
 
     // Boot-Guard (falls engine.js geladen, aber boot nicht markiert)
     setTimeout(()=>{
+      const forceAuto = new URLSearchParams(location.search).get('pf') === 'auto';
       if (!window[BOOT_FLAG] && !window.__suppressBootGuard) {
+        // Wenn gewünscht: automatisch Preflight öffnen statt rotem Guard
+        if (forceAuto) {
+          window.__suppressBootGuard = true;
+          import('./preflight.js?v='+Date.now()).then(mm=>mm.diagnose&&mm.diagnose());
+          return;
+        }
         showError(
 `Die Anwendung scheint nicht gestartet zu sein (Boot-Flag fehlt).
 
