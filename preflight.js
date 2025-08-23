@@ -10,10 +10,13 @@ function show(text){
     p.style.cssText = 'max-width:1100px;width:92%;background:#10161d;color:#d6e1ea;border:1px solid #2a3b4a;border-radius:10px;padding:16px;overflow:auto;white-space:pre-wrap;';
     const x = document.createElement('button'); x.textContent='Schließen';
     x.style.cssText='position:absolute;top:12px;right:12px;background:#243241;color:#cfe6ff;border:1px solid #47617a;border-radius:8px;padding:6px 10px;';
-    x.onclick=()=>w.remove();
+    x.onclick=()=>{ w.remove(); window.__pfOpen = false; window.__suppressBootGuard = false; };
     w.append(p,x);
     document.body.appendChild(w);
   }
+  // Preflight aktiv: Boot-Guard/Fehlerdialoge unterdrücken
+  window.__pfOpen = true;
+  window.__suppressBootGuard = true;
   el('diag-box').textContent = text;
 }
 const OK='✅ ', NO='❌ ', OPT='⚠️  ';
@@ -75,7 +78,6 @@ async function uiCheck(){
   try{ const m=await import('./dummy.js?v='+Date.now()); fn.openDummy=typeof m.openDummyPanel==='function'; }catch(e){ fn._duErr=String(e); }
   try{ const m=await import('./appops_panel.js?v='+Date.now()); fn.openOps=typeof m.openAppOps==='function'; }catch(e){ fn._opErr=String(e); }
 
-  // Canvas-Probe
   let canvas2D=false; try{ const c=el('scene'); canvas2D=!!(c&&c.getContext&&c.getContext('2d')); }catch{}
   ui.canvas2D=canvas2D;
 
@@ -83,7 +85,9 @@ async function uiCheck(){
 }
 
 function runtime(){
-  const boot=!!window.__bootOK, fc=window.__frameCount|0;
+  // beide Flags akzeptieren (Engine kann __bootOK ODER __APP_BOOTED setzen)
+  const boot = !!(window.__bootOK || window.__APP_BOOTED);
+  const fc=window.__frameCount|0;
   const fps=window.__fpsEMA? Math.round(window.__fpsEMA) : 0;
   const cells=window.__cellsN|0, food=window.__foodN|0;
   const last=window.__lastStepAt? new Date(window.__lastStepAt).toLocaleTimeString():'–';
@@ -92,7 +96,8 @@ function runtime(){
 }
 
 export async function diagnose(){
-  // Preflight-Läufe unterdrücken Boot-Guard-Overlay
+  // Preflight aktiv → Boot-Guard ruhig
+  window.__pfOpen = true;
   window.__suppressBootGuard = true;
 
   const rt=runtime();

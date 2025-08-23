@@ -20,7 +20,6 @@ export function report(err, ctx){
   try{
     const msg = (err && err.stack) ? err.stack : String(err);
     window.__runtimeErrors?.push({ when:(ctx?.where||'unknown'), ts: Date.now(), msg });
-    // optional: Console
     console.error('[report]', ctx, err);
   }catch{}
 }
