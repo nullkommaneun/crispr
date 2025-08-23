@@ -1,157 +1,206 @@
-// preflight.js — Deep-Check + UI-Wiring + Canvas-Probe + MDC-CHK
+// preflight.js — Deep-Check + UI-Wiring + Canvas-Probe + MDC-CHK (non-blocking)
+import { PF_MODULES } from "./modmap.js";
 
-const OK='✅ ', NO='❌ ', OPT='⚠️  ';
+const OK  = "✅ ";
+const NO  = "❌ ";
+const OPT = "⚠️  ";
 const $ = id => document.getElementById(id);
 const b64 = s => btoa(unescape(encodeURIComponent(s)));
 
-function ensureOverlay() {
-  let w = $('diag-overlay');
-  if (w) return w;
-  w = document.createElement('div'); w.id='diag-overlay';
-  w.style.cssText='position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.65);display:flex;align-items:flex-start;justify-content:center;padding:48px;';
-  const card = document.createElement('div');
-  card.style.cssText='max-width:1100px;width:92%;background:#10161d;color:#d6e1ea;border:1px solid #2a3b4a;border-radius:10px;padding:16px;overflow:auto;';
-  const pre = document.createElement('pre'); pre.id='diag-box'; pre.style.whiteSpace='pre-wrap';
-  const row = document.createElement('div'); row.style.cssText='display:flex;gap:8px;margin-top:8px;';
-  const btnCopy = document.createElement('button'); btnCopy.textContent='MDC kopieren';
-  btnCopy.onclick = async()=>{ try{ await navigator.clipboard.writeText(window.__MDC_LAST||""); btnCopy.textContent='Kopiert ✓'; setTimeout(()=>btnCopy.textContent='MDC kopieren',1200);}catch{} };
-  const btnClose = document.createElement('button'); btnClose.textContent='Schließen';
-  btnClose.onclick=()=> w.remove();
-  row.append(btnCopy, btnClose);
-  card.append(pre, row); w.append(card); document.body.appendChild(w);
-  return w;
+function overlay() {
+  let root = $("diag-overlay");
+  if (root) return root;
+
+  root = document.createElement("div");
+  root.id = "diag-overlay";
+  root.style.cssText =
+    "position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.65);" +
+    "display:flex;align-items:flex-start;justify-content:center;padding:20px;";
+  root.addEventListener("click", e => { if (e.target === root) hide(); });
+
+  const card = document.createElement("div");
+  card.style.cssText =
+    "max-width:1100px;width:96%;max-height:86vh;overflow:auto;background:#10161d;" +
+    "border:1px solid #2a3b4a;border-radius:12px;color:#d6e1ea;padding:14px;" +
+    "box-shadow:0 30px 70px rgba(0,0,0,.45);";
+
+  const bar = document.createElement("div");
+  bar.style.cssText = "display:flex;gap:8px;align-items:center;justify-content:space-between;margin-bottom:8px;";
+  const h = document.createElement("h3");
+  h.textContent = "Start-Diagnose (Deep-Check + UI-Wiring)";
+  h.style.margin = "0";
+  const btns = document.createElement("div");
+  btns.style.cssText = "display:flex;gap:6px;";
+  const btnCopy = document.createElement("button");
+  btnCopy.id = "btnMdcCopy";
+  btnCopy.textContent = "MDC kopieren";
+  const btnRerun = document.createElement("button");
+  btnRerun.textContent = "Erneut prüfen";
+  const btnClose = document.createElement("button");
+  btnClose.textContent = "Schließen";
+  btnClose.onclick = hide;
+  btns.append(btnCopy, btnRerun, btnClose);
+  bar.append(h, btns);
+
+  const pre = document.createElement("pre");
+  pre.id = "diag-box";
+  pre.style.cssText = "white-space:pre-wrap;margin:0;font:13px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;";
+
+  card.append(bar, pre);
+  root.append(card);
+  document.body.appendChild(root);
+
+  btnRerun.onclick = () => diagnose();
+  btnCopy.onclick = () => {
+    const code = pre.dataset.mdc || "";
+    copy(code, btnCopy);
+  };
+
+  return root;
 }
-function show(text, mdc){
-  ensureOverlay();
-  $('diag-box').textContent = text;
-  window.__MDC_LAST = mdc || "";
+function show(lines) {
+  const root = overlay();
+  root.style.display = "flex";
+  const box = $("diag-box");
+  box.textContent = Array.isArray(lines) ? lines.join("\n") : String(lines||"");
+}
+function append(line) {
+  const box = $("diag-box") || overlay().querySelector("#diag-box");
+  box.textContent += (box.textContent ? "\n" : "") + line;
+}
+function setMdc(mdc) {
+  const box = $("diag-box");
+  if (box) box.dataset.mdc = mdc;
+}
+function hide() {
+  const root = $("diag-overlay");
+  if (root) root.style.display = "none";
+}
+async function copy(text, btn) {
+  try {
+    await navigator.clipboard.writeText(text || "");
+    if (btn) { const t = btn.textContent; btn.textContent = "Kopiert ✓"; setTimeout(()=>btn.textContent=t, 1000); }
+  } catch {}
 }
 
-// -------- Modulmatrix (ohne Dummy/Genealogy) ----------
-async function checkOne(path, wants=[], optional=false){
+/* ---------------------------- RUNTIME / WIRING ----------------------------- */
+function rtSnapshot(){
+  const boot = !!window.__bootOK;
+  const fc   = window.__frameCount|0;
+  const fps  = window.__fpsEMA ? Math.round(window.__fpsEMA) : 0;
+  const cells= window.__cellsN|0, food= window.__foodN|0;
+  const last = window.__lastStepAt ? new Date(window.__lastStepAt).toLocaleTimeString() : "–";
+  const errs = (Array.isArray(window.__runtimeErrors) ? window.__runtimeErrors.length : 0) | 0;
+  return { boot, fc, fps, cells, food, last, errs };
+}
+
+async function uiCheck(){
+  const ui = {
+    btnStart:!!$("btnStart"), btnPause:!!$("btnPause"), btnReset:!!$("btnReset"),
+    chkPerf:!!$("chkPerf"),
+    btnEditor:!!$("btnEditor"), btnEnv:!!$("btnEnv"),
+    btnAppOps:!!$("btnAppOps"), btnDiag:!!$("btnDiag"),
+    sliderMutation:!!$("sliderMutation"), sliderFood:!!$("sliderFood"),
+    canvas:!!$("scene")
+  };
+  const fn = {};
+  try{ const m=await import("./engine.js");       fn.start=typeof m.start==='function'; fn.pause=typeof m.pause==='function'; fn.reset=typeof m.reset==='function'; fn.setTS=typeof m.setTimescale==='function'; fn.setPerf=typeof m.setPerfMode==='function'; }catch(e){ fn._engineErr=String(e); }
+  try{ const m=await import("./reproduction.js"); fn.setMutation=typeof m.setMutationRate==='function'; }catch(e){}
+  try{ const m=await import("./food.js");         fn.setFood=typeof m.setSpawnRate==='function'; }catch(e){}
+  try{ const m=await import("./editor.js");       fn.openEditor=typeof m.openEditor==='function'; }catch(e){}
+  try{ const m=await import("./environment.js");  fn.openEnv=typeof m.openEnvPanel==='function'; }catch(e){}
+  try{ const m=await import("./appops_panel.js"); fn.openOps=typeof m.openAppOps==='function'; }catch(e){}
+  // Canvas-Probe
+  let canvas2D=false; try{ const c=$("scene"); canvas2D=!!(c&&c.getContext&&c.getContext("2d")); }catch{}
+  ui.canvas2D=canvas2D;
+  return {ui, fn};
+}
+
+/* ------------------------------- MODULMATRIX ------------------------------- */
+async function checkModule({path, wants=[], optional=false}) {
   try{
     const m = await import(path);
     const miss = wants.filter(k => !(k in m));
-    if (miss.length) return (optional?OPT:NO)+`${path} · fehlt: ${miss.join(', ')}${optional?' (optional)':''}`;
-    return OK+path+' OK';
+    if (miss.length) return (optional?OPT:NO) + `${path} · fehlt: ${miss.join(", ")} ${optional?"(optional)":""}`;
+    return OK + path + " OK";
   }catch(e){
-    let msg = String(e?.message || e);
-    // Zusatz: http-Headerhilfe
-    try {
-      const r = await fetch(path, { cache:'no-store' });
-      msg += ` | http ${r.status} ${r.statusText||''}`;
-      const ct = r.headers.get('content-type'); if (ct) msg += ` | ct=${ct}`;
-    } catch {}
-    return (optional?OPT:NO)+`${path} · Import/Parse fehlgeschlagen → ${msg}${optional?' (optional)':''}`;
+    const msg = String(e?.message || e);
+    return (optional?OPT:NO) + `${path} · Import/Parse fehlgeschlagen → ${msg} ${optional?"(optional)":""}`;
   }
 }
-async function runModuleMatrix(){
-  const rows = [];
-  const MODS = [
-    ['./event.js',['on','emit']],
-    ['./config.js',[],true],
-    ['./errorManager.js',['initErrorManager','report']],
-    ['./engine.js',['boot','start','pause','reset','setTimescale','setPerfMode']],
-    ['./entities.js',['setWorldSize','createAdamAndEve','step','getCells','getFoodItems','applyEnvironment']],
-    ['./reproduction.js',['step','setMutationRate']],
-    ['./food.js',['step','setSpawnRate']],
-    ['./renderer.js',['draw','setPerfMode']],
-    ['./metrics.js',['getPhases','getEconSnapshot','getPopSnapshot','getDriftSnapshot','getMateSnapshot']],
-    ['./drives.js',['getDrivesSnapshot','getTraceText'],true],
-    ['./editor.js',['openEditor'],true],
-    ['./environment.js',['openEnvPanel'],true],
-    ['./appops_panel.js',['openAppOps'],true],
-    ['./appops.js',['generateOps'],true],
-    ['./advisor.js',[],true],
-    ['./grid.js',['createGrid'],true],
-    ['./bootstrap.js',[],true],
-    ['./sw.js',[],true],
-    ['./diag.js',['openDiagPanel'],true]
-  ];
-  for (const [p, w, opt] of MODS) rows.push(await checkOne(p, w, !!opt));
-  return rows.join('\n');
+async function runModuleMatrixStreaming() {
+  // module für module prüfen, dabei UI freigeben
+  for (let i=0;i<PF_MODULES.length;i++){
+    const line = await checkModule(PF_MODULES[i]);
+    append(line);
+    // UI freigeben, damit iOS Safari nicht „friert“
+    await new Promise(r => setTimeout(r, 0));
+  }
 }
 
-// -------- UI/Wiring ----------
-async function uiCheck(){
-  const ui = {
-    btnStart:!!$('btnStart'), btnPause:!!$('btnPause'), btnReset:!!$('btnReset'),
-    chkPerf:!!$('chkPerf'),
-    btnEditor:!!$('btnEditor'), btnEnv:!!$('btnEnv'),
-    btnAppOps:!!$('btnAppOps'), btnDiag:!!$('btnDiag'),
-    sliderMutation:!!$('sliderMutation'), sliderFood:!!$('sliderFood'),
-    canvas:!!$('scene')
-  };
-  const fn = {};
-  try{ const m=await import('./engine.js');
-       fn.start=typeof m.start==='function'; fn.pause=typeof m.pause==='function';
-       fn.reset=typeof m.reset==='function'; fn.setTS=typeof m.setTimescale==='function';
-       fn.setPerf=typeof m.setPerfMode==='function'; }catch(e){ fn._engineErr=String(e); }
-  try{ const m=await import('./reproduction.js'); fn.setMutation=typeof m.setMutationRate==='function'; }catch{}
-  try{ const m=await import('./food.js'); fn.setFood=typeof m.setSpawnRate==='function'; }catch{}
-  try{ const m=await import('./editor.js'); fn.openEditor=typeof m.openEditor==='function'; }catch{}
-  try{ const m=await import('./environment.js'); fn.openEnv=typeof m.openEnvPanel==='function'; }catch{}
-  try{ const m=await import('./appops_panel.js'); fn.openOps=typeof m.openAppOps==='function'; }catch{}
-
-  // Canvas 2D Probe
-  let canvas2D=false; try{ const c=$('scene'); canvas2D=!!(c&&c.getContext&&c.getContext('2d')); }catch{}
-  ui.canvas2D=canvas2D;
-  return {ui,fn};
-}
-function runtime(){
-  const boot=!!window.__bootOK;
-  const fc  = window.__frameCount|0;
-  const fps = window.__fpsEMA? Math.round(window.__fpsEMA) : 0;
-  const cells = window.__cellsN|0, food = window.__foodN|0;
-  const last  = window.__lastStepAt? new Date(window.__lastStepAt).toLocaleTimeString():'–';
-  const errs  = (Array.isArray(window.__runtimeErrors)?window.__runtimeErrors.length:0)|0;
-  return {boot,fc,fps,cells,food,last,errs};
-}
-
-// -------- Diagnose ----------
+/* -------------------------------- DIAGNOSE -------------------------------- */
 export async function diagnose(){
+  // nicht den Boot-Guard verdoppeln
   window.__suppressBootGuard = true;
 
-  const rt = runtime();
-  const W = [];
-  const mark=(ok,label,hint='')=>W.push((ok?OK:NO)+label+(hint?(' — '+hint):''));
-  const wiring = await uiCheck();
+  const lines = [];
+  const rt = rtSnapshot();
 
-  mark(wiring.ui.btnStart && wiring.fn.start,'Start-Button → engine.start()', !wiring.ui.btnStart?'Button fehlt':(!wiring.fn.start?'API fehlt':''));
-  mark(wiring.ui.btnPause && wiring.fn.pause,'Pause-Button → engine.pause()', !wiring.ui.btnPause?'Button fehlt':(!wiring.fn.pause?'API fehlt':''));
-  mark(wiring.ui.btnReset && wiring.fn.reset,'Reset-Button → engine.reset()', !wiring.ui.btnReset?'Button fehlt':(!wiring.fn.reset?'API fehlt':''));
-  mark(wiring.ui.chkPerf  && wiring.fn.setPerf,'Perf-Checkbox → engine.setPerfMode()', !wiring.ui.chkPerf?'Checkbox fehlt':(!wiring.fn.setPerf?'API fehlt':''));
-  mark(wiring.ui.sliderMutation && wiring.fn.setMutation,'Slider Mutation% → reproduction.setMutationRate()', !wiring.ui.sliderMutation?'Slider fehlt':(!wiring.fn.setMutation?'API fehlt':''));
-  mark(wiring.ui.sliderFood && wiring.fn.setFood,'Slider Nahrung/s → food.setSpawnRate()', !wiring.ui.sliderFood?'Slider fehlt':(!wiring.fn.setFood?'API fehlt':''));
-  mark(wiring.ui.btnEditor && wiring.fn.openEditor,'CRISPR-Editor → editor.openEditor()', !wiring.ui.btnEditor?'Button fehlt':(!wiring.fn.openEditor?'API fehlt':''));
-  mark(wiring.ui.btnEnv && wiring.fn.openEnv,'Umwelt-Panel → environment.openEnvPanel()', !wiring.ui.btnEnv?'Button fehlt':(!wiring.fn.openEnv?'API fehlt':''));
-  mark(wiring.ui.btnAppOps && wiring.fn.openOps,'App-Ops → appops_panel.openAppOps()', !wiring.ui.btnAppOps?'Button fehlt':(!wiring.fn.openOps?'API fehlt':''));
-  W.push((wiring.ui.canvas?OK:NO)+'Canvas #scene vorhanden');
-  W.push((wiring.ui.canvas2D?OK:NO)+'2D-Context erzeugbar');
-
-  const modText = await runModuleMatrix();
-
-  const payload={v:1,kind:'ui-diagnose',ts:Date.now(),runtime:rt,wiring,modules:modText};
-  const mdc=`MDC-CHK-${(Math.random().toString(16).slice(2,6))}-${b64(JSON.stringify(payload))}`;
-
-  const lines=[];
-  lines.push('Start-Diagnose (Deep-Check + UI-Wiring)\n');
-  lines.push(`Boot-Flag: ${rt.boot?'gesetzt':'fehlt'}`);
+  lines.push("Start-Diagnose (Deep-Check + UI-Wiring)\n");
+  lines.push(`Boot-Flag: ${rt.boot ? "gesetzt" : "fehlt"}`);
   lines.push(`Frames: ${rt.fc}  ·  FPS≈ ${rt.fps}`);
   lines.push(`Zellen: ${rt.cells}  ·  Food: ${rt.food}`);
   lines.push(`Letzter Step: ${rt.last}`);
   lines.push(`Runtime-Fehler im Log: ${rt.errs}\n`);
-  lines.push('UI/Wiring:'); lines.push(...W,'');
-  lines.push('Module/Exporte:'); lines.push(modText,'');
-  lines.push('Maschinencode:', mdc,'');
-  show(lines.join('\n'), mdc);
+  lines.push("UI/Wiring:");
+
+  const {ui, fn} = await uiCheck();
+  const mark = (ok, label, hint="") => lines.push((ok?OK:NO) + label + (hint?(" — "+hint):""));
+
+  mark(ui.btnStart  && fn.start,  "Start-Button → engine.start()",  !ui.btnStart?"Button fehlt":(!fn.start?"API fehlt":""));
+  mark(ui.btnPause  && fn.pause,  "Pause-Button → engine.pause()",  !ui.btnPause?"Button fehlt":(!fn.pause?"API fehlt":""));
+  mark(ui.btnReset  && fn.reset,  "Reset-Button → engine.reset()",  !ui.btnReset?"Button fehlt":(!fn.reset?"API fehlt":""));
+  mark(ui.chkPerf   && fn.setPerf,"Perf-Checkbox → engine.setPerfMode()", !ui.chkPerf?"Checkbox fehlt":(!fn.setPerf?"API fehlt":""));
+  mark(ui.sliderMutation && fn.setMutation,"Slider Mutation% → reproduction.setMutationRate()", !ui.sliderMutation?"Slider fehlt":(!fn.setMutation?"API fehlt":""));
+  mark(ui.sliderFood && fn.setFood,"Slider Nahrung/s → food.setSpawnRate()", !ui.sliderFood?"Slider fehlt":(!fn.setFood?"API fehlt":""));
+  mark(ui.btnEditor && fn.openEditor,"CRISPR-Editor → editor.openEditor()", !ui.btnEditor?"Button fehlt":(!fn.openEditor?"API fehlt":""));
+  mark(ui.btnEnv    && fn.openEnv,  "Umwelt-Panel → environment.openEnvPanel()", !ui.btnEnv?"Button fehlt":(!fn.openEnv?"API fehlt":""));
+  mark(ui.btnAppOps && fn.openOps,  "App-Ops → appops_panel.openAppOps()", !ui.btnAppOps?"Button fehlt":(!fn.openOps?"API fehlt":""));
+  lines.push((ui.canvas?OK:NO) + "Canvas #scene vorhanden");
+  lines.push((ui.canvas2D?OK:NO)+ "2D-Context erzeugbar", "");
+
+  lines.push("Module/Exporte:");
+  show(lines); // Overlay öffnen und ersten Block schreiben
+
+  // Modulmatrix gestreamt (friert UI nicht ein)
+  await runModuleMatrixStreaming();
+
+  // Laufzeitfehler (letzte 4)
+  const errs = Array.isArray(window.__runtimeErrors) ? window.__runtimeErrors.slice(-4) : [];
+  if (errs.length){
+    append(""); append("Laufzeitfehler (letzte 4):"); append("");
+    for (const e of errs){
+      append(`[${new Date(e.ts).toLocaleTimeString()}] ${e.where||e.when}\n${String(e.msg||"")}`);
+    }
+  }
+
+  // MDC
+  const payload = {
+    v:1, kind:"ui-diagnose", ts:Date.now(),
+    runtime: rtSnapshot(), // nochmal nachziehen
+    // schlank: wir schreiben die Modul-Zeilen bereits in die Ansicht
+  };
+  const mdc = `MDC-CHK-${Math.random().toString(16).slice(2,6)}-${b64(JSON.stringify(payload))}`;
+  append(""); append("Maschinencode:"); append(mdc);
+  setMdc(mdc);
 }
 
-// manueller Hook via ?pf=1 und #pf
+/* ------------------------------- AUTO-HOOKS -------------------------------- */
+// manueller Hook via ?pf=1 (oder #pf). Warte kurz, damit engine.boot() das Flag setzen kann.
 (function(){
   try{
-    const q=new URLSearchParams(location.search);
-    if(q.get('pf')==='1' || location.hash==="#pf")
-      window.addEventListener('load', ()=>diagnose());
+    const q = new URLSearchParams(location.search);
+    const want = q.get("pf")==="1" || location.hash==="#pf";
+    if (want) window.addEventListener("load", ()=> setTimeout(diagnose, 350));
   }catch{}
 })();
