@@ -1,146 +1,79 @@
 <!doctype html>
 <html lang="de">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta charset="utf-8">
   <title>CRISPR Genetics Lab</title>
-
-  <!-- (optional) dein globales Styling; diese Seite enthält zusätzlich Fallback-CSS -->
-  <link rel="preload" href="./style.css" as="style" />
-  <link rel="stylesheet" href="./style.css" />
-
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <link rel="stylesheet" href="./style.css">
   <style>
-    /* ------- Fallback/Minimal CSS (falls style.css fehlt) ------- */
-    :root { --topbar-h: 56px; --bg: #0b1217; --panel:#0f1620; --ink:#d6e1ea; --line:#22303a; }
-    html, body { height: 100%; margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
-    .hidden { display: none !important; }
-
-    #topbar {
-      position: sticky; top: 0; z-index: 50;
-      display: grid; gap: 6px;
-      grid-template-columns: 1fr auto;
-      align-items: center;
-      padding: 8px 10px;
-      background: #0e141c;
-      border-bottom: 1px solid var(--line);
-      box-shadow: 0 6px 18px rgba(0,0,0,.25);
-    }
-    #topbar .row { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
-    #topbar .group { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
-    #topbar h1 { margin:0 10px 0 0; font-size:15px; color:#9bb7c9; font-weight:600; }
-
-    button, input[type="button"] {
-      background:#182431; color:#cfe6ff; border:1px solid #2a3b4a;
-      padding:6px 10px; border-radius:8px; cursor:pointer;
-    }
-    button:disabled { opacity:.6; cursor:not-allowed; }
-    label { color:#9bb7c9; font-weight:600; margin-right:4px; }
-    input[type="checkbox"] { transform: translateY(1px); }
-
-    /* Slider + Output-Kapsel */
-    .slider { display:flex; align-items:center; gap:8px; min-width:200px; }
-    .slider input[type="range"] { width: 160px; }
-    .badge { display:inline-block; padding:2px 6px; border:1px solid #2a3b4a; border-radius:8px; color:#cfe6ff; background:#121b25; font-size:12px; }
-
-    /* Canvas füllt restliche Höhe */
-    #stage { position: relative; height: calc(100dvh - var(--topbar-h)); }
-    #scene {
-      width: 100%; height: 100%;
-      display: block; border: 1px solid #13202c; border-radius: 12px;
-      background: #0f1720;
-    }
-
-    /* Panel-Host für App-Ops/Editor etc. (optional, App-Ops hat Fallback) */
-    #diagPanel {
-      position: fixed; inset: 48px 24px auto 24px; z-index: 60;
-      background: var(--panel); color: var(--ink);
-      border:1px solid var(--line); border-radius:12px;
-      box-shadow:0 30px 70px rgba(0,0,0,.45);
-      padding: 12px; overflow:auto; max-height: calc(100dvh - 96px);
-    }
+    /* kompakte Slider-Anzeige (optional; am Ende von style.css einfügen, falls du dort pflegen willst) */
+    label.kv { display:inline-flex; align-items:center; gap:.5rem; margin:0 .75rem; }
+    label.kv span { color:#a9c1d4; font-size:.9rem; }
+    label.kv input[type="range"] { width:160px; vertical-align:middle; }
+    label.kv output { min-width:3.5rem; text-align:right; color:#cfe7ff; font-variant-numeric:tabular-nums; }
   </style>
 </head>
 <body>
-
-  <!-- ======= TOPBAR ======= -->
-  <div id="topbar">
+  <!-- Topbar -->
+  <div id="topbar" class="topbar">
     <div class="row">
-      <h1>Simulation</h1>
-      <div class="group">
-        <button id="btnStart">Start</button>
-        <button id="btnPause">Pause</button>
-        <button id="btnReset">Reset</button>
-      </div>
+      <span class="group">Simulation</span>
+      <button id="btnStart">Start</button>
+      <button id="btnPause">Pause</button>
+      <button id="btnReset">Reset</button>
 
-      <div class="group" style="margin-left:12px;">
-        <label>Tempo</label>
-        <button id="t1">×1</button>
-        <button id="t5">×5</button>
-        <button id="t10">×10</button>
-        <button id="t50">×50</button>
-      </div>
+      <span class="group">Tempo</span>
+      <button data-ts="1">×1</button>
+      <button data-ts="5">×5</button>
+      <button data-ts="10">×10</button>
+      <button data-ts="50">×50</button>
 
-      <div class="group" style="margin-left:12px;">
-        <input id="chkPerf" type="checkbox" />
-        <label for="chkPerf">Perf-Modus</label>
-      </div>
+      <label style="margin:0 10px;display:inline-flex;align-items:center;gap:.5rem">
+        <input id="chkPerf" type="checkbox">
+        <span>Perf-Modus</span>
+      </label>
+
+      <button id="btnEditor">CRISPR-Editor</button>
+      <button id="btnEnv">Umwelt</button>
+      <button id="btnAppOps">App-Ops</button>
+      <button id="btnDiag">Diagnose</button>
     </div>
 
-    <div class="row" style="justify-content:flex-end;">
-      <div class="group">
-        <span class="badge">Parameter</span>
-        <div class="slider">
-          <label for="sliderMutation">Mutation&nbsp;%</label>
-          <input id="sliderMutation" type="range" min="0" max="30" step="1" value="8"
-                 oninput="this.nextElementSibling.textContent=this.value+' %'"/>
-          <span class="badge">8&nbsp;%</span>
-        </div>
+    <!-- Parameter: Slider mit echten Werten -->
+    <div class="row">
+      <span class="label">Parameter</span>
 
-        <div class="slider">
-          <label for="sliderFood">Nahrung/s</label>
-          <input id="sliderFood" type="range" min="0" max="12" step="1" value="6"
-                 oninput="this.nextElementSibling.textContent=this.value+'/s'"/>
-          <span class="badge">6/s</span>
-        </div>
-      </div>
+      <label class="kv">
+        <span>Mutation %</span>
+        <input id="sliderMutation" type="range" min="0" max="100" step="1" value="8">
+        <output id="valMutation">8 %</output>
+      </label>
 
-      <div class="group" style="margin-left:12px;">
-        <button id="btnEditor">CRISPR-Editor</button>
-        <button id="btnEnv">Umwelt</button>
-        <button id="btnAppOps">App-Ops</button>
-        <button id="btnDiag">Diagnose</button>
-      </div>
+      <label class="kv">
+        <span>Nahrung/s</span>
+        <input id="sliderFood" type="range" min="0" max="30" step="1" value="6">
+        <output id="valFood">6 /s</output>
+      </label>
     </div>
   </div>
 
-  <!-- ======= BÜHNE ======= -->
-  <main id="stage" role="main" aria-label="Simulation">
-    <canvas id="scene" width="1280" height="720"></canvas>
-  </main>
+  <!-- Scene -->
+  <div id="stage" style="position:relative;">
+    <canvas id="scene" width="1280" height="720" style="display:block;width:100%;height:calc(100vh - var(--topbar-h,72px));background:#0f1720"></canvas>
+  </div>
 
-  <!-- optionaler Host für Panels (App-Ops/Editor nutzen notfalls Fallback-Overlay) -->
+  <!-- Panel-Host (für Editor/Preflight/App-Ops) -->
   <div id="diagPanel" class="hidden"></div>
 
-  <noscript>
-    <div style="padding:12px;margin:12px;border:1px solid #812; background:#210;">Diese Anwendung benötigt JavaScript.</div>
-  </noscript>
-
-  <!-- Topbar-Höhe dynamisch in CSS-Variable spiegeln (für Canvas-Höhe) -->
-  <script>
-    (function(){
-      function setTopbarVar(){
-        try{
-          const tb = document.getElementById('topbar');
-          const h  = tb ? tb.offsetHeight : 56;
-          document.documentElement.style.setProperty('--topbar-h', h + 'px');
-        }catch{}
-      }
-      window.addEventListener('load', setTopbarVar, {once:true});
-      window.addEventListener('resize', setTopbarVar);
-    })();
-  </script>
-
-  <!-- App-Bootstrapping (verkabelt UI + startet Engine) -->
+  <!-- Scripte -->
   <script type="module" src="./bootstrap.js"></script>
+  <script type="module">
+    // Optional: sofortige Preflight-Ladung bei ?pf=1
+    try{
+      if (new URLSearchParams(location.search).get("pf")==="1"){
+        import("./preflight.js").then(m=>m.diagnose()).catch(()=>{});
+      }
+    }catch{}
+  </script>
 </body>
 </html>
