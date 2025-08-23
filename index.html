@@ -5,32 +5,9 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>CRISPR Genetics Lab</title>
 
-  <!-- HARTE REINIGUNG (einmal pro Tab-Session) -->
-  <script>
-  (function hardClean(){
-    try {
-      if (sessionStorage.getItem("sw-clean-done")) return;
-      sessionStorage.setItem("sw-clean-done","1");
-      if ("serviceWorker" in navigator) {
-        Promise.resolve()
-        .then(() => navigator.serviceWorker.getRegistrations())
-        .then(rs => Promise.all((rs||[]).map(r => r.unregister())))
-        .then(() => (caches && caches.keys ? caches.keys() : []))
-        .then(keys => Promise.all((keys||[]).map(k => caches.delete(k))))
-        .finally(() => {
-          var base = location.origin + location.pathname + location.hash;
-          if (location.search.indexOf("clean=1") === -1) {
-            location.replace(base + (base.indexOf("?")>-1 ? "&" : "?") + "clean=1");
-          }
-        });
-      }
-    } catch {}
-  })();
-  </script>
-
+  <!-- Minimale Basis-Styles (falls style.css mal fehlt) -->
   <link rel="stylesheet" href="./style.css" />
   <style>
-    /* Mini-Fallbacks, falls style.css mal nicht lädt */
     body{margin:0;background:#0b1217;color:#d6e1ea;font:14px/1.4 system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
     #topbar{position:sticky;top:0;z-index:10;background:#0e151c;border-bottom:1px solid #1f2c36;padding:8px 10px;display:flex;flex-wrap:wrap;gap:10px;align-items:center}
     #topbar .group{display:flex;gap:8px;align-items:center}
@@ -41,6 +18,29 @@
     input[type=range]{touch-action:none}
     label{opacity:.85}
   </style>
+
+  <!-- Preflight-First Loader: Engine nur laden, wenn NICHT ?pf=1 -->
+  <script type="module">
+  (async function preflightFirst(){
+    const isPF = new URLSearchParams(location.search).get('pf') === '1';
+    // Flag, damit Bootstrap-Watchdog schweigt, wenn wir bewusst nur Preflight starten
+    if (isPF) { window.__BOOTSTRAP_OK = true; window.__suppressBootGuard = true; }
+
+    try {
+      if (isPF) {
+        const m = await import('./preflight.js');
+        // Diagnose *sofort* anzeigen, Engine NICHT laden
+        await m.diagnose();
+      } else {
+        await import('./bootstrap.js');
+      }
+    } catch (e) {
+      // Sichtbare, einfache Fallback-Meldung
+      const msg = (e && e.message) ? e.message : String(e);
+      alert('Startfehler: '+ msg + '\n(Hinweis: Seite hart neu laden oder in Inkognito öffnen)');
+    }
+  })();
+  </script>
 </head>
 <body>
 
@@ -81,11 +81,7 @@
   <!-- Canvas -->
   <canvas id="scene"></canvas>
 
-  <!-- Bootstrap + Preflight (ohne Cache-Busting) -->
-  <script type="module" src="./bootstrap.js"></script>
-  <script type="module" src="./preflight.js"></script>
-
-  <!-- UI-Wiring (leichtgewichtig) -->
+  <!-- UI-Wiring (robust, mit sichtbaren Fehlermeldungen bei Lazy-Imports) -->
   <script type="module">
   import * as engine from "./engine.js";
   import * as repro  from "./reproduction.js";
@@ -93,6 +89,7 @@
   import { setWorldSize } from "./entities.js";
 
   const $ = sel => document.querySelector(sel);
+  const isPF = new URLSearchParams(location.search).get('pf') === '1';
 
   // Buttons
   $("#btnStart").onclick = () => engine.start();
@@ -111,7 +108,7 @@
   // Perf
   $("#chkPerf").onchange = e => engine.setPerfMode(!!e.target.checked);
 
-  // Sliders (Werte anzeigen + anwenden)
+  // Sliders (Anzeige + Anwenden)
   const sM = $("#sliderMutation"), sF = $("#sliderFood");
   const vM = $("#valMutation"),   vF = $("#valFood");
   function applyMutation(){ const v = +sM.value|0; vM.textContent = v+"%"; try{ repro.setMutationRate(v); }catch{} }
@@ -119,11 +116,23 @@
   sM.oninput = applyMutation; sM.onchange = applyMutation;
   sF.oninput = applyFood;     sF.onchange = applyFood;
 
-  // Panels (lazy import)
-  $("#btnEditor").onclick = async()=>{ try{ (await import("./editor.js")).openEditor(); }catch{} };
-  $("#btnEnv").onclick    = async()=>{ try{ (await import("./environment.js")).openEnvPanel(); }catch{} };
-  $("#btnAppOps").onclick = async()=>{ try{ (await import("./appops_panel.js")).openAppOps(); }catch{} };
-  $("#btnDiag").onclick   = async()=>{ try{ (await import("./preflight.js")).diagnose(); }catch{} };
+  // Panels (lazy import + sichtbarer Fehler)
+  $("#btnEditor").onclick = async()=>{
+    try{ (await import("./editor.js")).openEditor(); }
+    catch(e){ alert("Editor konnte nicht geladen werden: "+(e?.message||e)); }
+  };
+  $("#btnEnv").onclick = async()=>{
+    try{ (await import("./environment.js")).openEnvPanel(); }
+    catch(e){ alert("Umwelt-Panel konnte nicht geladen werden: "+(e?.message||e)); }
+  };
+  $("#btnAppOps").onclick = async()=>{
+    try{ (await import("./appops_panel.js")).openAppOps(); }
+    catch(e){ alert("App-Ops konnte nicht geladen werden: "+(e?.message||e)); }
+  };
+  $("#btnDiag").onclick = async()=>{
+    try{ (await import("./preflight.js")).diagnose(); }
+    catch(e){ alert("Preflight konnte nicht geladen werden: "+(e?.message||e)); }
+  };
 
   // Canvas-Größe an Viewport koppeln
   const canvas = $("#scene");
@@ -138,12 +147,17 @@
   window.addEventListener("resize", fitCanvas, {passive:true});
   fitCanvas();
 
-  // Direkt booten (robust)
-  try { engine.boot(); } catch {}
-
-  // Standard-Tempo & Slider initial anwenden
-  document.querySelector('button.ts[data-ts="10"]')?.click();
-  applyMutation(); applyFood();
+  // Nur booten, wenn NICHT ?pf=1
+  if (!isPF) {
+    try {
+      engine.boot();
+      // Standard-Tempo & Slider initial anwenden
+      document.querySelector('button.ts[data-ts="10"]')?.click();
+      applyMutation(); applyFood();
+    } catch(e){
+      alert("Engine/Boot-Fehler: "+(e?.message||e));
+    }
+  }
   </script>
 
 </body>
