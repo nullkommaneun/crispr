@@ -92,3 +92,37 @@ input[type="range"]::-moz-range-thumb{
   border:1px solid var(--line); color:var(--ink-muted); font-size:12px
 }
 code,pre{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; font-size:12px }
+
+/* Chips / Buttons in der Topbar */
+.chip,
+button,
+button.chip {
+  appearance: none;
+  border: 1px solid #2a3b4a;
+  border-radius: 8px;
+  background: #10161d;
+  color: #cfe6ff;
+  padding: 6px 10px;
+  line-height: 1.2;
+  cursor: pointer;
+}
+.chip.active, button.active {
+  background: #173040;
+  border-color: #3e6e8f;
+}
+.chip.ghost, button.ghost {
+  background: transparent;
+  border-color: #2a3b4a;
+}
+
+/* Wert-Anzeigen neben Slidern */
+.value {
+  margin-left: 6px;
+  font-weight: 600;
+  color: #d6f0ff;
+}
+
+/* Preflight/AppOps Panel kleine Helfer */
+.panel-header h2 { margin: 0; }
+.row { display:flex; justify-content:space-between; gap: 10px; }
+.muted { color:#9bb0c2; font-size: 0.9em; }
