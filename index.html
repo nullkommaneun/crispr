@@ -1,79 +1,58 @@
 <!doctype html>
 <html lang="de">
 <head>
-  <meta charset="utf-8">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>CRISPR Genetics Lab</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <link rel="stylesheet" href="./style.css">
-  <style>
-    /* kompakte Slider-Anzeige (optional; am Ende von style.css einfügen, falls du dort pflegen willst) */
-    label.kv { display:inline-flex; align-items:center; gap:.5rem; margin:0 .75rem; }
-    label.kv span { color:#a9c1d4; font-size:.9rem; }
-    label.kv input[type="range"] { width:160px; vertical-align:middle; }
-    label.kv output { min-width:3.5rem; text-align:right; color:#cfe7ff; font-variant-numeric:tabular-nums; }
-  </style>
+  <link rel="stylesheet" href="./style.css" />
 </head>
 <body>
-  <!-- Topbar -->
+
+  <!-- Topbar kompakt -->
   <div id="topbar" class="topbar">
-    <div class="row">
-      <span class="group">Simulation</span>
-      <button id="btnStart">Start</button>
-      <button id="btnPause">Pause</button>
-      <button id="btnReset">Reset</button>
+    <div class="tb-left">
+      <button id="btnStart" class="btn">Start</button>
+      <button id="btnPause" class="btn">Pause</button>
+      <button id="btnReset" class="btn">Reset</button>
 
-      <span class="group">Tempo</span>
-      <button data-ts="1">×1</button>
-      <button data-ts="5">×5</button>
-      <button data-ts="10">×10</button>
-      <button data-ts="50">×50</button>
+      <!-- Tempo als Cycle-Button: ×1 → ×5 → ×10 → ×50 -->
+      <button id="btnTempo" class="btn" data-idx="0">×1</button>
 
-      <label style="margin:0 10px;display:inline-flex;align-items:center;gap:.5rem">
-        <input id="chkPerf" type="checkbox">
-        <span>Perf-Modus</span>
-      </label>
-
-      <button id="btnEditor">CRISPR-Editor</button>
-      <button id="btnEnv">Umwelt</button>
-      <button id="btnAppOps">App-Ops</button>
-      <button id="btnDiag">Diagnose</button>
+      <label class="chk"><input id="chkPerf" type="checkbox"> Perf-Modus</label>
     </div>
 
-    <!-- Parameter: Slider mit echten Werten -->
-    <div class="row">
-      <span class="label">Parameter</span>
+    <div class="tb-mid">
+      <!-- Mutation -->
+      <input id="sliderMutation" type="range" min="0" max="100" step="1" value="8" />
+      <span id="valMutation" class="muted">8 %</span>
 
-      <label class="kv">
-        <span>Mutation %</span>
-        <input id="sliderMutation" type="range" min="0" max="100" step="1" value="8">
-        <output id="valMutation">8 %</output>
-      </label>
+      <!-- Food -->
+      <input id="sliderFood" type="range" min="0" max="30" step="1" value="6" />
+      <span id="valFood" class="muted">6 /s</span>
+    </div>
 
-      <label class="kv">
-        <span>Nahrung/s</span>
-        <input id="sliderFood" type="range" min="0" max="30" step="1" value="6">
-        <output id="valFood">6 /s</output>
-      </label>
+    <div class="tb-right">
+      <button id="btnEditor" class="btn">CRISPR-Editor</button>
+      <button id="btnEnv" class="btn">Umwelt</button>
+      <button id="btnAppOps" class="btn">App-Ops</button>
+      <button id="btnDiag" class="btn">Diagnose</button>
     </div>
   </div>
 
-  <!-- Scene -->
-  <div id="stage" style="position:relative;">
-    <canvas id="scene" width="1280" height="720" style="display:block;width:100%;height:calc(100vh - var(--topbar-h,72px));background:#0f1720"></canvas>
-  </div>
+  <!-- Spielfeld -->
+  <main id="main">
+    <canvas id="scene" width="1280" height="720"></canvas>
+  </main>
 
-  <!-- Panel-Host (für Editor/Preflight/App-Ops) -->
-  <div id="diagPanel" class="hidden"></div>
+  <!-- Gemeinsames Panel (App-Ops / Diagnose) -->
+  <div id="diagPanel" class="panel hidden"></div>
 
-  <!-- Scripte -->
+  <!-- Bootstrap + UI -->
   <script type="module" src="./bootstrap.js"></script>
   <script type="module">
-    // Optional: sofortige Preflight-Ladung bei ?pf=1
-    try{
-      if (new URLSearchParams(location.search).get("pf")==="1"){
-        import("./preflight.js").then(m=>m.diagnose()).catch(()=>{});
-      }
-    }catch{}
+    import { initUI } from './ui_controls.js';
+    // kleines Delay, um Layout-Höhe zu haben
+    requestAnimationFrame(initUI);
   </script>
 </body>
 </html>
