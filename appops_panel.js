@@ -1,181 +1,91 @@
-// appops_panel.js — App-Optimierer-Panel: Smart-Hints mit Copy je Hint (ohne buildOpsForHint-Export)
-import {
-  startCollectors,
-  getAppOpsSnapshot,
-  runModuleMatrix,
-  generateOps,
-  getSmartHints
-} from "./appops.js";
+// appops_panel.js — Smart-Ops Panel (beta)
 
-const panel = document.getElementById("diagPanel");
+import * as metrics from "./metrics.js";
+import { getDrivesSnapshot } from "./drives.js";
+import { generateOps } from "./appops.js";
 
-function buildHeader(title){
-  const h=document.createElement("div"); h.className="panel-header";
-  const t=document.createElement("h2"); t.textContent=title;
-  const x=document.createElement("button"); x.className="closeX"; x.innerHTML="&times;"; x.onclick=()=>panel.classList.add("hidden");
-  h.append(t,x); return h;
-}
-function section(title){
-  const box=document.createElement("div");
-  box.style.border="1px solid #22303a"; box.style.borderRadius="8px";
-  box.style.padding="10px"; box.style.margin="8px 0";
-  const head=document.createElement("div");
-  head.style.display="flex"; head.style.justifyContent="space-between"; head.style.alignItems="center";
-  const h=document.createElement("b"); h.textContent=title;
-  head.append(h); box.append(head); return {box,head};
-}
-function row(label, html){
-  const r=document.createElement("div"); r.className="row";
-  const l=document.createElement("span"); l.textContent=label;
-  const v=document.createElement("span"); v.innerHTML=html;
-  r.append(l,v); return r;
-}
-function copy(text, btn){
-  navigator.clipboard.writeText(text).then(()=>{
-    if(btn){ const o=btn.textContent; btn.textContent="Kopiert ✓"; setTimeout(()=>btn.textContent=o, 1200); }
-  }).catch(()=>{
-    if(btn){ const o=btn.textContent; btn.textContent="Fehler"; setTimeout(()=>btn.textContent=o, 1200); }
-  });
-}
-function codeField(value){
-  const wrap=document.createElement("div");
-  wrap.style.display="grid"; wrap.style.gridTemplateColumns="1fr auto";
-  wrap.style.gap="8px"; wrap.style.marginTop="6px";
-  const ta=document.createElement("textarea"); ta.readOnly=true; ta.value=value;
-  ta.style.width="100%"; ta.style.height="120px";
-  ta.style.background="#0b1217"; ta.style.border="1px solid #2a3a46";
-  ta.style.borderRadius="8px"; ta.style.color="#d8f0ff";
-  ta.style.font="12px/1.35 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace";
-  const btn=document.createElement("button"); btn.textContent="OPS kopieren";
-  btn.onclick=()=> copy(ta.value, btn);
-  wrap.append(ta,btn); return wrap;
+export function openAppOps(){
+  let wrap = document.getElementById("appops-wrap");
+  if (!wrap){
+    wrap = document.createElement("div");
+    wrap.id = "appops-wrap";
+    wrap.style.cssText = "position:fixed;inset:0;z-index:99998;background:rgba(0,0,0,.55);display:flex;align-items:flex-start;justify-content:center;padding:24px;";
+    const panel = document.createElement("div");
+    panel.id = "appops-panel";
+    panel.style.cssText = "max-width:960px;width:92%;background:#10161d;border:1px solid #2a3b4a;border-radius:12px;color:#d6e1ea;padding:16px 16px 8px;box-shadow:0 30px 70px rgba(0,0,0,.45);";
+    wrap.appendChild(panel);
+
+    const close = document.createElement('button');
+    close.textContent = 'Schließen';
+    close.style.cssText = 'position:absolute;top:10px;right:10px;background:#243241;color:#cfe6ff;border:1px solid #47617a;border-radius:8px;padding:6px 10px;';
+    close.onclick = ()=> wrap.remove();
+    wrap.appendChild(close);
+
+    document.body.appendChild(wrap);
+  }
+
+  const box = document.getElementById("appops-panel");
+  box.innerHTML = renderContent();
+  wire(box);
 }
 
-// Lokaler Builder für einen einzelnen Hint → MDC-OPS JSON
-function buildOpsForHintLocal(h){
-  const ops = {
-    v: 1,
-    title: `Auto-OPS Vorschlag: ${h.title}`,
-    goals: [h.title],
-    changes: [...(h.changes||[])],
-    accept: ["OPS kopieren, einspielen, reload; Kennzahlen (Jank/Backlog/Draw) sollten sich verbessern."],
-    notes: `Confidence ${h.confidence}% — ${h.reason||""}`
+function renderContent(){
+  const ph = metrics.getPhases();
+  const drv = safe(()=> getDrivesSnapshot(), { duels:0, wins:0, winRate:0, pools:0 });
+
+  const fps = estFPS(ph);
+  return `
+  <h3 style="margin:0 0 8px;">App-Ops (Optimierer) — Smart Mode (beta)</h3>
+  <div style="opacity:.8;margin-bottom:10px;">Live-Übersicht & Vorschläge</div>
+
+  <section style="margin:8px 0;">
+    <strong>Performance</strong>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px;">
+      <div>FPS (geschätzt): <b>${fps}</b></div>
+      <div>Engine-Phasen (EMA, ms): ent=<b>${fmt(ph.entities)}</b> repro=<b>${fmt(ph.reproduction)}</b> food=<b>${fmt(ph.food)}</b> draw=<b>${fmt(ph.draw)}</b></div>
+      <div>Drives: Duels <b>${drv.duels}</b> • Win-Rate <b>${pct(drv.winRate)}</b> • Pools <b>${drv.pools||0}</b></div>
+    </div>
+  </section>
+
+  <section style="margin:8px 0;">
+    <strong>OPS-Vorschläge</strong>
+    <div style="margin-top:6px;">
+      <button id="btnGenOps" style="background:#2b3b4d;border:1px solid #4a627a;color:#e7f3ff;border-radius:8px;padding:6px 10px;cursor:pointer;">OPS erzeugen</button>
+      <button id="btnCopyOps" style="margin-left:6px;background:#2b3b4d;border:1px solid #4a627a;color:#e7f3ff;border-radius:8px;padding:6px 10px;cursor:pointer;">In Zwischenablage</button>
+    </div>
+    <textarea id="opsOut" style="width:100%;height:220px;margin-top:8px;background:#0e151c;color:#d6e1ea;border:1px solid #33485b;border-radius:8px;padding:10px;white-space:pre;"></textarea>
+  </section>
+  `;
+}
+
+function wire(box){
+  const out = box.querySelector('#opsOut');
+  const gen = ()=>{
+    try{
+      const s = generateOps();
+      out.value = s;
+    }catch(e){
+      out.value = '// Fehler beim Generieren: ' + (e?.message||e);
+      console.error(e);
+    }
   };
-  return JSON.stringify(ops, null, 2);
+  box.querySelector('#btnGenOps').addEventListener('click', gen);
+  box.querySelector('#btnCopyOps').addEventListener('click', async ()=>{
+    try{
+      await navigator.clipboard.writeText(out.value||'');
+    }catch(e){ console.warn('Clipboard fehlgeschlagen', e); }
+  });
+  // initial
+  gen();
 }
 
-export function openAppOpsPanel(){
-  startCollectors();
-
-  panel.innerHTML=""; panel.classList.remove("hidden");
-  panel.append(buildHeader("App-Ops (Optimierer) — Smart Mode (beta)"));
-
-  const body=document.createElement("div"); body.className="panel-body"; panel.append(body);
-
-  // Performance
-  {
-    const { box } = section("Performance");
-    const s = getAppOpsSnapshot();
-    box.append(
-      row("FPS (aktuell / Ø)", `<b>${s.perf.fpsNow}</b> / <b>${s.perf.fpsAvg}</b>`),
-      row("Jank (Frames >50ms)", `${s.perf.jank} · Summe ~${s.perf.jankMs}ms`),
-      row("Long Tasks", `${s.perf.longTasks.count} · gesamt ~${s.perf.longTasks.totalMs}ms`),
-      row("Engine-Backlog-Quote", `${Math.round((s.engine.capRatio||0)*100)}%`)
-    );
-    body.append(box);
-  }
-
-  // Timings
-  {
-    const { box } = section("Timings (pro Frame, ms – EMA)");
-    const s = getAppOpsSnapshot();
-    const t = s.timings || {ent:0,repro:0,food:0,draw:0};
-    const table=document.createElement("div");
-    table.innerHTML = `
-      <div class="row"><span>Entities</span><span><b>${t.ent}</b> ms</span></div>
-      <div class="row"><span>Reproduction</span><span><b>${t.repro}</b> ms</span></div>
-      <div class="row"><span>Food</span><span><b>${t.food}</b> ms</span></div>
-      <div class="row"><span>Draw</span><span><b>${t.draw}</b> ms</span></div>
-    `;
-    box.append(table);
-    body.append(box);
-  }
-
-  // Layout
-  {
-    const { box } = section("Layout / Topbar");
-    const s = getAppOpsSnapshot();
-    box.append(
-      row("Reflow-Zähler", `${s.layout.reflows}`),
-      row("Höhenverlauf", `${(s.layout.heights||[]).join(" → ") || "–"}`)
-    );
-    body.append(box);
-  }
-
-  // Ressourcen
-  {
-    const { box } = section("Ressourcen (größte Assets)");
-    const s = getAppOpsSnapshot();
-    const list=document.createElement("div");
-    for(const r of (s.resources.largest||[])){
-      const line=document.createElement("div"); line.className="row";
-      line.innerHTML=`<span>${r.name} <span class="badge">${r.type}</span></span><span>${r.sizeKB} KB · ${r.duration} ms</span>`;
-      list.append(line);
-    }
-    if(!list.children.length) list.textContent="–";
-    box.append(list);
-    body.append(box);
-  }
-
-  // Module
-  {
-    const { box } = section("Module / Exporte");
-    const btnRun=document.createElement("button"); btnRun.textContent="Module prüfen";
-    const pre=document.createElement("pre"); pre.style.whiteSpace="pre-wrap"; pre.style.marginTop="8px";
-    btnRun.onclick=async()=>{ pre.textContent=await runModuleMatrix(); };
-    box.append(btnRun, pre);
-    body.append(box);
-  }
-
-  // Smart-Vorschläge (Confidence) – Copy je Hint
-  {
-    const { box } = section("Smart-Vorschläge (Confidence)");
-    const wrap = document.createElement("div");
-    const hints = getSmartHints();
-
-    if (!hints.length) {
-      wrap.textContent = "Keine situativen Vorschläge – alles stabil.";
-    } else {
-      for (const h of hints) {
-        const head = document.createElement("div"); head.className="row";
-        head.innerHTML = `<span>${h.title}</span><span><b>${h.confidence}%</b></span>`;
-        const reason = document.createElement("div"); reason.className="muted";
-        reason.style.margin = "2px 0 6px 0"; reason.textContent = h.reason || "";
-
-        const btnCopy = document.createElement("button"); btnCopy.textContent = "OPS kopieren";
-        btnCopy.onclick = ()=> copy(buildOpsForHintLocal(h), btnCopy);
-
-        wrap.append(head, reason, btnCopy);
-      }
-    }
-
-    box.append(wrap);
-    body.append(box);
-  }
-
-  // Sammel-OPS (JSON)
-  {
-    const { box } = section("Alle Vorschläge (MDC-OPS JSON)");
-    const opsJSON = generateOps();
-    box.append(codeField(opsJSON));
-    body.append(box);
-  }
-
-  // Refresh
-  const footer=document.createElement("div");
-  footer.style.display="flex"; footer.style.gap="8px"; footer.style.marginTop="8px";
-  const btnRefresh=document.createElement("button"); btnRefresh.textContent="Aktualisieren";
-  btnRefresh.onclick=()=> openAppOpsPanel();
-  footer.append(btnRefresh);
-  body.append(footer);
+function estFPS(ph){
+  const total = (ph.entities||0)+(ph.reproduction||0)+(ph.food||0)+(ph.draw||0);
+  if (total <= 0) return '–';
+  const fps = Math.round(1000/total);
+  return isFinite(fps) ? fps : '–';
 }
+
+function fmt(v){ return (v>0) ? v.toFixed(1) : '0.0'; }
+function pct(v){ return Math.round((+v||0)*100)+'%'; }
+function safe(f, d){ try{ return f(); }catch{ return d; } }
