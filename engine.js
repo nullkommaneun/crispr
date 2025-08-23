@@ -1,4 +1,4 @@
-// engine.js — Boot/Loop + Boot-Flag + Heartbeat + Seeding-Guard
+// engine.js — Boot/Loop + Boot-Flag + Heartbeat + AppOps-Telemetrie
 
 import { initErrorManager, report } from "./errorManager.js";
 import { getCells, getFoodItems, setWorldSize, createAdamAndEve, applyEnvironment } from "./entities.js";
@@ -11,61 +11,179 @@ import * as metrics from "./metrics.js";
 
 export const breadcrumb = undefined; // Kompat-Fallback
 
-let running=false, lastTime=0, timescale=1, perfMode=false;
+let running = false;
+let lastTime = 0;
+let timescale = 1;
+let perfMode = false;
 
-function markBoot(ok=true){ try{ window.__bootOK=!!ok; document.documentElement.dataset.boot=ok?'1':'0'; }catch{} }
-function heartbeat(){
-  try{
-    window.__frameCount=(window.__frameCount|0)+1;
-    const now=performance.now(), prev=window.__lastStepPrev||now, dt=now-prev;
-    window.__lastStepPrev=now; window.__lastStepAt=now;
-    if(dt>0&&dt<1000){ const a=.15, fps=1000/dt; window.__fpsEMA=(window.__fpsEMA==null)?fps:window.__fpsEMA*(1-a)+fps*a; }
-    window.__cellsN=getCells().length|0; window.__foodN=getFoodItems().length|0;
-  }catch{}
+/* -------------------------------- Boot-Flag -------------------------------- */
+
+function markBoot(ok = true) {
+  try {
+    // Preflight nutzt __bootOK; der Bootstrap-Watchdog schaut auf __APP_BOOTED
+    window.__bootOK = !!ok;
+    window.__APP_BOOTED = !!ok;
+    document.documentElement.dataset.boot = ok ? "1" : "0";
+  } catch {}
 }
 
-export function setTimescale(x){ timescale=Math.max(.1,Math.min(50,+x||1)); }
-export function setPerfMode(on){ perfMode=!!on; renderer.setPerfMode(perfMode); window.__perfMode=perfMode; emit('perf:mode',{on:perfMode}); }
-export function start(){ if(!running){ running=true; loop(); } }
-export function pause(){ running=false; }
-export function reset(){ try{ running=false; createAdamAndEve(); lastTime=performance.now(); emit('app:reset',{}); markBoot(true); start(); }catch(e){ report(e,{where:'reset'});} }
+/* -------------------------------- Heartbeat -------------------------------- */
 
-export function boot(){
-  try{
+function heartbeat() {
+  try {
+    window.__frameCount = (window.__frameCount | 0) + 1;
+    const now = performance.now();
+    const prev = window.__lastStepPrev || now;
+    const dt = now - prev;
+    window.__lastStepPrev = now;
+    window.__lastStepAt = now;
+
+    if (dt > 0 && dt < 1000) {
+      const a = 0.15;
+      const fps = 1000 / dt;
+      window.__fpsEMA = window.__fpsEMA == null ? fps : window.__fpsEMA * (1 - a) + fps * a;
+    }
+    window.__cellsN = getCells().length | 0;
+    window.__foodN = getFoodItems().length | 0;
+  } catch {}
+}
+
+/* ------------------------------ Public Controls ---------------------------- */
+
+export function setTimescale(x) {
+  timescale = Math.max(0.1, Math.min(50, +x || 1));
+}
+export function setPerfMode(on) {
+  perfMode = !!on;
+  renderer.setPerfMode(perfMode);
+  window.__perfMode = perfMode;
+  emit("perf:mode", { on: perfMode });
+}
+export function start() {
+  if (!running) {
+    running = true;
+    loop();
+  }
+}
+export function pause() {
+  running = false;
+}
+export function reset() {
+  try {
+    running = false;
+    createAdamAndEve();
+    lastTime = performance.now();
+    emit("app:reset", {});
+    markBoot(true);
+    start();
+  } catch (e) {
+    report(e, { where: "reset" });
+  }
+}
+
+/* ----------------------------------- Boot ---------------------------------- */
+
+export function boot() {
+  try {
     initErrorManager();
-    const canvas=document.getElementById('scene'); const r=canvas.getBoundingClientRect();
-    setWorldSize(Math.max(2,r.width),Math.max(2,r.height));
-    createAdamAndEve(); applyEnvironment({});
+
+    const canvas = document.getElementById("scene");
+    const r = canvas.getBoundingClientRect();
+    setWorldSize(Math.max(2, r.width), Math.max(2, r.height));
+
+    createAdamAndEve();
+    applyEnvironment({}); // no-op, aber sichert API-Vertrag
 
     // initiale Slider-Werte anwenden
-    try{
-      const sm=document.getElementById('sliderMutation'); if(sm) reproduction.setMutationRate(+sm.value|0);
-      const sf=document.getElementById('sliderFood');     if(sf) food.setSpawnRate(+sf.value||6);
-    }catch{}
+    try {
+      const sm = document.getElementById("sliderMutation");
+      if (sm) reproduction.setMutationRate(+sm.value | 0);
+      const sf = document.getElementById("sliderFood");
+      if (sf) food.setSpawnRate(+sf.value || 6);
+    } catch {}
 
-    lastTime=performance.now(); markBoot(true); start();
+    lastTime = performance.now();
+    markBoot(true);
+    start();
 
     // Seeding-Guard (falls leer)
-    setTimeout(()=>{ try{
-      if(getCells().length===0){ console.warn('[engine] seeding Adam&Eva (guard)'); createAdamAndEve(); }
-      if(getFoodItems().length===0){ const rate=(+document.getElementById('sliderFood')?.value||6); food.setSpawnRate(rate); for(let i=0;i<24;i++) food.step(.12); }
-    }catch(e){ console.warn('seeding-guard',e);} }, 250);
-
-  }catch(err){ report(err,{where:'boot'}); }
+    setTimeout(() => {
+      try {
+        if (getCells().length === 0) {
+          console.warn("[engine] seeding Adam&Eva (guard)");
+          createAdamAndEve();
+        }
+        if (getFoodItems().length === 0) {
+          const rate = +document.getElementById("sliderFood")?.value || 6;
+          food.setSpawnRate(rate);
+          for (let i = 0; i < 24; i++) food.step(0.12);
+        }
+      } catch (e) {
+        console.warn("seeding-guard", e);
+      }
+    }, 250);
+  } catch (err) {
+    report(err, { where: "boot" });
+  }
 }
 
-function loop(){
-  if(!running) return;
-  const now=performance.now(); let dt=(now-lastTime)/1000*timescale; if(dt>0.2) dt=0.2; lastTime=now;
-  try{ step(dt, now/1000); }catch(e){ report(e,{where:'loop.step'}); }
+/* --------------------------------- Game Loop -------------------------------- */
+
+function loop() {
+  if (!running) return;
+  const now = performance.now();
+  let dt = ((now - lastTime) / 1000) * timescale;
+  if (dt > 0.2) dt = 0.2;
+  lastTime = now;
+
+  try {
+    step(dt, now / 1000);
+  } catch (e) {
+    report(e, { where: "loop.step" });
+  }
   requestAnimationFrame(loop);
 }
-function step(dt,tSec){
+
+function step(dt, tSec) {
+  // Phasen messen
   metrics.beginTick();
-  let t0=metrics.phaseStart(); entities.step(dt,{},tSec); metrics.phaseEnd('entities',t0);
-  t0=metrics.phaseStart(); reproduction.step(dt);       metrics.phaseEnd('reproduction',t0);
-  t0=metrics.phaseStart(); food.step(dt);               metrics.phaseEnd('food',t0);
-  t0=metrics.phaseStart(); renderer.draw({cells:getCells(),food:getFoodItems()},{}); metrics.phaseEnd('draw',t0);
-  emit('econ:snapshot', metrics.readEnergyAndReset());
+
+  let t0 = metrics.phaseStart();
+  entities.step(dt, {}, tSec);
+  metrics.phaseEnd("entities", t0);
+
+  t0 = metrics.phaseStart();
+  reproduction.step(dt);
+  metrics.phaseEnd("reproduction", t0);
+
+  t0 = metrics.phaseStart();
+  food.step(dt);
+  metrics.phaseEnd("food", t0);
+
+  t0 = metrics.phaseStart();
+  renderer.draw({ cells: getCells(), food: getFoodItems() }, {});
+  metrics.phaseEnd("draw", t0);
+
+  emit("econ:snapshot", metrics.readEnergyAndReset());
+
+  // --------- App-Ops Telemetrie (pro Frame) ----------
+  try {
+    // gewünschte vs. maximale Bildrate (Backlog-Indikator für App-Ops)
+    const desired = Math.max(1, Math.round(60 * timescale));
+    const max = 60; // rAF-Deckel
+    emit("appops:frame", { desired, max });
+
+    // Timings (ms) aus Metrics übernehmen – robust falls nicht vorhanden
+    const p = (metrics.getPhases && metrics.getPhases()) || {};
+    emit("appops:timings", {
+      ent: Math.round(p.entities || 0),
+      repro: Math.round(p.reproduction || 0),
+      food: Math.round(p.food || 0),
+      draw: Math.round(p.draw || 0)
+    });
+  } catch (e) {
+    // Telemetrie darf nie den Loop stören
+  }
+
   heartbeat();
 }

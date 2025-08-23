@@ -1,5 +1,5 @@
 // drives.js — Verhaltenspolitik (Mate-first mit Gating & Hysterese)
-// Exports: initDrives, getAction, afterStep, getDrivesSnapshot, setTracing
+// Exports: initDrives, getAction, afterStep, getDrivesSnapshot, setTracing, getTraceText
 
 let TRACE = false;
 
@@ -24,7 +24,7 @@ const MISC = {
 
 // Pro-Zelle: kleiner Drive-Status (Mate-Hysterese)
 function ensureDS(c){
-  if (!c.__drive) c.__drive = { mode: "wander", until: 0 };
+  if (!c.__drive) c.__drive = { mode: "wander", until: 0, modeSince: 0 };
   return c.__drive;
 }
 
@@ -39,7 +39,13 @@ export function getDrivesSnapshot(){
   };
 }
 
-// Hilfen
+// ---- Diagnose-Text (für Preflight / Smart-Ops) ----
+export function getTraceText(){
+  // Kompakter, stabiler Text – Inhalt ist rein diagnostisch
+  return `K_DIST=${CFG.K_DIST} · R_PAIR=${CFG.R_PAIR} · EPS=${CFG.EPS} · duels=${MISC.duels} · wins=${MISC.wins}`;
+}
+
+// --------- Hilfen ----------
 function capEnergyOf(c){
   const g = c.genome || {};
   const baseMax = 100; // Fallback; real kommt aus CONFIG in entities (wir kennen die dortige Skalierung nicht direkt)
@@ -48,15 +54,14 @@ function capEnergyOf(c){
   return Math.max(40, Math.min(240, (c.energy / Math.max(0.01, c.vitality+1)) * 2)); // sehr grobe Schätzung
 }
 
-// Besser: Anteil via "virtueller Kapazität" (entities exportiert cap nicht).
+// Anteil via "virtueller Kapazität" (entities exportiert cap nicht → robuste Normalisierung)
 function energyFrac(c){
-  // Wir haben keinen direkten cap(). Näherung: skaliere auf [0,1] relativ zu typischen Energiespannen.
-  // c.energy bewegt sich in deiner Sim normalerweise ~[0..100+] — wir normalisieren robust:
+  // c.energy bewegt sich in der Sim typischerweise ~[0..100+] — auf [0,1] clampen
   const E = Math.max(0, Math.min(120, c.energy || 0));
-  return E / 100; // robust, hinreichend für Policy-Gating
+  return E / 100;
 }
 
-// Hauptentscheidung
+// --------- Hauptentscheidung ----------
 export function getAction(c, t, ctx){
   const ds = ensureDS(c);
 
@@ -65,19 +70,20 @@ export function getAction(c, t, ctx){
 
   const eFrac = energyFrac(c);
 
-  // Mate-Hysterese: bleib im Mate-Modus, solange Energie nicht unter Exit fällt
-  // oder die Sticky-Zeit nicht abgelaufen ist.
+  // Mate-Hysterese: im Mate-Modus bleiben, solange Energie nicht unter Exit fällt
+  // oder Sticky-Zeit noch nicht abgelaufen ist.
   if (ds.mode === "mate"){
-    if (eFrac < CFG.E_EXIT_MATE || (t - (ds.modeSince || 0)) > CFG.MATE_STICKY_SEC) {
-      ds.mode = "wander"; // neu entscheiden
-    } else {
+    const tooLow = eFrac < CFG.E_EXIT_MATE;
+    const tooLong = (t - (ds.modeSince || 0)) > CFG.MATE_STICKY_SEC;
+    if (!tooLow && !tooLong){
       if (TRACE) console.log(`[DRIVES] stick: mate (e=${eFrac.toFixed(2)})`);
       return "mate";
     }
+    ds.mode = "wander"; // neu entscheiden
   }
 
   // Neue Entscheidung
-  if (hasMate && c.cooldown <= 0 && eFrac >= CFG.E_ENTER_MATE){
+  if (hasMate && (c.cooldown || 0) <= 0 && eFrac >= CFG.E_ENTER_MATE){
     ds.mode = "mate";
     ds.modeSince = t;
     if (TRACE) console.log(`[DRIVES] choose: mate (e=${eFrac.toFixed(2)})`);
@@ -99,9 +105,7 @@ export function getAction(c, t, ctx){
 
 // Feedback-Hook je Schritt (kann später für Lernen genutzt werden)
 export function afterStep(c, dt, ctx){
-  // Zählwerke optional pflegen (z.B. wenn eine Paarung erfolgreich war → wins++)
-  // Hier kein direkter Ereignis-Hook; könnte über emit('cells:born') angebunden werden.
-  // Platzhalter:
+  // Platzhalter – hier könnten Duelle/Gewinne gezählt werden
   if (false) {
     MISC.duels++;
     MISC.wins++;
