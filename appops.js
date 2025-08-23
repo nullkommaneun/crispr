@@ -1,5 +1,6 @@
-// appops.js — App-Telemetrie & MDC-OPS; inkl. Micro-Profiler-Timings (EMA)
+// appops.js — Telemetrie & MDC-OPS; Micro-Profiler (EMA) + zentraler Modul-Check
 import { on } from "./event.js";
+import { PF_MODULES } from "./modmap.js";
 
 const state = {
   started:false,
@@ -11,7 +12,7 @@ const state = {
   timings:{ ent:0, repro:0, food:0, draw:0, alpha:0.2 }
 };
 
-/* ---------- Sammler ---------- */
+/* ---- Sammler ---- */
 function startRafSampler(){
   const r=state.perf.raf;
   function loop(t){
@@ -29,23 +30,16 @@ function startLongTaskObserver(){
   try{
     const po=new PerformanceObserver(list=>{
       list.getEntries().forEach(e=>{
-        if(e.entryType==="longtask"){
-          state.perf.longTasks.count++;
-          state.perf.longTasks.totalMs += e.duration||0;
-        }
+        if(e.entryType==="longtask"){ state.perf.longTasks.count++; state.perf.longTasks.totalMs += e.duration||0; }
       });
-    });
-    po.observe({ entryTypes:["longtask"] });
+    }); po.observe({ entryTypes:["longtask"] });
   }catch{}
 }
-// Engine Backlog (vom Game-Loop gesendet)
 on("appops:frame",(e)=>{
   state.engine.frames++;
   if((e?.desired??0)>(e?.max??0)) state.engine.cappedFrames++;
-  const f=state.engine.frames||1;
-  state.engine.backlogRatio = state.engine.cappedFrames/f;
+  const f=state.engine.frames||1; state.engine.backlogRatio=state.engine.cappedFrames/f;
 });
-// Micro-Profiler Timings (EMA)
 on("appops:timings", (t)=>{
   const a=state.timings.alpha;
   state.timings.ent   = state.timings.ent  *(1-a) + (t.ent  ||0)*a;
@@ -53,7 +47,6 @@ on("appops:timings", (t)=>{
   state.timings.food  = state.timings.food *(1-a) + (t.food ||0)*a;
   state.timings.draw  = state.timings.draw *(1-a) + (t.draw ||0)*a;
 });
-// Topbar-Reflows
 function startTopbarObserver(){
   const el=document.getElementById("topbar"); if(!el) return;
   try{
@@ -66,7 +59,6 @@ function startTopbarObserver(){
     ro.observe(el);
   }catch{}
 }
-// Resource Audit
 function scanResources(){
   try{
     const entries=performance.getEntriesByType("resource");
@@ -81,48 +73,26 @@ function scanResources(){
   }catch{}
 }
 
-/* ---------- Modul-Matrix (wie Preflight, ohne Dummy/Genealogy) ---------- */
-async function checkModule(path, expects){
+/* ---- identischer Modul-Check wie Preflight ---- */
+async function checkOne(path, wants){
   try{
     const m=await import(path+`?v=${Date.now()}`);
-    if(!expects?.length) return `✅ ${path}`;
-    const miss=expects.filter(x=> !(x in m));
+    if(!wants?.length) return `✅ ${path}`;
+    const miss=wants.filter(x=> !(x in m));
     return miss.length? `❌ ${path}: fehlt Export ${miss.join(", ")}` : `✅ ${path}`;
   }catch(e){
-    let msg=String(e?.message||e);
-    if(/failed to fetch|404/i.test(msg)) msg+=" (Pfad/Case?)";
+    let msg=String(e?.message||e); if(/failed to fetch|404/i.test(msg)) msg+=" (Pfad/Case?)";
     return `❌ ${path}: Import/Parse fehlgeschlagen → ${msg}`;
   }
 }
 export async function runModuleMatrix(){
   const lines=[];
-  const checks=[
-    ["./event.js",["on","emit"]],
-    ["./config.js",[]],
-    ["./errorManager.js",["initErrorManager","report"]],
-    ["./engine.js",["boot","start","pause","reset","setTimescale","setPerfMode"]],
-    ["./entities.js",["setWorldSize","createAdamAndEve","step","getCells","getFoodItems","applyEnvironment"]],
-    ["./reproduction.js",["step","setMutationRate"]],
-    ["./food.js",["step","setSpawnRate"]],
-    ["./renderer.js",["draw","setPerfMode"]],
-    ["./metrics.js",["getPhases","getEconSnapshot","getPopSnapshot","getDriftSnapshot","getMateSnapshot"]],
-    ["./drives.js",["getDrivesSnapshot","getTraceText"]],
-    ["./editor.js",["openEditor"]],
-    ["./environment.js",["openEnvPanel"]],
-    ["./appops_panel.js",["openAppOps"]],
-    ["./appops.js",["generateOps"]],
-    ["./advisor.js",["setMode","getMode","scoreCell","sortCells"]],
-    ["./grid.js",["createGrid"]],
-    ["./bootstrap.js",[]],
-    ["./sw.js",[]],
-    ["./diag.js",["openDiagPanel"]]
-  ];
-  for(const [p, exp] of checks){ lines.push(await checkModule(p, exp)); }
+  for(const spec of PF_MODULES){ lines.push(await checkOne(spec.path, spec.wants)); }
   state.modules.lastReport=lines.join("\n");
   return state.modules.lastReport;
 }
 
-/* ---------- Start/Snapshot ---------- */
+/* ---- Start/Snapshot ---- */
 export function startCollectors(){
   if(state.started) return; state.started=true;
   startRafSampler(); startLongTaskObserver(); startTopbarObserver(); scanResources();
@@ -144,34 +114,26 @@ export function getAppOpsSnapshot(){
   };
 }
 
-/* ---------- MDC-OPS Snapshots + Vorschläge ---------- */
+/* ---- MDC-OPS & Vorschläge ---- */
 const tag = (name,obj)=>`MDC-OPS-${name}-${btoa(unescape(encodeURIComponent(JSON.stringify({v:1,ts:Date.now(),snapshot:obj}))))}`;
-
 export function getMdcCodes(){
-  const s = getAppOpsSnapshot();
-  return {
-    all: tag('ALL', s),
-    perf: tag('PERF', s.perf),
-    timings: tag('TIMINGS', s.timings),
-    layout: tag('LAYOUT', s.layout),
-    res: tag('RES', s.resources)
-  };
+  const s=getAppOpsSnapshot();
+  return { all:tag('ALL',s), perf:tag('PERF',s.perf), timings:tag('TIMINGS',s.timings), layout:tag('LAYOUT',s.layout), res:tag('RES',s.resources) };
 }
-
 export function generateOps(){
   const s = getAppOpsSnapshot();
   const ops = { v: 1, title: "Auto-OPS Vorschläge", goals: [], changes: [], accept: [] };
 
   ops.changes.push({
-    file: "preflight.js", op: "append",
-    code:"// === Dev-Hook: manuelle Preflight-Anzeige mit ?pf=1 ===\n(function devHook(){\n  try{\n    const q=new URLSearchParams(location.search);\n    if(q.get('pf')==='1') import('./preflight.js').then(m=>m.diagnose());\n  }catch{}\n})();\n"
+    file:"preflight.js", op:"append",
+    code:"// Dev-Hook: manuelle Preflight-Anzeige (?pf=1)\n(function PF_HOOK(){try{var q=new URLSearchParams(location.search);if(q.get('pf')==='1') import('./preflight.js').then(m=>m.diagnose());}catch{}})();\n"
   });
   ops.goals.push("Preflight jederzeit manuell abrufbar (?pf=1)");
 
   if (s.perf.jank > 5 || s.layout.reflows > 5) {
     ops.changes.push(
       { file:"ticker.js", op:"patch", find:"setInterval\\(updateSnapshot, 5000\\);", replace:"setInterval(updateSnapshot, 7000);" },
-      { file:"style.css", op:"append", code:"/* Ticker kompakter */\n#ticker{ row-gap:0px !important; }\n#ticker span{ line-height:1.15; }\n" }
+      { file:"style.css", op:"append", code:"/* Ticker kompakter */\n#ticker{ row-gap:0 !important; } #ticker span{ line-height:1.15; }\n" }
     );
     ops.goals.push("Ticker ruhiger/kompakter zur Reflow-Reduktion");
   }
@@ -179,12 +141,12 @@ export function generateOps(){
   if ((s.engine.capRatio||0) > 0.15) {
     ops.changes.push(
       { file:"grid.js", op:"replace", code:
-"// Uniform-Grid Scaffold – wird im nächsten Schritt produktiv genutzt\nexport function createGrid(cellSize, width, height){\n  const cols = Math.max(1, Math.ceil(width / cellSize));\n  const rows = Math.max(1, Math.ceil(height/ cellSize));\n  const buckets = new Map();\n  function key(ix,iy){ return ix+\",\"+iy; }\n  function clear(){ buckets.clear(); }\n  function insert(x,y, payload){ const ix=Math.floor(x/cellSize), iy=Math.floor(y/cellSize); const k=key(ix,iy); if(!buckets.has(k)) buckets.set(k,[]); buckets.get(k).push(payload); }\n  function queryCircle(x,y,r){ const minX=Math.floor((x-r)/cellSize), maxX=Math.floor((x+r)/cellSize); const minY=Math.floor((y-r)/cellSize), maxY=Math.floor((y+r)/cellSize); const out=[]; for(let iy=minY; iy<=maxY; iy++){ for(let ix=minX; ix<=maxX; ix++){ const k=key(ix,iy); const arr=buckets.get(k); if(arr) out.push(...arr); } } return out; }\n  return { cellSize, cols, rows, clear, insert, queryCircle };\n}\n" },
+"// Uniform-Grid Scaffold\nexport function createGrid(cellSize, width, height){\n  const cols = Math.max(1, Math.ceil(width / cellSize));\n  const rows = Math.max(1, Math.ceil(height/ cellSize));\n  const buckets = new Map();\n  function key(ix,iy){ return ix+\",\"+iy; }\n  function clear(){ buckets.clear(); }\n  function insert(x,y,p){ const ix=Math.floor(x/cellSize), iy=Math.floor(y/cellSize); const k=key(ix,iy); if(!buckets.has(k)) buckets.set(k,[]); buckets.get(k).push(p); }\n  function queryCircle(x,y,r){ const minX=Math.floor((x-r)/cellSize), maxX=Math.floor((x+r)/cellSize); const minY=Math.floor((y-r)/cellSize), maxY=Math.floor((y+r)/cellSize); const out=[]; for(let iy=minY; iy<=maxY; iy++){ for(let ix=minX; ix<=maxX; ix++){ const k=key(ix,iy); const arr=buckets.get(k); if(arr) out.push(...arr); } } return out; }\n  return { cellSize, cols, rows, clear, insert, queryCircle };\n}\n" },
       { file:"entities.js", op:"patch", find:"export function step(dt, _env, _t){", replace:"export function step(dt, _env, _t){ /* grid scaffold: befüllt im nächsten Schritt produktiv */" }
     );
-    ops.goals.push("Vorbereitung schneller Nachbarn-/Food-Lookups (Spatial Hash Scaffold)");
+    ops.goals.push("Spatial Hash Scaffold vorbereitet");
   }
 
-  ops.accept.push("App-Ops Panel erzeugt gültige OPS; Backlog/Jank/Reflows sinken nach Anwendung der Vorschläge (wo zutreffend).");
+  ops.accept.push("OPS einspielen → Jank/Backlog/Draw-Zeit sinken (wo zutreffend).");
   return JSON.stringify(ops, null, 2);
 }
