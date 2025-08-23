@@ -1,55 +1,61 @@
-// food.js — einfaches, stabiles Food-Spawn + Aufnahme-Yield
+// food.js — einfacher Spawner (Rate /s), globale Liste, dt-akkumuliert
 
-let _spawnRate = 6;          // Items pro Sekunde (vom Slider)
-const _items = [];           // deine bestehende Liste ggf. weiterverwenden
-const YIELD = 35;            // Energie pro Item
+let RATE = 6;              // Items pro Sekunde
+const MAX = 400;           // Obergrenze für Food-Items (sanft begrenzt)
+let acc  = 0;              // Spawn-Akkumulator
 
-// Accumulator für sauberen Spawn in festen Ticks
-let _acc = 0;
-const SPAWN_TICK = 0.25;     // alle 250ms spawnen wir anteilig
+// globale Liste (für Renderer-Fallback oder andere Module)
+if (!window.__FOODS) window.__FOODS = [];
 
-export function setSpawnRate(v){
-  _spawnRate = Math.max(0, +v || 0);
+// Hilfen
+function canvasSize(){
+  const c = document.getElementById('scene');
+  if (c && c.width && c.height) return { w:c.width, h:c.height };
+  // Fallback: Viewport
+  return { w: document.documentElement.clientWidth|0, h: (document.documentElement.clientHeight|0) - 80 };
 }
-
-export function step(dt){
-  // Anteilig Items anlegen: pro TICK -> rate*TICK Items
-  _acc += dt;
-  while (_acc >= SPAWN_TICK){
-    _acc -= SPAWN_TICK;
-    const toSpawn = _spawnRate * SPAWN_TICK;
-    spawnFractional(toSpawn);
-  }
-}
-
-// Hilfsfunktion: fractional spawn (z. B. 1.5 -> 1 + 50%-Chance auf weiteres)
-function spawnFractional(x){
-  const base = Math.floor(x);
-  const frac = x - base;
-  for (let i=0;i<base;i++) spawnOne();
-  if (Math.random() < frac) spawnOne();
-}
-
 function spawnOne(){
-  // Platziere Item zufällig im Sichtbereich. Nutze deine Weltgröße, falls vorhanden.
-  const canvas = document.getElementById("scene");
-  if (!canvas) return;
-  const x = Math.random() * canvas.width;
-  const y = Math.random() * canvas.height;
-  _items.push({ x, y, e:YIELD });
+  const { w, h } = canvasSize();
+  const x = Math.max(2, Math.min(w-2, Math.random()*w));
+  const y = Math.max(2, Math.min(h-2, Math.random()*h));
+  window.__FOODS.push({ x, y });
 }
 
-// Von Renderer/Engine abgefragt:
-export function getFoodItems(){ return _items; }
+// API
+export function setSpawnRate(r){
+  const v = Math.max(0, +r || 0);
+  RATE = v;
+}
+export function getSpawnRate(){ return RATE; }
 
-// Aufnahme durch Zelle (Engine/Entities sollten diese Funktion rufen,
-// wenn Kollisions-Test sagt: Zelle frisst Food)
-export function consumeClosest(x,y, radius=10){
-  let best=-1, bestD2=radius*radius, got=0;
-  for (let i=0;i<_items.length;i++){
-    const f=_items[i], dx=f.x-x, dy=f.y-y, d2=dx*dx+dy*dy;
-    if (d2 <= bestD2){ bestD2=d2; best=i; }
+// Optional „Burst“ (z.B. für Tests)
+export function spawnBurst(n=50){
+  n = Math.max(0, n|0);
+  for (let i=0;i<n;i++){
+    if (window.__FOODS.length >= MAX) break;
+    spawnOne();
   }
-  if (best>=0){ got=_items[best].e; _items.splice(best,1); }
-  return got; // Energiemenge
+}
+
+// Main step(dt): akkumuliert und spawnt ganzzahlig
+export function step(dt){
+  if (RATE <= 0) return;
+
+  // sanfte Obergrenze
+  if (window.__FOODS.length >= MAX) {
+    // langsam ausdünnen (optional): entferne 1 Item all 0.1s bei voller Liste
+    // (kein Muss – schützt nur gegen Überlauf)
+    return;
+  }
+
+  acc += RATE * Math.max(0, dt || 0);
+  let n = acc | 0;              // ganzzahlig
+  if (n <= 0) return;
+  acc -= n;
+
+  // clamp, falls nahe MAX
+  const room = Math.max(0, MAX - window.__FOODS.length);
+  if (n > room) n = room;
+
+  for (let i=0;i<n;i++) spawnOne();
 }
