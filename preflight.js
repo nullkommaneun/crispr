@@ -22,7 +22,7 @@ function show(text){
 
 async function checkOne({path,wants=[],optional=false}){
   try{
-    const m = await import(path+'?v='+Date.now());
+    const m = await import(path);
     const miss = wants.filter(k => !(k in m));
     if (miss.length) return { ok:false, line: (optional?OPT:NO)+`${path} · fehlt: ${miss.join(', ')} ${optional?'(optional)':''}` };
     return { ok:true, line: OK+path+' OK' };
@@ -51,15 +51,16 @@ async function uiCheck(){
     canvas:!!$('scene')
   };
   const fn = {};
-  try{ const m=await import('./engine.js?v='+Date.now());
+  try{ const m=await import('./engine.js');
        fn.start=typeof m.start==='function'; fn.pause=typeof m.pause==='function';
        fn.reset=typeof m.reset==='function'; fn.setTS=typeof m.setTimescale==='function';
        fn.setPerf=typeof m.setPerfMode==='function'; }catch(e){ fn._engineErr=String(e); }
-  try{ const m=await import('./reproduction.js?v='+Date.now()); fn.setMutation=typeof m.setMutationRate==='function'; }catch(e){}
-  try{ const m=await import('./food.js?v='+Date.now()); fn.setFood=typeof m.setSpawnRate==='function'; }catch(e){}
-  try{ const m=await import('./editor.js?v='+Date.now()); fn.openEditor=typeof m.openEditor==='function'; }catch(e){}
-  try{ const m=await import('./environment.js?v='+Date.now()); fn.openEnv=typeof m.openEnvPanel==='function'; }catch(e){}
-  try{ const m=await import('./appops_panel.js?v='+Date.now()); fn.openOps=typeof m.openAppOps==='function'; }catch(e){}
+  try{ const m=await import('./reproduction.js'); fn.setMutation=typeof m.setMutationRate==='function'; }catch(e){}
+  try{ const m=await import('./food.js'); fn.setFood=typeof m.setSpawnRate==='function'; }catch(e){}
+  try{ const m=await import('./editor.js'); fn.openEditor=typeof m.openEditor==='function'; }catch(e){}
+  try{ const m=await import('./environment.js'); fn.openEnv=typeof m.openEnvPanel==='function'; }catch(e){}
+  try{ const m=await import('./appops_panel.js'); fn.openOps=typeof m.openAppOps==='function'; }catch(e){}
+
   // Canvas 2D Probe
   let canvas2D=false; try{ const c=$('scene'); canvas2D=!!(c&&c.getContext&&c.getContext('2d')); }catch{}
   ui.canvas2D=canvas2D; return {ui,fn};
@@ -76,7 +77,7 @@ function runtime(){
 }
 
 export async function diagnose(){
-  window.__suppressBootGuard = true; // kein rotes Boot-Overlay während PF
+  window.__suppressBootGuard = true;
 
   const rt = runtime();
   const W = [];
@@ -111,11 +112,10 @@ export async function diagnose(){
   const errs=Array.isArray(window.__runtimeErrors)?window.__runtimeErrors.slice(-4):[];
   if(errs.length){ lines.push('Laufzeitfehler (letzte 4):',''); errs.forEach(e=>lines.push(`[${new Date(e.ts).toLocaleTimeString()}] ${e.where||e.when}\n${String(e.msg||'')}`,'')); }
   lines.push('Maschinencode:', mdc,'');
-  lines.push('Hinweis: Cache-Buster: ?ts='+Date.now());
   show(lines.join('\n'));
 }
 
-// manueller Hook via ?pf=1
+// manueller Hook via ?pf=1 (und optional #pf)
 (function(){
   try{
     const q=new URLSearchParams(location.search);

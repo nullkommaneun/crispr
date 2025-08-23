@@ -76,7 +76,7 @@ function scanResources(){
 /* ---- identischer Modul-Check wie Preflight ---- */
 async function checkOne(path, wants){
   try{
-    const m=await import(path+`?v=${Date.now()}`);
+    const m=await import(path);
     if(!wants?.length) return `✅ ${path}`;
     const miss=wants.filter(x=> !(x in m));
     return miss.length? `❌ ${path}: fehlt Export ${miss.join(", ")}` : `✅ ${path}`;

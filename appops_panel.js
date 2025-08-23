@@ -1,4 +1,5 @@
 // appops_panel.js — App-Ops (Optimierer) Panel, robust + Preflight-Button
+
 function buildHeader(title, onClose){
   const wrap=document.createElement("div"); wrap.className="panel-header";
   wrap.innerHTML = `
@@ -24,9 +25,13 @@ function section(title){
 }
 function row(label, html){ const r=document.createElement("div"); r.className="row"; const l=document.createElement("span"); l.textContent=label; const v=document.createElement("span"); v.innerHTML=html; r.append(l,v); return r; }
 function codeField(value){
-  const wrap=document.createElement("div"); Object.assign(wrap.style,{display:"grid",gridTemplateColumns:"1fr auto",gap:"8px",marginTop:"6px"});
-  const ta=document.createElement("textarea"); Object.assign(ta.style,{width:"100%",height:"120px",background:"#0b1217",border:"1px solid #2a3a46",borderRadius:"8px",color:"#d8f0ff",font:"12px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"}); ta.readOnly=true; ta.value=value??"";
-  const btn=document.createElement("button"); btn.textContent="OPS kopieren"; btn.onclick=async()=>{ try{ await navigator.clipboard.writeText(ta.value); btn.textContent="Kopiert ✓"; setTimeout(()=>btn.textContent="OPS kopieren",1200);}catch{} };
+  const wrap=document.createElement("div");
+  Object.assign(wrap.style,{display:"grid",gridTemplateColumns:"1fr auto",gap:"8px",marginTop:"6px"});
+  const ta=document.createElement("textarea");
+  Object.assign(ta.style,{width:"100%",height:"120px",background:"#0b1217",border:"1px solid #2a3a46",borderRadius:"8px",color:"#d8f0ff",font:"12px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"});
+  ta.readOnly=true; ta.value=value ?? "";
+  const btn=document.createElement("button"); btn.textContent="OPS kopieren";
+  btn.onclick=async()=>{ try{ await navigator.clipboard.writeText(ta.value); btn.textContent="Kopiert ✓"; setTimeout(()=>btn.textContent="OPS kopieren",1200);}catch{} };
   wrap.append(ta,btn); return wrap;
 }
 const fmt = v => (v!=null && v===v) ? (typeof v==='number'? v.toFixed(1): String(v)) : "–";
@@ -50,12 +55,12 @@ export async function openAppOps(){
   const head = buildHeader("App-Ops (Optimierer) — Smart Mode", close);
   host.append(head);
 
-  // Preflight direkt aus Panel
-  head.querySelector("#btnPref").onclick = async()=>{ try{ const m = await import("./preflight.js?v="+Date.now()); m.diagnose(); }catch{} };
+  // Preflight direkt aus dem Panel aufrufbar
+  head.querySelector("#btnPref").onclick = async()=>{ try{ const m = await import("./preflight.js"); m.diagnose(); }catch{} };
 
   const body=document.createElement("div"); body.className="panel-body"; host.append(body);
 
-  const m = await import("./appops.js?v="+Date.now());
+  const m = await import("./appops.js");
   try{ m.startCollectors?.(); }catch{}
 
   // Performance
@@ -130,10 +135,9 @@ export async function openAppOps(){
     const { box } = section("Vorschläge (MDC-OPS)");
     const opsJSON = m.generateOps?.() || "// appops.generateOps() fehlt";
     box.append(codeField(opsJSON));
-    const codesBox=document.createElement("div"); codesBox.style.marginTop="8px";
+    const codes=document.createElement("div"); codes.style.marginTop="8px";
     const all = (m.getMdcCodes?.()||{}).all || "";
-    codesBox.append(codeField(all));
-    box.append(codesBox);
-    body.append(box);
+    codes.append(codeField(all));
+    box.append(codes); body.append(box);
   }
 }
