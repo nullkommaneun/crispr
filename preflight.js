@@ -1,4 +1,8 @@
-// preflight.js — Deep-Check + UI-Wiring + Canvas-Probe + MDC-CHK (non-blocking)
+// preflight.js — Deep-Check + UI-Wiring + Canvas-Probe + MDC-CHK (iOS-freundlich)
+// - pausiert die Engine während der Diagnose (Resume beim Schließen)
+// - Modulmatrix gestreamt (kein "Freeze")
+// - "MDC kopieren" mit Clipboard-Fallback
+
 import { PF_MODULES } from "./modmap.js";
 
 const OK  = "✅ ";
@@ -7,6 +11,25 @@ const OPT = "⚠️  ";
 const $ = id => document.getElementById(id);
 const b64 = s => btoa(unescape(encodeURIComponent(s)));
 
+let __pfPausedEngine = false;
+
+/* ---------------------------- Engine Pause/Resume ---------------------------- */
+async function pauseEngine() {
+  try {
+    const m = await import("./engine.js");
+    if (typeof m.pause === "function") { m.pause(); __pfPausedEngine = true; }
+  } catch {}
+}
+async function resumeEngine() {
+  try {
+    if (__pfPausedEngine) {
+      const m = await import("./engine.js");
+      if (typeof m.start === "function") m.start();
+    }
+  } catch {} finally { __pfPausedEngine = false; }
+}
+
+/* ------------------------------- Overlay-UI --------------------------------- */
 function overlay() {
   let root = $("diag-overlay");
   if (root) return root;
@@ -29,16 +52,22 @@ function overlay() {
   const h = document.createElement("h3");
   h.textContent = "Start-Diagnose (Deep-Check + UI-Wiring)";
   h.style.margin = "0";
+
   const btns = document.createElement("div");
   btns.style.cssText = "display:flex;gap:6px;";
+
   const btnCopy = document.createElement("button");
   btnCopy.id = "btnMdcCopy";
   btnCopy.textContent = "MDC kopieren";
+
   const btnRerun = document.createElement("button");
   btnRerun.textContent = "Erneut prüfen";
+  btnRerun.onclick = () => diagnose();
+
   const btnClose = document.createElement("button");
   btnClose.textContent = "Schließen";
   btnClose.onclick = hide;
+
   btns.append(btnCopy, btnRerun, btnClose);
   bar.append(h, btns);
 
@@ -50,10 +79,10 @@ function overlay() {
   root.append(card);
   document.body.appendChild(root);
 
-  btnRerun.onclick = () => diagnose();
+  // Copy-Button verbindet sich auf den aktuellen MDC
   btnCopy.onclick = () => {
     const code = pre.dataset.mdc || "";
-    copy(code, btnCopy);
+    copySafe(code, btnCopy);
   };
 
   return root;
@@ -72,18 +101,35 @@ function setMdc(mdc) {
   const box = $("diag-box");
   if (box) box.dataset.mdc = mdc;
 }
-function hide() {
+async function hide() {
   const root = $("diag-overlay");
   if (root) root.style.display = "none";
+  await resumeEngine();
 }
-async function copy(text, btn) {
+
+/* ------------------------------ Clipboard-Fallback --------------------------- */
+async function copySafe(text, btn) {
   try {
     await navigator.clipboard.writeText(text || "");
-    if (btn) { const t = btn.textContent; btn.textContent = "Kopiert ✓"; setTimeout(()=>btn.textContent=t, 1000); }
+    if (btn) { const t = btn.textContent; btn.textContent = "Kopiert ✓"; setTimeout(()=>btn.textContent=t, 900); }
+    return;
+  } catch {}
+  // Fallback für iOS/Safari
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text || "";
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    ta.style.left = "-9999px";
+    document.body.appendChild(ta);
+    ta.focus(); ta.select();
+    document.execCommand("copy");
+    document.body.removeChild(ta);
+    if (btn) { const t = btn.textContent; btn.textContent = "Kopiert ✓"; setTimeout(()=>btn.textContent=t, 900); }
   } catch {}
 }
 
-/* ---------------------------- RUNTIME / WIRING ----------------------------- */
+/* --------------------------------- RUNTIME ---------------------------------- */
 function rtSnapshot(){
   const boot = !!window.__bootOK;
   const fc   = window.__frameCount|0;
@@ -112,11 +158,10 @@ async function uiCheck(){
   try{ const m=await import("./appops_panel.js"); fn.openOps=typeof m.openAppOps==='function'; }catch(e){}
   // Canvas-Probe
   let canvas2D=false; try{ const c=$("scene"); canvas2D=!!(c&&c.getContext&&c.getContext("2d")); }catch{}
-  ui.canvas2D=canvas2D;
-  return {ui, fn};
+  ui.canvas2D=canvas2D; return {ui,fn};
 }
 
-/* ------------------------------- MODULMATRIX ------------------------------- */
+/* -------------------------------- Modulmatrix ------------------------------- */
 async function checkModule({path, wants=[], optional=false}) {
   try{
     const m = await import(path);
@@ -129,33 +174,34 @@ async function checkModule({path, wants=[], optional=false}) {
   }
 }
 async function runModuleMatrixStreaming() {
-  // module für module prüfen, dabei UI freigeben
   for (let i=0;i<PF_MODULES.length;i++){
     const line = await checkModule(PF_MODULES[i]);
     append(line);
-    // UI freigeben, damit iOS Safari nicht „friert“
+    // UI freigeben (wichtig für iOS Safari)
     await new Promise(r => setTimeout(r, 0));
   }
 }
 
-/* -------------------------------- DIAGNOSE -------------------------------- */
+/* -------------------------------- Diagnose --------------------------------- */
 export async function diagnose(){
-  // nicht den Boot-Guard verdoppeln
-  window.__suppressBootGuard = true;
+  // Engine bremsen, bevor viel UI gebaut wird
+  await pauseEngine();
 
-  const lines = [];
   const rt = rtSnapshot();
-
-  lines.push("Start-Diagnose (Deep-Check + UI-Wiring)\n");
-  lines.push(`Boot-Flag: ${rt.boot ? "gesetzt" : "fehlt"}`);
-  lines.push(`Frames: ${rt.fc}  ·  FPS≈ ${rt.fps}`);
-  lines.push(`Zellen: ${rt.cells}  ·  Food: ${rt.food}`);
-  lines.push(`Letzter Step: ${rt.last}`);
-  lines.push(`Runtime-Fehler im Log: ${rt.errs}\n`);
-  lines.push("UI/Wiring:");
+  const head = [
+    "Start-Diagnose (Deep-Check + UI-Wiring)\n",
+    `Boot-Flag: ${rt.boot ? "gesetzt" : "fehlt"}`,
+    `Frames: ${rt.fc}  ·  FPS≈ ${rt.fps}`,
+    `Zellen: ${rt.cells}  ·  Food: ${rt.food}`,
+    `Letzter Step: ${rt.last}`,
+    `Runtime-Fehler im Log: ${rt.errs}\n`,
+    "UI/Wiring:"
+  ];
+  show(head);
 
   const {ui, fn} = await uiCheck();
-  const mark = (ok, label, hint="") => lines.push((ok?OK:NO) + label + (hint?(" — "+hint):""));
+  const mark = (ok, label, hint="") =>
+    append((ok?OK:NO) + label + (hint?(" — "+hint):""));
 
   mark(ui.btnStart  && fn.start,  "Start-Button → engine.start()",  !ui.btnStart?"Button fehlt":(!fn.start?"API fehlt":""));
   mark(ui.btnPause  && fn.pause,  "Pause-Button → engine.pause()",  !ui.btnPause?"Button fehlt":(!fn.pause?"API fehlt":""));
@@ -166,16 +212,14 @@ export async function diagnose(){
   mark(ui.btnEditor && fn.openEditor,"CRISPR-Editor → editor.openEditor()", !ui.btnEditor?"Button fehlt":(!fn.openEditor?"API fehlt":""));
   mark(ui.btnEnv    && fn.openEnv,  "Umwelt-Panel → environment.openEnvPanel()", !ui.btnEnv?"Button fehlt":(!fn.openEnv?"API fehlt":""));
   mark(ui.btnAppOps && fn.openOps,  "App-Ops → appops_panel.openAppOps()", !ui.btnAppOps?"Button fehlt":(!fn.openOps?"API fehlt":""));
-  lines.push((ui.canvas?OK:NO) + "Canvas #scene vorhanden");
-  lines.push((ui.canvas2D?OK:NO)+ "2D-Context erzeugbar", "");
+  append((ui.canvas?OK:NO) + "Canvas #scene vorhanden");
+  append((ui.canvas2D?OK:NO)+ "2D-Context erzeugbar");
+  append(""); append("Module/Exporte:");
 
-  lines.push("Module/Exporte:");
-  show(lines); // Overlay öffnen und ersten Block schreiben
-
-  // Modulmatrix gestreamt (friert UI nicht ein)
+  // Modulmatrix — gestreamt
   await runModuleMatrixStreaming();
 
-  // Laufzeitfehler (letzte 4)
+  // Fehler-Log
   const errs = Array.isArray(window.__runtimeErrors) ? window.__runtimeErrors.slice(-4) : [];
   if (errs.length){
     append(""); append("Laufzeitfehler (letzte 4):"); append("");
@@ -185,22 +229,19 @@ export async function diagnose(){
   }
 
   // MDC
-  const payload = {
-    v:1, kind:"ui-diagnose", ts:Date.now(),
-    runtime: rtSnapshot(), // nochmal nachziehen
-    // schlank: wir schreiben die Modul-Zeilen bereits in die Ansicht
-  };
+  const payload = { v:1, kind:"ui-diagnose", ts:Date.now(), runtime: rtSnapshot() };
   const mdc = `MDC-CHK-${Math.random().toString(16).slice(2,6)}-${b64(JSON.stringify(payload))}`;
   append(""); append("Maschinencode:"); append(mdc);
   setMdc(mdc);
 }
 
-/* ------------------------------- AUTO-HOOKS -------------------------------- */
-// manueller Hook via ?pf=1 (oder #pf). Warte kurz, damit engine.boot() das Flag setzen kann.
+/* -------------------------------- Auto-Hook -------------------------------- */
+// sanft: kleine Wartezeit, damit engine.boot() das Flag setzen kann
 (function(){
   try{
     const q = new URLSearchParams(location.search);
-    const want = q.get("pf")==="1" || location.hash==="#pf";
-    if (want) window.addEventListener("load", ()=> setTimeout(diagnose, 350));
+    if (q.get("pf")==="1" || location.hash==="#pf") {
+      window.addEventListener("load", () => setTimeout(diagnose, 300));
+    }
   }catch{}
 })();
