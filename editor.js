@@ -1,231 +1,196 @@
-// editor.js — CRISPR-Editor: Links mit ±1-Buttons, Prognose-Score (TF.js oder Heuristik)
-// KORREKTUR: keine Namenskollision mit setAdvisorMode/getAdvisorMode (Importe umbenannt)
+// editor.js — robuster CRISPR-Editor (Liste + Detail, advisor optional)
 
-import { getCells } from "./entities.js";
-import { emit, on } from "./event.js";
-// Advisor-API importieren — aber mit anderen Namen, damit unsere Exporte nicht kollidieren
-import {
-  setMode as advSetMode,
-  getMode as advGetMode,
-  scoreCell,
-  sortCells
-} from "./advisor.js";
+import { getCells } from './entities.js';
 
-const panel = document.getElementById("editorPanel");
+let overlay = null;
+let advisorMod = null;
 
-// ==== TF-Model Laden (global 'tf') ====
-let modelPromise = null;
-async function ensureModel(){
-  if (window.__tfModel) return window.__tfModel;
-  if (typeof tf === "undefined" || !tf?.loadLayersModel) return null;
-  if (!modelPromise){
-    modelPromise = tf.loadLayersModel("./models/model.json")
-      .then(m => (window.__tfModel = m))
-      .catch(e => { console.warn("TF model load failed:", e); return null; });
-  }
-  return await modelPromise;
+// interner UI-Status
+const ui = {
+  open: false,
+  selectedId: null,
+  advisorMode: 'off' // 'off' | 'heuristic' | 'model' (wenn dein advisor das unterstützt)
+};
+
+// advisor on-demand laden (optional)
+async function ensureAdvisor(){
+  if (advisorMod) return advisorMod;
+  try { advisorMod = await import('./advisor.js'); }
+  catch { advisorMod = null; }
+  return advisorMod;
 }
-function z(v){ return (v - 5) / 5; }
-async function predictStability(genome){
+
+/* ===================== Public API ===================== */
+
+export async function openEditor(){
+  if (ui.open) { try{ render(); }catch{} return; }
+  ui.open = true;
+
+  overlay = document.createElement('div');
+  overlay.id = 'editor-overlay';
+  overlay.style.cssText =
+    'position:fixed;inset:0;z-index:99990;background:rgba(0,0,0,.55);' +
+    'display:flex;align-items:flex-start;justify-content:center;padding:24px;';
+  overlay.addEventListener('click', (e)=>{ if (e.target===overlay) closeEditor(); });
+
+  const panel = document.createElement('div');
+  panel.id = 'editor-panel';
+  panel.style.cssText =
+    'max-width:1100px;width:94%;background:#10161d;border:1px solid #2a3b4a;border-radius:12px;' +
+    'color:#d6e1ea;padding:14px;box-shadow:0 30px 70px rgba(0,0,0,.45);display:grid;' +
+    'grid-template-columns: 1fr 380px; gap:12px; max-height: 86vh; overflow:hidden;';
+  overlay.appendChild(panel);
+
+  const closeBtn = document.createElement('button');
+  closeBtn.textContent = 'Schließen';
+  closeBtn.style.cssText =
+    'position:absolute;top:10px;right:10px;background:#243241;color:#cfe6ff;border:1px solid #47617a;' +
+    'border-radius:8px;padding:6px 10px;';
+  closeBtn.onclick = closeEditor;
+  overlay.appendChild(closeBtn);
+
+  document.body.appendChild(overlay);
+  await ensureAdvisor();
+  render();
+}
+
+export function closeEditor(){
+  ui.open = false;
+  overlay?.remove();
+  overlay = null;
+}
+
+export async function setAdvisorMode(mode){
+  ui.advisorMode = mode || 'off';
+  const adv = await ensureAdvisor();
+  try { adv?.setMode?.(ui.advisorMode); } catch {}
+  render();
+}
+
+export function getAdvisorMode(){ return ui.advisorMode; }
+
+/* ===================== Render ===================== */
+
+function el(id){ return document.getElementById(id); }
+function ce(tag, html, css){ const n=document.createElement(tag); if (html!=null) n.innerHTML=html; if (css) n.style.cssText=css; return n; }
+
+function traitRow(name, key, val, onChange){
+  const wrap = ce('div','', 'margin:8px 0; display:grid; grid-template-columns: 46px 1fr 38px; gap:8px; align-items:center;');
+  const lbl  = ce('div', name);
+  const rng  = ce('input');
+  rng.type='range'; rng.min='1'; rng.max='10'; rng.step='1'; rng.value = String(val|0);
+  const out  = ce('div', String(val|0), 'text-align:right; opacity:.85;');
+  rng.addEventListener('input', (e)=>{ const v=+e.target.value|0; out.textContent=String(v); onChange(v); });
+  wrap.append(lbl); wrap.append(rng); wrap.append(out);
+  return wrap;
+}
+
+function safeScore(cell){
   try{
-    const m = await ensureModel();
-    if (m){
-      const x = tf.tensor2d([[z(genome.TEM), z(genome["GRÖ"]), z(genome.EFF), z(genome.SCH), z(genome.MET)]]);
-      const y = m.predict(x);
-      const p = (Array.isArray(y)? y[0] : y).dataSync()[0];
-      x.dispose(); Array.isArray(y)? y.forEach(t=>t.dispose()) : y.dispose();
-      return { p: Math.max(0, Math.min(1, p)), src: "Modell" };
-    }
-  }catch(e){ console.warn("predictStability error:", e); }
-  // Heuristik-Fallback
-  const s = 0.40*z(genome.EFF) + 0.28*z(genome.SCH) + 0.18*z(genome.TEM) - 0.42*z(genome.MET) + 0.06*z(genome["GRÖ"]);
-  const p = 1/(1+Math.exp(-1.75*s));
-  return { p, src: "Heuristik" };
+    if (!advisorMod) return null;
+    if (advisorMod.scoreCell) return advisorMod.scoreCell(cell);
+    if (advisorMod.sortCells) return null; // nur Liste
+  }catch{}
+  return null;
 }
 
-// ==== UI Helpers ====
-function buildHeader(title){
-  const header=document.createElement("div");
-  header.className="panel-header";
-  const h2=document.createElement("h2"); h2.textContent=title;
-  const close=document.createElement("button"); close.className="closeX"; close.innerHTML="&times;";
-  close.onclick=()=>panel.classList.add("hidden");
-  header.append(h2, close);
-  return header;
+function sortForList(cells){
+  try{
+    if (advisorMod?.sortCells) return advisorMod.sortCells(cells.slice());
+  }catch{}
+  // Fallback: nach Energie absteigend
+  return cells.slice().sort((a,b)=>(b.energy|0)-(a.energy|0));
 }
-function rowLeft(label){
-  const div = document.createElement("div");
-  div.className = "row";
-  const l = document.createElement("span"); l.textContent = label;
-  div.append(l);
-  return {div, l};
+
+function selectFirstIfNeeded(cells){
+  if (!cells || cells.length===0){ ui.selectedId = null; return; }
+  if (ui.selectedId==null || !cells.some(c=>c.id===ui.selectedId)){
+    ui.selectedId = cells[0].id;
+  }
 }
-function mkSpinControl(value, onChange){
-  const wrap = document.createElement("div");
-  wrap.style.display="flex"; wrap.style.alignItems="center"; wrap.style.gap="6px";
-
-  const btnMinus = document.createElement("button"); btnMinus.textContent="–";
-  btnMinus.style.minWidth="28px"; btnMinus.title="−1";
-  const val = document.createElement("span"); val.className="badge"; val.textContent=String(value);
-  const btnPlus  = document.createElement("button"); btnPlus.textContent="+";
-  btnPlus.style.minWidth="28px"; btnPlus.title="+1";
-
-  btnMinus.onclick = ()=> { onChange(-1); };
-  btnPlus.onclick  = ()=> { onChange(+1); };
-
-  wrap.append(btnMinus, val, btnPlus);
-  return {wrap, val};
-}
-function clampGene(v){ return Math.max(1, Math.min(10, v|0)); }
-
-// ==== Render ====
-let selectedId = null;
-
-// Exporte (UI-Wrapper) – jetzt konfliktfrei:
-export function openEditor(){ render(); ensureModel(); }
-export function closeEditor(){ panel.classList.add("hidden"); }
-export function setAdvisorMode(mode){ try{ advSetMode(mode); }catch{} }
-export function getAdvisorMode(){ try{ return advGetMode(); }catch{ return "off"; } }
 
 function render(){
-  const cells = getCells();
-  if (!cells.length) return;
-  if(!selectedId || !cells.some(c=>c.id===selectedId)) selectedId = cells[0].id;
+  try{
+    const panel = overlay?.querySelector('#editor-panel');
+    if (!panel){ return; }
 
-  panel.innerHTML=""; panel.classList.remove("hidden");
-  panel.append(buildHeader("CRISPR-Editor"));
+    const cells = getCells() || [];
+    selectFirstIfNeeded(cells);
 
-  const body = document.createElement("div");
-  body.className = "panel-body editor-body";
-  panel.append(body);
+    // linke Seite: Detail
+    const left = ce('div','', 'overflow:auto; padding-right:6px;');
+    const sel = cells.find(c=>c.id===ui.selectedId) || null;
 
-  const detailCol = document.createElement("div");
-  detailCol.className = "editor-detail";
-  const listCol = document.createElement("div");
-  listCol.className = "editor-list";
-  body.append(detailCol, listCol);
+    if (!sel){
+      left.append(ce('div','<b>Keine Zelle gefunden.</b><br>Die Simulation scheint noch nicht erzeugt zu haben.',
+        'opacity:.9;padding:8px;'));
+    }else{
+      const score = safeScore(sel);
+      left.append(ce('h3', `${sel.name||('C'+sel.id)} <span style="opacity:.7;font-weight:400;">${sel.sex||'-'}</span>`));
+      left.append(ce('div', `Stamm ${sel.stammId??'–'} · E:${sel.energy|0} · Alter:${(sel.age||0)|0}s · Score:${score!=null?score.toFixed(2):'–'}`,
+        'opacity:.85;margin:-4px 0 8px;'));
 
-  renderDetails(detailCol, cells.find(c=>c.id===selectedId));
-  renderList(listCol);
+      // Traits editieren
+      left.append(traitRow('TEM','TEM', sel.genome.TEM, (v)=>{ sel.genome.TEM=v|0; }));
+      left.append(traitRow('GRÖ','GRÖ', sel.genome['GRÖ'], (v)=>{ sel.genome['GRÖ']=v|0; }));
+      left.append(traitRow('EFF','EFF', sel.genome.EFF, (v)=>{ sel.genome.EFF=v|0; }));
+      left.append(traitRow('SCH','SCH', sel.genome.SCH, (v)=>{ sel.genome.SCH=v|0; }));
+      left.append(traitRow('MET','MET', sel.genome.MET, (v)=>{ sel.genome.MET=v|0; }));
 
-  on("cells:born", softRefresh);
-  on("cells:died", softRefresh);
-  on("cell:edited", softRefresh);
-}
+      left.append(ce('div','<div style="height:6px;"></div>'));
+      // Advisor-Modus Umschalter (falls genutzt)
+      const advWrap = ce('div','', 'display:flex; gap:8px; align-items:center;');
+      const m = ui.advisorMode;
+      ['off','heuristic','model'].forEach(md=>{
+        const b = ce('button', md, 'background:#243241;border:1px solid #3a5166;border-radius:10px;padding:6px 10px;cursor:pointer;'
+          + (m===md?'filter:brightness(1.2);':''));
+        b.addEventListener('click', ()=> setAdvisorMode(md));
+        advWrap.append(b);
+      });
+      left.append(ce('div','Advisor-Modus', 'opacity:.8;margin:8px 0 2px;'));
+      left.append(advWrap);
+    }
 
-function softRefresh(){
-  if(panel.classList.contains("hidden")) return;
-  const body = panel.querySelector(".editor-body"); if(!body) return;
-  const [detailCol, listCol] = body.children;
-  renderDetails(detailCol, getCells().find(c=>c.id===selectedId) || getCells()[0]);
-  renderList(listCol);
-}
+    // rechte Seite: Liste + Suche
+    const right = ce('div','', 'overflow:auto;border-left:1px solid rgba(70,96,120,.25);padding-left:10px;');
+    right.append(ce('div','<b>Zellen</b>', 'margin-bottom:6px;'));
+    const list = ce('div','', 'display:flex;flex-direction:column;gap:6px;');
 
-function renderDetails(detailCol, cell){
-  detailCol.innerHTML = "";
-  if(!cell){
-    const p=document.createElement("div");
-    p.className="muted"; p.textContent="Keine Zelle ausgewählt.";
-    detailCol.append(p); return;
-  }
-
-  // Kopfzeile
-  {
-    const head=document.createElement("div");
-    head.style.display="flex"; head.style.justifyContent="space-between"; head.style.alignItems="center";
-    head.innerHTML = `<b>${cell.name}</b> <span class="badge">Stamm ${cell.stammId}</span>`;
-    detailCol.append(head);
-  }
-
-  // Gen-Kontrollen (±1)
-  const genes = [
-    ["TEM","TEM"], ["GRÖ","GRÖ"], ["EFF","EFF"], ["SCH","SCH"], ["MET","MET"]
-  ];
-  for (const [label, key] of genes){
-    const {div} = rowLeft(label);
-    const {wrap, val} = mkSpinControl(cell.genome[key], delta=>{
-      cell.genome[key] = clampGene(cell.genome[key] + delta);
-      val.textContent = String(cell.genome[key]);
-      emit("cell:edited",{id:cell.id, field:key, value:cell.genome[key]});
-      updatePrognose();  // sofort neu bewerten
+    const sorted = sortForList(cells);
+    sorted.forEach(c=>{
+      const row = ce('div','', 'border:1px solid #354b60;border-radius:10px;padding:8px;cursor:pointer;'
+        + (c.id===ui.selectedId?'outline:2px solid #5fa8ff;':''));
+      row.innerHTML = `
+        <div style="display:flex;justify-content:space-between;gap:8px;">
+          <div><b>${c.name||('C'+c.id)}</b> <span style="opacity:.75;">${c.sex||'-'}</span></div>
+          <div style="opacity:.75;">E:${c.energy|0} · Alter:${(c.age||0)|0}s</div>
+        </div>
+        <div style="opacity:.7;margin-top:2px;">Stamm ${c.stammId??'–'} · TEM:${c.genome.TEM} · GRÖ:${c.genome['GRÖ']} · EFF:${c.genome.EFF} · SCH:${c.genome.SCH} · MET:${c.genome.MET}</div>
+      `;
+      row.addEventListener('click', ()=>{ ui.selectedId=c.id; render(); });
+      list.append(row);
     });
-    div.append(wrap);
-    detailCol.append(div);
-  }
 
-  // Prognose-Bereich
-  const progWrap = document.createElement("div"); progWrap.style.marginTop="10px";
-  const progLine = document.createElement("div"); progLine.className = "muted"; progLine.textContent = "Prognose-Score: —";
-  const bar = document.createElement("div"); bar.style.height="6px"; bar.style.border="1px solid #2a3a46"; bar.style.borderRadius="6px"; bar.style.marginTop="6px";
-  const fill = document.createElement("div"); fill.style.height="100%"; fill.style.width="0%"; fill.style.borderRadius="6px";
-  fill.style.background = "linear-gradient(90deg, #2ee56a, #27c7ff)";
-  bar.append(fill); progWrap.append(progLine, bar); detailCol.append(progWrap);
+    if (sorted.length===0){
+      list.append(ce('div','Keine Zellen vorhanden.', 'opacity:.8;'));
+    }
+    right.append(list);
 
-  async function updatePrognose(){
-    const { p, src } = await predictStability(cell.genome);
-    const pct = Math.round(p*100);
-    progLine.textContent = `Prognose-Score: ${pct}% (${src})`;
-    fill.style.width = `${pct}%`;
+    // Panel-Grid befüllen
+    panel.innerHTML = '';
+    const head = ce('div', '<b>CRISPR-Editor</b>', 'grid-column:1 / -1;margin-bottom:4px;');
+    panel.append(head);
+    panel.append(left);
+    panel.append(right);
+  }catch(err){
+    // robust: zeige Fehlbox, aber crashe nicht
+    console.error('[editor] render failed', err);
+    const panel = overlay?.querySelector('#editor-panel');
+    if (panel){
+      panel.innerHTML = `<pre style="white-space:pre-wrap;color:#ffb3b3;background:#1a0f10;border:1px solid #5a2b30;border-radius:10px;padding:10px;">
+[Editor-Fehler]
+${String(err && err.stack || err)}
+</pre>`;
+    }
   }
-  updatePrognose();
 }
-
-function renderList(listCol){
-  listCol.innerHTML = "";
-
-  // Suche
-  const searchWrap=document.createElement("div");
-  searchWrap.style.position="sticky"; searchWrap.style.top="0"; searchWrap.style.background="var(--panel)";
-  searchWrap.style.padding="6px 6px 8px 6px"; searchWrap.style.borderBottom="1px solid #22303a";
-  const inp=document.createElement("input");
-  inp.type="text"; inp.placeholder="Suche Name/ID...";
-  inp.style.width="100%"; inp.style.background="#0d1419"; inp.style.border="1px solid #2a3a46";
-  inp.style.borderRadius="6px"; inp.style.color="var(--ink)"; inp.style.padding="6px 8px";
-  searchWrap.append(inp); listCol.append(searchWrap);
-
-  const cont=document.createElement("div"); cont.className="list"; listCol.append(cont);
-
-  let cells = getCells();
-  try { cells = sortCells(cells) || cells; } catch {}
-  const q = (inp.value||"").trim().toLowerCase();
-
-  for(const c of cells){
-    if(q && !(`${c.name}`.toLowerCase().includes(q) || String(c.id).includes(q))) continue;
-
-    const item=document.createElement("div");
-    item.className="cellItem editor-item";
-    if(c.id===selectedId) item.classList.add("active");
-    item.style.borderLeft = `4px solid ${c.color || '#27c7ff'}`;
-
-    // Advisor/Score (falls aktiv)
-    let scText = "–";
-    try{
-      const mode = advGetMode();
-      if(mode!=="off"){
-        const sc = scoreCell(c);
-        if (sc!=null) scText = (Math.round(sc*10)/10).toFixed(1);
-      }
-    }catch{}
-
-    item.innerHTML=`
-      <div class="name">${c.name} ${c.sex?`<span class="badge">${c.sex}</span>`:""}</div>
-      <div class="meta">Stamm ${c.stammId} · E:${c.energy.toFixed(0)} · Alter:${c.age.toFixed(0)}s · Score:${scText}</div>
-    `;
-    item.onclick=()=>{
-      selectedId = c.id;
-      const body = panel.querySelector(".editor-body");
-      const [detailCol] = body.children;
-      renderDetails(detailCol, c);
-      body.querySelectorAll(".editor-item").forEach(n=>n.classList.remove("active"));
-      item.classList.add("active");
-    };
-    cont.append(item);
-  }
-
-  inp.oninput=()=>renderList(listCol);
-}
-
-// Auto-Refresh
-on("cells:born", ()=>{ if(!panel.classList.contains("hidden")) softRefresh(); });
-on("cells:died", ()=>{ if(!panel.classList.contains("hidden")) softRefresh(); });
-on("cell:edited", ()=>{ if(!panel.classList.contains("hidden")) softRefresh(); });
