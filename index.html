@@ -1,61 +1,88 @@
 <!doctype html>
 <html lang="de">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>CRISPR Genetics Lab</title>
   <link rel="stylesheet" href="./style.css">
+  <!-- PF-First (noch vor allen Modulen) -->
+  <script type="module">
+    // Preflight so früh wie möglich – unabhängig vom Bootstrap
+    (async () => {
+      try {
+        const q = new URLSearchParams(location.search);
+        const forcePF = (q.get("pf")==="1") || (location.hash==="#pf");
+        const killSW = (q.get("nosw")==="1") || (location.hash==="#nosw");
+        if (killSW && "serviceWorker" in navigator) {
+          try {
+            const regs = await navigator.serviceWorker.getRegistrations();
+            await Promise.all(regs.map(r=>r.unregister().catch(()=>{})));
+            const keys = await caches.keys();
+            await Promise.all(keys.map(k=>caches.delete(k)));
+          } catch {}
+          // voller Reload mit Cache-Buster
+          location.replace(location.pathname + "?pf=1&ts=" + Date.now());
+          return;
+        }
+        if (forcePF) {
+          const m = await import("./preflight.js?v=" + Date.now());
+          m?.diagnose?.();
+        }
+      } catch (e) { console.error("[PF-first]", e); }
+    })();
+  </script>
 </head>
 <body>
-  <div id="topbar" class="topbar">
-    <div class="group">
-      <span class="label">Simulation</span>
-      <button id="btnStart">Start</button>
-      <button id="btnPause">Pause</button>
-      <button id="btnReset">Reset</button>
+  <div id="topbar">
+    <div class="toolbar">
+      <div class="group">
+        <span class="ttl">Simulation</span>
+        <button id="btnStart">Start</button>
+        <button id="btnPause">Pause</button>
+        <button id="btnReset">Reset</button>
+      </div>
+
+      <div class="group">
+        <span class="ttl">Tempo</span>
+        <button data-ts="1">×1</button>
+        <button data-ts="5">×5</button>
+        <button data-ts="10">×10</button>
+        <button data-ts="50">×50</button>
+      </div>
+
+      <div class="group">
+        <label><input id="chkPerf" type="checkbox"> Perf-Modus</label>
+      </div>
+
+      <div class="group">
+        <button id="btnEditor">CRISPR-Editor</button>
+        <button id="btnEnv">Umwelt</button>
+        <button id="btnAppOps">App-Ops</button>
+        <button id="btnDiag">Diagnose</button>
+      </div>
     </div>
 
-    <div class="group">
-      <span class="label">Tempo</span>
-      <button data-ts="1">×1</button>
-      <button data-ts="5">×5</button>
-      <button data-ts="10">×10</button>
-      <button data-ts="50">×50</button>
-    </div>
+    <div class="toolbar toolbar-params">
+      <div class="group">
+        <span class="ttl">Mutation %</span>
+        <input id="sliderMutation" type="range" min="0" max="50" value="8" step="1">
+        <span id="outMutation" class="out">8 %</span>
+      </div>
 
-    <div class="group">
-      <label><input id="chkPerf" type="checkbox"> Perf-Modus</label>
-    </div>
-
-    <div class="group">
-      <button id="btnEditor">CRISPR-Editor</button>
-      <button id="btnEnv">Umwelt</button>
-      <button id="btnAppOps">App-Ops</button>
-      <button id="btnDiag">Diagnose</button>
+      <div class="group">
+        <span class="ttl">Nahrung/s</span>
+        <input id="sliderFood" type="range" min="0" max="12" value="6" step="0.5">
+        <span id="outFood" class="out">6/s</span>
+      </div>
     </div>
   </div>
 
-  <div class="params">
-    <div class="param">
-      <label for="sliderMutation">Mutation %</label>
-      <input id="sliderMutation" type="range" min="0" max="30" step="1" value="8">
-      <output id="outMutation">8 %</output>
-    </div>
-    <div class="param">
-      <label for="sliderFood">Nahrung/s</label>
-      <input id="sliderFood" type="range" min="0" max="12" step="0.5" value="6">
-      <output id="outFood">6/s</output>
-    </div>
-  </div>
-
-  <main class="stage">
-    <canvas id="scene" width="1280" height="720"></canvas>
+  <main id="main">
+    <canvas id="scene" width="1200" height="720"></canvas>
+    <div id="diagPanel" class="hidden"></div>
   </main>
 
-  <!-- Host für Panels (Editor, Diagnose, App-Ops) -->
-  <div id="diagPanel" class="hidden panel"></div>
-
-  <!-- EINEN Loader benutzen: verdrahtet UI + bootet Engine + Fehleroverlay -->
+  <!-- regulärer Boot -->
   <script type="module" src="./bootstrap.js"></script>
 </body>
 </html>

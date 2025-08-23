@@ -1,5 +1,6 @@
-// sw.js — einfacher PWA-Cache: Kernassets (stale-while-revalidate)
-const CACHE_NAME = "crispr-cache-v3";
+// sw.js — PWA-Cache (stale-while-revalidate) mit Rücksicht auf PF/Bootstrap
+const CACHE_NAME = "crispr-cache-v4";
+
 const CORE = [
   "./",
   "./index.html",
@@ -24,23 +25,49 @@ const CORE = [
   "./grid.js"
 ];
 
+// Install: Kernassets cachen (best effort)
 self.addEventListener("install", (e)=>{
   e.waitUntil(caches.open(CACHE_NAME).then(c => c.addAll(CORE).catch(()=>{})));
   self.skipWaiting();
 });
+
+// Activate: alte Caches löschen
 self.addEventListener("activate", (e)=>{
   e.waitUntil(
-    caches.keys().then(keys => Promise.all(keys.filter(k=>k!==CACHE_NAME).map(k=>caches.delete(k))))
-  );
+    caches.keys().then(keys => Promise.all(keys.filter(k=>k!==CACHE_NAME).map(k=>caches.delete(k)))))
+  ;
   self.clients.claim();
 });
+
+// Fetch: PF/Bootstrap/ts immer network-first; sonst SWR
 self.addEventListener("fetch", (e)=>{
-  const url = new URL(e.request.url);
+  const req = e.request;
+  const url = new URL(req.url);
   if (url.origin !== location.origin) return;
+
+  const forceNetwork =
+    url.searchParams.has("pf") ||
+    url.searchParams.has("ts") ||
+    /preflight\.js$/.test(url.pathname) ||
+    /bootstrap\.js$/.test(url.pathname);
+
   e.respondWith((async ()=>{
     const cache = await caches.open(CACHE_NAME);
-    const cached = await cache.match(e.request);
-    const net = fetch(e.request).then(res=>{ cache.put(e.request, res.clone()).catch(()=>{}); return res; }).catch(()=>null);
+
+    if (forceNetwork) {
+      try {
+        const net = await fetch(req, { cache:"no-store" });
+        // Bootstrap/Preflight legen wir nicht zurück in den Cache
+        return net;
+      } catch {
+        const cached = await cache.match(req);
+        return cached || new Response("Offline", {status:503, statusText:"Offline"});
+      }
+    }
+
+    // Stale-While-Revalidate Standardpfad
+    const cached = await cache.match(req);
+    const net = fetch(req).then(res=>{ cache.put(req, res.clone()).catch(()=>{}); return res; }).catch(()=>null);
     return cached || await net || new Response("Offline", {status:503, statusText:"Offline"});
   })());
 });

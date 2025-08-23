@@ -13,8 +13,7 @@ function ensureOverlay(){
         <h3>Fehler</h3>
         <pre id="errorText" style="white-space:pre-wrap"></pre>
         <button id="errorClose">Schließen</button>
-      </div>
-    `;
+      </div>`;
     el.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.72);display:none;z-index:9000;color:#d1e7ff";
     document.body.appendChild(el);
     el.querySelector("#errorClose").onclick = ()=>{ el.classList.add("hidden"); el.style.display="none"; };
@@ -34,11 +33,28 @@ function showError(msg){
     const q = new URLSearchParams(location.search);
     const force = q.get('pf') === '1' || location.hash === '#pf';
     if (force) {
-      // Boot-Guard stummschalten, damit kein rotes Overlay die PF überlagert
-      window.__suppressBootGuard = true;
+      window.__suppressBootGuard = true; // rotes Overlay unterdrücken
       import('./preflight.js?v=' + Date.now())
         .then(m => m.diagnose && m.diagnose())
         .catch(e => { try{console.error('[PF hook]', e);}catch{} });
+    }
+  }catch{}
+})();
+
+// optional: ?nosw=1 zum vollständigen Entkoppeln vom SW
+(async function killSWIfRequested(){
+  try{
+    const q = new URLSearchParams(location.search);
+    if (q.get('nosw') === '1' || location.hash === '#nosw') {
+      if ('serviceWorker' in navigator) {
+        try {
+          const regs = await navigator.serviceWorker.getRegistrations();
+          await Promise.all(regs.map(r=>r.unregister().catch(()=>{})));
+          const keys = await caches.keys();
+          await Promise.all(keys.map(k=>caches.delete(k)));
+        } catch {}
+      }
+      location.replace(location.pathname + "?pf=1&ts=" + Date.now());
     }
   }catch{}
 })();
@@ -59,12 +75,11 @@ if ('serviceWorker' in navigator) {
   }).catch(()=>{});
 }
 
-// ---------- UI wiring (einmalig) ----------
+// ---------- UI wiring ----------
 const $ = id => document.getElementById(id);
 const qsAll = (sel,root=document) => Array.from(root.querySelectorAll(sel));
 
 function wireUI(){
-  // Engine-APIs lazy importieren
   $('btnStart').onclick = async ()=> { try{ (await import('./engine.js')).start(); }catch(e){ showError(String(e)); } };
   $('btnPause').onclick = async ()=> { try{ (await import('./engine.js')).pause(); }catch(e){ showError(String(e)); } };
   $('btnReset').onclick = async ()=> { try{ (await import('./engine.js')).reset(); }catch(e){ showError(String(e)); } };
@@ -89,13 +104,11 @@ function wireUI(){
   if (sm) ['input','change'].forEach(ev=> sm.addEventListener(ev, syncM, {passive:true}));
   if (sf) ['input','change'].forEach(ev=> sf.addEventListener(ev, syncF, {passive:true}));
 
-  // Tools
   $('btnEditor').onclick = async ()=> { try{ (await import('./editor.js')).openEditor(); }catch(e){ showError(String(e)); } };
   $('btnEnv').onclick    = async ()=> { try{ (await import('./environment.js')).openEnvPanel(); }catch(e){ showError(String(e)); } };
   $('btnAppOps').onclick = async ()=> { try{ (await import('./appops_panel.js')).openAppOps(); }catch(e){ showError(String(e)); } };
   $('btnDiag').onclick   = async ()=> { try{ (await import('./preflight.js?v='+Date.now())).diagnose(); }catch(e){ showError(String(e)); } };
 
-  // Startwerte in die Sim schieben (falls vorhanden)
   if (sm) syncM();
   if (sf) syncF();
 }
@@ -109,9 +122,9 @@ function wireUI(){
 
     // Boot-Guard (falls engine.js geladen, aber boot nicht markiert)
     setTimeout(()=>{
-      const forceAuto = new URLSearchParams(location.search).get('pf') === 'auto';
+      const q = new URLSearchParams(location.search);
+      const forceAuto = q.get('pf') === 'auto';
       if (!window[BOOT_FLAG] && !window.__suppressBootGuard) {
-        // Wenn gewünscht: automatisch Preflight öffnen statt rotem Guard
         if (forceAuto) {
           window.__suppressBootGuard = true;
           import('./preflight.js?v='+Date.now()).then(mm=>mm.diagnose&&mm.diagnose());
