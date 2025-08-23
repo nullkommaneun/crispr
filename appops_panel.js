@@ -1,49 +1,131 @@
-// appops_panel.js — App-Optimierer-Panel inkl. „Timings“-Karte
-import { startCollectors, getAppOpsSnapshot, runModuleMatrix, generateOps } from "./appops.js";
+// appops_panel.js — App-Ops (Optimierer) Panel, robust mit Fallbacks
 
-const panel = document.getElementById("diagPanel");
-
-function buildHeader(title){
-  const h=document.createElement("div"); h.className="panel-header";
-  const t=document.createElement("h2"); t.textContent=title;
-  const x=document.createElement("button"); x.className="closeX"; x.innerHTML="&times;"; x.onclick=()=>panel.classList.add("hidden");
-  h.append(t,x); return h;
+/* ---------- kleine Hilfen für UI ---------- */
+function buildHeader(title, onClose){
+  const wrap = document.createElement("div");
+  wrap.className = "panel-header";
+  wrap.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+      <h2 style="margin:0">${title}</h2>
+      <button class="closeX" aria-label="Schließen">&times;</button>
+    </div>`;
+  wrap.querySelector(".closeX").onclick = onClose;
+  return wrap;
 }
 function section(title){
   const box=document.createElement("div");
-  box.style.border="1px solid #22303a"; box.style.borderRadius="8px";
-  box.style.padding="10px"; box.style.margin="8px 0";
+  Object.assign(box.style,{
+    border:"1px solid #22303a",borderRadius:"8px",padding:"10px",margin:"8px 0"
+  });
   const head=document.createElement("div");
-  head.style.display="flex"; head.style.justifyContent="space-between"; head.style.alignItems="center";
+  Object.assign(head.style,{display:"flex",justifyContent:"space-between",alignItems:"center"});
   const h=document.createElement("b"); h.textContent=title;
-  head.append(h); box.append(head); return {box,head};
+  head.append(h); box.append(head);
+  return {box,head};
 }
-function row(label, html){ const r=document.createElement("div"); r.className="row"; const l=document.createElement("span"); l.textContent=label; const v=document.createElement("span"); v.innerHTML=html; r.append(l,v); return r; }
+function row(label, html){
+  const r=document.createElement("div"); r.className="row";
+  const l=document.createElement("span"); l.textContent=label;
+  const v=document.createElement("span"); v.innerHTML=html;
+  r.append(l,v); return r;
+}
 function codeField(value){
-  const wrap=document.createElement("div"); wrap.style.display="grid"; wrap.style.gridTemplateColumns="1fr auto"; wrap.style.gap="8px"; wrap.style.marginTop="6px";
-  const ta=document.createElement("textarea"); ta.readOnly=true; ta.value=value; ta.style.width="100%"; ta.style.height="120px"; ta.style.background="#0b1217"; ta.style.border="1px solid #2a3a46"; ta.style.borderRadius="8px"; ta.style.color="#d8f0ff"; ta.style.font="12px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
+  const wrap=document.createElement("div");
+  Object.assign(wrap.style,{display:"grid",gridTemplateColumns:"1fr auto",gap:"8px",marginTop:"6px"});
+  const ta=document.createElement("textarea");
+  Object.assign(ta.style,{
+    width:"100%",height:"120px",background:"#0b1217",border:"1px solid #2a3a46",
+    borderRadius:"8px",color:"#d8f0ff",font:"12px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
+  });
+  ta.readOnly=true; ta.value=value ?? "";
   const btn=document.createElement("button"); btn.textContent="OPS kopieren";
   btn.onclick=async()=>{ try{ await navigator.clipboard.writeText(ta.value); btn.textContent="Kopiert ✓"; setTimeout(()=>btn.textContent="OPS kopieren",1200);}catch{} };
   wrap.append(ta,btn); return wrap;
 }
+const fmt = v => (v!=null && v===v) ? (typeof v==='number'? v.toFixed(1): String(v)) : "–";
 
-export function openAppOpsPanel(){
-  startCollectors();
+/* ---------- Panel-Host: vorhandenes #diagPanel oder Fallback-Overlay ---------- */
+function ensurePanelHost(){
+  let host = document.getElementById("diagPanel");
+  if (host) return { host, isOverlay:false, close:()=>host.classList.add("hidden") };
 
-  panel.innerHTML=""; panel.classList.remove("hidden");
-  panel.append(buildHeader("App-Ops (Optimierer)"));
+  // Fallback-Overlay (wenn diagPanel in diesem Build nicht existiert)
+  const overlay = document.createElement("div");
+  overlay.style.cssText = "position:fixed;inset:0;z-index:99990;background:rgba(0,0,0,.55);" +
+                          "display:flex;align-items:flex-start;justify-content:center;padding:24px;";
+  overlay.addEventListener("click", e=>{ if (e.target===overlay) overlay.remove(); });
 
-  const body=document.createElement("div"); body.className="panel-body"; panel.append(body);
+  const panel = document.createElement("div");
+  panel.style.cssText =
+    "max-width:1100px;width:94%;max-height:86vh;overflow:auto;background:#10161d;" +
+    "border:1px solid #2a3b4a;border-radius:12px;color:#d6e1ea;padding:14px;" +
+    "box-shadow:0 30px 70px rgba(0,0,0,.45);";
+  overlay.appendChild(panel);
+  document.body.appendChild(overlay);
+  return { host:panel, isOverlay:true, close:()=>overlay.remove() };
+}
+
+/* ---------- sichere App-Ops-APIs (dynamisch, mit Platzhaltern) ---------- */
+async function loadAppOps(){
+  try{
+    const m = await import("./appops.js?v="+Date.now());
+    return {
+      startCollectors: (typeof m.startCollectors==='function'? m.startCollectors : ()=>{}),
+      getAppOpsSnapshot: (typeof m.getAppOpsSnapshot==='function'? m.getAppOpsSnapshot : ()=>({
+        perf:{fpsNow:"–",fpsAvg:"–",jank:0,jankMs:0,longTasks:{count:0,totalMs:0}},
+        engine:{capRatio:0},
+        timings:{ent:0,repro:0,food:0,draw:0},
+        layout:{reflows:0,heights:[]},
+        resources:{largest:[]}
+      })),
+      runModuleMatrix: (typeof m.runModuleMatrix==='function'? m.runModuleMatrix : async()=> "// Modul-Matrix: Funktion nicht verfügbar."),
+      generateOps: (typeof m.generateOps==='function'? m.generateOps : ()=>'// appops.generateOps() nicht vorhanden')
+    };
+  }catch{
+    // Komplett fehlend → reine Platzhalter
+    return {
+      startCollectors: ()=>{},
+      getAppOpsSnapshot: ()=>({
+        perf:{fpsNow:"–",fpsAvg:"–",jank:0,jankMs:0,longTasks:{count:0,totalMs:0}},
+        engine:{capRatio:0},
+        timings:{ent:0,repro:0,food:0,draw:0},
+        layout:{reflows:0,heights:[]},
+        resources:{largest:[]}
+      }),
+      runModuleMatrix: async()=> "// Modul-Matrix: appops.js fehlt.",
+      generateOps: ()=>'// OPS: appops.js fehlt.'
+    };
+  }
+}
+
+/* ---------- öffentlich: wird von Topbar/Preflight erwartet ---------- */
+export async function openAppOps(){
+  const { host, isOverlay, close } = ensurePanelHost();
+
+  // Host vorbereiten
+  host.innerHTML = "";
+  if (!isOverlay) host.classList.remove("hidden");
+
+  const head = buildHeader("App-Ops (Optimierer) — Smart Mode", close);
+  host.append(head);
+
+  const body = document.createElement("div");
+  body.className = "panel-body";
+  host.append(body);
+
+  // App-Ops APIs laden
+  const { startCollectors, getAppOpsSnapshot, runModuleMatrix, generateOps } = await loadAppOps();
+  try{ startCollectors(); }catch{}
 
   // Performance
   {
     const { box } = section("Performance");
     const s = getAppOpsSnapshot();
     box.append(
-      row("FPS (aktuell / Ø)", `<b>${s.perf.fpsNow}</b> / <b>${s.perf.fpsAvg}</b>`),
-      row("Jank (Frames >50ms)", `${s.perf.jank} · Summe ~${s.perf.jankMs}ms`),
-      row("Long Tasks", `${s.perf.longTasks.count} · gesamt ~${s.perf.longTasks.totalMs}ms`),
-      row("Engine-Backlog-Quote", `${Math.round((s.engine.capRatio||0)*100)}%`)
+      row("FPS (aktuell / Ø)", `<b>${fmt(s.perf.fpsNow)}</b> / <b>${fmt(s.perf.fpsAvg)}</b>`),
+      row("Jank (Frames >50ms)", `${fmt(s.perf.jank)} · Summe ~${fmt(s.perf.jankMs)}ms`),
+      row("Long Tasks", `${fmt(s.perf.longTasks?.count)} · gesamt ~${fmt(s.perf.longTasks?.totalMs)}ms`),
+      row("Engine-Backlog-Quote", `${Math.round((s.engine?.capRatio||0)*100)}%`)
     );
     body.append(box);
   }
@@ -51,14 +133,13 @@ export function openAppOpsPanel(){
   // Timings
   {
     const { box } = section("Timings (pro Frame, ms – EMA)");
-    const s = getAppOpsSnapshot();
-    const t = s.timings || {ent:0,repro:0,food:0,draw:0};
+    const t = (getAppOpsSnapshot()?.timings) || {};
     const table=document.createElement("div");
     table.innerHTML = `
-      <div class="row"><span>Entities</span><span><b>${t.ent}</b> ms</span></div>
-      <div class="row"><span>Reproduction</span><span><b>${t.repro}</b> ms</span></div>
-      <div class="row"><span>Food</span><span><b>${t.food}</b> ms</span></div>
-      <div class="row"><span>Draw</span><span><b>${t.draw}</b> ms</span></div>
+      <div class="row"><span>Entities</span><span><b>${fmt(t.ent)}</b> ms</span></div>
+      <div class="row"><span>Reproduction</span><span><b>${fmt(t.repro)}</b> ms</span></div>
+      <div class="row"><span>Food</span><span><b>${fmt(t.food)}</b> ms</span></div>
+      <div class="row"><span>Draw</span><span><b>${fmt(t.draw)}</b> ms</span></div>
     `;
     box.append(table);
     body.append(box);
@@ -69,8 +150,8 @@ export function openAppOpsPanel(){
     const { box } = section("Layout / Topbar");
     const s = getAppOpsSnapshot();
     box.append(
-      row("Reflow-Zähler", `${s.layout.reflows}`),
-      row("Höhenverlauf", `${(s.layout.heights||[]).join(" → ") || "–"}`)
+      row("Reflow-Zähler", `${fmt(s.layout?.reflows)}`),
+      row("Höhenverlauf", `${(s.layout?.heights||[]).join(" → ") || "–"}`)
     );
     body.append(box);
   }
@@ -80,7 +161,7 @@ export function openAppOpsPanel(){
     const { box } = section("Ressourcen (größte Assets)");
     const s = getAppOpsSnapshot();
     const list=document.createElement("div");
-    for(const r of (s.resources.largest||[])){
+    for(const r of (s.resources?.largest||[])){
       const line=document.createElement("div"); line.className="row";
       line.innerHTML=`<span>${r.name} <span class="badge">${r.type}</span></span><span>${r.sizeKB} KB · ${r.duration} ms</span>`;
       list.append(line);
@@ -110,9 +191,9 @@ export function openAppOpsPanel(){
 
   // Refresh
   const footer=document.createElement("div");
-  footer.style.display="flex"; footer.style.gap="8px"; footer.style.marginTop="8px";
+  Object.assign(footer.style,{display:"flex",gap:"8px",marginTop:"8px"});
   const btnRefresh=document.createElement("button"); btnRefresh.textContent="Aktualisieren";
-  btnRefresh.onclick=()=> openAppOpsPanel();
+  btnRefresh.onclick=()=> openAppOps();
   footer.append(btnRefresh);
   body.append(footer);
 }
