@@ -1,63 +1,55 @@
-// food.js — Spawner (Uniform + Cluster) + globale Rate & Cap
+// food.js — einfaches, stabiles Food-Spawn + Aufnahme-Yield
 
-import { getFoodItems, getCells } from "./entities.js";
+let _spawnRate = 6;          // Items pro Sekunde (vom Slider)
+const _items = [];           // deine bestehende Liste ggf. weiterverwenden
+const YIELD = 35;            // Energie pro Item
 
-let spawnRate = 6;           // Partikel / Sekunde (UI-Slider)
-let acc = 0;                 // Akkumulator für Uniform-Spawns
-let clusterT = 0;            // Zeit seit letztem Cluster
-const CLUSTER_INTERVAL = 8;  // s
-const CLUSTER_COUNT    = 12; // Partikel pro Cluster
-const CLUSTER_R        = 80; // px
+// Accumulator für sauberen Spawn in festen Ticks
+let _acc = 0;
+const SPAWN_TICK = 0.25;     // alle 250ms spawnen wir anteilig
 
-export function setSpawnRate(r){ spawnRate = Math.max(0, +r||0); }
-
-function foodCap(){
-  // adaptiv: 300 + 10·N
-  const n = getCells().length|0;
-  return 300 + 10*n;
-}
-
-// Poisson-artige Anzahl aus Rate·dt
-function poisson(rateDt){
-  const k = Math.floor(rateDt);
-  if (Math.random() < (rateDt - k)) return k+1;
-  return k;
+export function setSpawnRate(v){
+  _spawnRate = Math.max(0, +v || 0);
 }
 
 export function step(dt){
-  const foods = getFoodItems();
-  const cap = foodCap();
-
-  // Uniform-Tröpfeln
-  acc += spawnRate * dt;
-  let n = poisson(acc); // Anzahl, die wir gern hätten
-  if (n>0){
-    acc = 0; // zurücksetzen
-    const toAdd = Math.max(0, Math.min(n, cap - foods.length));
-    for (let i=0;i<toAdd;i++){
-      foods.push({ x: Math.random()*innerW(), y: Math.random()*innerH() });
-    }
-  }
-
-  // Cluster-Ereignis
-  clusterT += dt;
-  if (clusterT >= CLUSTER_INTERVAL){
-    clusterT = 0;
-    const want = CLUSTER_COUNT;
-    const free = Math.max(0, cap - foods.length);
-    const take = Math.min(want, free);
-    if (take > 0){
-      const cx = Math.random()*innerW();
-      const cy = Math.random()*innerH();
-      for(let i=0;i<take;i++){
-        const a = Math.random()*Math.PI*2;
-        const r = Math.random()*CLUSTER_R;
-        foods.push({ x: cx + Math.cos(a)*r, y: cy + Math.sin(a)*r });
-      }
-    }
+  // Anteilig Items anlegen: pro TICK -> rate*TICK Items
+  _acc += dt;
+  while (_acc >= SPAWN_TICK){
+    _acc -= SPAWN_TICK;
+    const toSpawn = _spawnRate * SPAWN_TICK;
+    spawnFractional(toSpawn);
   }
 }
 
-// „sichtbare“ Fläche (ohne harte Bindung an canvas)
-function innerW(){ return (document.getElementById('scene')?.width || 1024); }
-function innerH(){ return (document.getElementById('scene')?.height || 640); }
+// Hilfsfunktion: fractional spawn (z. B. 1.5 -> 1 + 50%-Chance auf weiteres)
+function spawnFractional(x){
+  const base = Math.floor(x);
+  const frac = x - base;
+  for (let i=0;i<base;i++) spawnOne();
+  if (Math.random() < frac) spawnOne();
+}
+
+function spawnOne(){
+  // Platziere Item zufällig im Sichtbereich. Nutze deine Weltgröße, falls vorhanden.
+  const canvas = document.getElementById("scene");
+  if (!canvas) return;
+  const x = Math.random() * canvas.width;
+  const y = Math.random() * canvas.height;
+  _items.push({ x, y, e:YIELD });
+}
+
+// Von Renderer/Engine abgefragt:
+export function getFoodItems(){ return _items; }
+
+// Aufnahme durch Zelle (Engine/Entities sollten diese Funktion rufen,
+// wenn Kollisions-Test sagt: Zelle frisst Food)
+export function consumeClosest(x,y, radius=10){
+  let best=-1, bestD2=radius*radius, got=0;
+  for (let i=0;i<_items.length;i++){
+    const f=_items[i], dx=f.x-x, dy=f.y-y, d2=dx*dx+dy*dy;
+    if (d2 <= bestD2){ bestD2=d2; best=i; }
+  }
+  if (best>=0){ got=_items[best].e; _items.splice(best,1); }
+  return got; // Energiemenge
+}

@@ -1,109 +1,71 @@
-// ui_controls.js — Topbar: kompakt (Tempo-Cycle), echte Slider-Werte, robuste Tool-Buttons
+// ui_controls.js — Topbar-Logik: Start/Pause/Reset, Tempo-Cycle, Slider-Labels
 
-import * as engine from "./engine.js";
-import * as reproduction from "./reproduction.js";
-import * as food from "./food.js";
+const TEMPI = [1,5,10,50];
+let tempiIdx = 0;
 
-const $ = (id) => document.getElementById(id);
-const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const $ = (id)=>document.getElementById(id);
+const fmtPct = v => `${v|0} %`;
+const fmtRate = v => `${v|0} /s`;
 
-/* --------------------------- Slider (Mutation / Food) --------------------------- */
-
-function bindSliders() {
-  const sm = $("sliderMutation"), om = $("valMutation");
-  const sf = $("sliderFood"),     of = $("valFood");
-
-  if (sm) {
-    const apply = () => {
-      const v = clamp(+sm.value || 0, 0, 100);
-      try { reproduction.setMutationRate(v); } catch {}
-      if (om) om.textContent = `${v} %`;
-    };
-    sm.style.touchAction = "none";
-    sm.addEventListener("input",  apply, { passive: true });
-    sm.addEventListener("change", apply);
-    apply();
-  }
-
-  if (sf) {
-    const apply = () => {
-      const v = clamp(+sf.value || 0, 0, 30);
-      try { food.setSpawnRate(v); } catch {}
-      if (of) of.textContent = `${v} /s`;
-    };
-    sf.style.touchAction = "none";
-    sf.addEventListener("input",  apply, { passive: true });
-    sf.addEventListener("change", apply);
-    apply();
-  }
-}
-
-/* ----------------------------- Tempo (Cycle-Button) ---------------------------- */
-
-function bindTempoAndPerf() {
-  // Tempo wechselnd: ×1 → ×5 → ×10 → ×50 → …
-  const speeds = [1, 5, 10, 50];
-  const btn = $("btnTempo");
-  if (btn) {
-    const initIdx = clamp(+btn.dataset.idx || 0, 0, speeds.length - 1);
-    btn.dataset.idx = String(initIdx);
-    const apply = (idx) => {
-      const ts = speeds[idx];
-      btn.textContent = `×${ts}`;
-      try { engine.setTimescale(ts); } catch {}
-    };
-    apply(initIdx);
-    btn.addEventListener("click", () => {
-      const next = ( (+btn.dataset.idx || 0) + 1 ) % speeds.length;
-      btn.dataset.idx = String(next);
-      apply(next);
-    });
-  }
-
-  // Perf-Checkbox
-  const perf = $("chkPerf");
-  if (perf) {
-    const applyPerf = () => { try { engine.setPerfMode(!!perf.checked); } catch {} };
-    perf.addEventListener("change", applyPerf);
-    applyPerf();
-  }
-}
-
-/* -------------------------------- Grund-Buttons -------------------------------- */
-
-function bindCoreButtons() {
-  $("btnStart")?.addEventListener("click", () => { try { engine.start(); } catch {} });
-  $("btnPause")?.addEventListener("click", () => { try { engine.pause(); } catch {} });
-  $("btnReset")?.addEventListener("click", () => { try { engine.reset(); } catch {} });
-}
-
-/* -------------------------------- Tool-Buttons --------------------------------- */
-
-function bindToolButtons() {
-  $("btnEditor")?.addEventListener("click", async () => {
-    try { (await import("./editor.js")).openEditor(); } catch (e) { console.warn("editor open failed", e); }
+export function initUI(){
+  // --- Buttons ---
+  $("btnStart")?.addEventListener("click", async()=>{
+    (await import("./engine.js")).start();
   });
-  $("btnEnv")?.addEventListener("click", async () => {
-    try { (await import("./environment.js")).openEnvPanel(); } catch (e) { console.warn("env open failed", e); }
+  $("btnPause")?.addEventListener("click", async()=>{
+    (await import("./engine.js")).pause();
   });
-  $("btnAppOps")?.addEventListener("click", async () => {
-    try { (await import("./appops_panel.js")).openAppOps(); }
-    catch (e) {
-      console.warn("app-ops open failed", e);
-      // Falls doch mal ein Ladefehler: Diagnose anbieten
-      try { (await import("./preflight.js")).diagnose(); } catch {}
-    }
+  $("btnReset")?.addEventListener("click", async()=>{
+    (await import("./engine.js")).reset();
   });
-  $("btnDiag")?.addEventListener("click", async () => {
-    try { (await import("./preflight.js")).diagnose(); } catch (e) { console.warn("preflight failed", e); }
-  });
-}
 
-/* ----------------------------------- Public ------------------------------------ */
+  // Tempo-Cycle
+  $("tempoCycle")?.addEventListener("click", async()=>{
+    tempiIdx = (tempiIdx+1) % TEMPI.length;
+    const ts = TEMPI[tempiIdx];
+    try{ (await import("./engine.js")).setTimescale(ts); }catch{}
+    $("tempoCycle").textContent = `×${ts}`;
+  });
+  // Initial label
+  $("tempoCycle") && ($("tempoCycle").textContent = `×${TEMPI[tempiIdx]}`);
 
-export function initUI() {
-  bindSliders();
-  bindTempoAndPerf();
-  bindCoreButtons();
-  bindToolButtons();
+  // Perf-Mode
+  $("chkPerf")?.addEventListener("change", async(e)=>{
+    try{ (await import("./engine.js")).setPerfMode(!!e.target.checked); }catch{}
+  });
+
+  // --- Slider Mutation ---
+  const sM = $("sliderMutation"), lM = $("lblMutation");
+  sM?.addEventListener("input", async(e)=>{
+    const v = e.target.value|0;
+    lM && (lM.textContent = fmtPct(v));
+    try{ (await import("./reproduction.js")).setMutationRate(v); }catch{}
+  });
+  // Init Label
+  if (sM && lM){ lM.textContent = fmtPct(sM.value); }
+
+  // --- Slider Food ---
+  const sF = $("sliderFood"), lF = $("lblFood");
+  sF?.addEventListener("input", async(e)=>{
+    const v = e.target.value|0;
+    lF && (lF.textContent = fmtRate(v));
+    try{ (await import("./food.js")).setSpawnRate(v); }catch{}
+  });
+  // Init Label
+  if (sF && lF){ lF.textContent = fmtRate(sF.value); }
+
+  // --- Tools ---
+  $("btnAppOps")?.addEventListener("click", async()=>{
+    try{ (await import("./appops_panel.js")).openAppOps(); }
+    catch{ try{ (await import("./preflight.js")).diagnose(); }catch{} }
+  });
+  $("btnDiag")?.addEventListener("click", async()=>{
+    try{ (await import("./preflight.js")).diagnose(); }catch{}
+  });
+  $("btnEditor")?.addEventListener("click", async()=>{
+    try{ (await import("./editor.js")).openEditor(); }catch{}
+  });
+  $("btnEnv")?.addEventListener("click", async()=>{
+    try{ (await import("./environment.js")).openEnvPanel(); }catch{}
+  });
 }
