@@ -1,6 +1,4 @@
 // appops.js — App-Telemetrie & MDC-OPS; inkl. Micro-Profiler-Timings (EMA)
-// WICHTIG: KEIN Import aus preflight.js (kein PF_MODULES)
-
 import { on } from "./event.js";
 
 const state = {
@@ -40,14 +38,14 @@ function startLongTaskObserver(){
     po.observe({ entryTypes:["longtask"] });
   }catch{}
 }
-
-// Engine-Backlog & Timings (von engine emittiert)
+// Engine Backlog (vom Game-Loop gesendet)
 on("appops:frame",(e)=>{
   state.engine.frames++;
   if((e?.desired??0)>(e?.max??0)) state.engine.cappedFrames++;
   const f=state.engine.frames||1;
   state.engine.backlogRatio = state.engine.cappedFrames/f;
 });
+// Micro-Profiler Timings (EMA)
 on("appops:timings", (t)=>{
   const a=state.timings.alpha;
   state.timings.ent   = state.timings.ent  *(1-a) + (t.ent  ||0)*a;
@@ -55,8 +53,7 @@ on("appops:timings", (t)=>{
   state.timings.food  = state.timings.food *(1-a) + (t.food ||0)*a;
   state.timings.draw  = state.timings.draw *(1-a) + (t.draw ||0)*a;
 });
-
-// Topbar-Resize
+// Topbar-Reflows
 function startTopbarObserver(){
   const el=document.getElementById("topbar"); if(!el) return;
   try{
@@ -69,7 +66,6 @@ function startTopbarObserver(){
     ro.observe(el);
   }catch{}
 }
-
 // Resource Audit
 function scanResources(){
   try{
@@ -85,7 +81,7 @@ function scanResources(){
   }catch{}
 }
 
-/* ---------- Modul-Matrix (Preflight-äquivalent) ---------- */
+/* ---------- Modul-Matrix (wie Preflight, ohne Dummy/Genealogy) ---------- */
 async function checkModule(path, expects){
   try{
     const m=await import(path+`?v=${Date.now()}`);
@@ -113,7 +109,6 @@ export async function runModuleMatrix(){
     ["./drives.js",["getDrivesSnapshot","getTraceText"]],
     ["./editor.js",["openEditor"]],
     ["./environment.js",["openEnvPanel"]],
-    ["./dummy.js",["openDummyPanel"]],
     ["./appops_panel.js",["openAppOps"]],
     ["./appops.js",["generateOps"]],
     ["./advisor.js",["setMode","getMode","scoreCell","sortCells"]],
@@ -139,20 +134,19 @@ export function getAppOpsSnapshot(){
   const fpsAvg=s.length? (s.reduce((a,b)=>a+b.fps,0)/s.length) : 0;
   return {
     v:1, kind:"appops",
-    perf:{ fpsNow:Math.round(fpsNow), fpsAvg:Math.round(fpsAvg),
-      jank:state.perf.raf.jankCount, jankMs:Math.round(state.perf.raf.jankSumMs),
+    perf:{ fpsNow:Math.round(fpsNow), fpsAvg:Math.round(fpsAvg), jank:state.perf.raf.jankCount, jankMs:Math.round(state.perf.raf.jankSumMs),
       longTasks:{ count:state.perf.longTasks.count, totalMs:Math.round(state.perf.longTasks.totalMs) } },
     engine:{ frames:state.engine.frames||1, capRatio:Math.round((state.engine.backlogRatio||0)*100)/100 },
     layout:{ reflows:state.layout.reflowCount, heights:[...state.layout.lastHeights] },
     resources:{ scannedAt:state.resources.scannedAt, totalKB:state.resources.total, largest:state.resources.largest },
     modules:{ last:state.modules.lastReport },
-    timings:{ ent:Math.round(state.timings.ent), repro:Math.round(state.timings.repro),
-              food:Math.round(state.timings.food), draw:Math.round(state.timings.draw) }
+    timings:{ ent:Math.round(state.timings.ent), repro:Math.round(state.timings.repro), food:Math.round(state.timings.food), draw:Math.round(state.timings.draw) }
   };
 }
 
-/* ---------- MDC-OPS ---------- */
+/* ---------- MDC-OPS Snapshots + Vorschläge ---------- */
 const tag = (name,obj)=>`MDC-OPS-${name}-${btoa(unescape(encodeURIComponent(JSON.stringify({v:1,ts:Date.now(),snapshot:obj}))))}`;
+
 export function getMdcCodes(){
   const s = getAppOpsSnapshot();
   return {
@@ -168,14 +162,12 @@ export function generateOps(){
   const s = getAppOpsSnapshot();
   const ops = { v: 1, title: "Auto-OPS Vorschläge", goals: [], changes: [], accept: [] };
 
-  // 1) Manuelle Preflight-Öffnung (?pf=1)
   ops.changes.push({
     file: "preflight.js", op: "append",
     code:"// === Dev-Hook: manuelle Preflight-Anzeige mit ?pf=1 ===\n(function devHook(){\n  try{\n    const q=new URLSearchParams(location.search);\n    if(q.get('pf')==='1') import('./preflight.js').then(m=>m.diagnose());\n  }catch{}\n})();\n"
   });
   ops.goals.push("Preflight jederzeit manuell abrufbar (?pf=1)");
 
-  // 2) Ticker beruhigen bei Unruhe
   if (s.perf.jank > 5 || s.layout.reflows > 5) {
     ops.changes.push(
       { file:"ticker.js", op:"patch", find:"setInterval\\(updateSnapshot, 5000\\);", replace:"setInterval(updateSnapshot, 7000);" },
@@ -184,7 +176,6 @@ export function generateOps(){
     ops.goals.push("Ticker ruhiger/kompakter zur Reflow-Reduktion");
   }
 
-  // 3) Spatial-Grid vorbereiten, wenn Backlog sichtbar
   if ((s.engine.capRatio||0) > 0.15) {
     ops.changes.push(
       { file:"grid.js", op:"replace", code:

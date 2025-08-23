@@ -10,13 +10,10 @@ function show(text){
     p.style.cssText = 'max-width:1100px;width:92%;background:#10161d;color:#d6e1ea;border:1px solid #2a3b4a;border-radius:10px;padding:16px;overflow:auto;white-space:pre-wrap;';
     const x = document.createElement('button'); x.textContent='Schließen';
     x.style.cssText='position:absolute;top:12px;right:12px;background:#243241;color:#cfe6ff;border:1px solid #47617a;border-radius:8px;padding:6px 10px;';
-    x.onclick=()=>{ w.remove(); window.__pfOpen = false; window.__suppressBootGuard = false; };
+    x.onclick=()=>w.remove();
     w.append(p,x);
     document.body.appendChild(w);
   }
-  // Preflight aktiv: Boot-Guard/Fehlerdialoge unterdrücken
-  window.__pfOpen = true;
-  window.__suppressBootGuard = true;
   el('diag-box').textContent = text;
 }
 const OK='✅ ', NO='❌ ', OPT='⚠️  ';
@@ -34,10 +31,9 @@ const MODS = [
   {p:'./metrics.js',      want:['getPhases','getEconSnapshot','getPopSnapshot','getDriftSnapshot','getMateSnapshot']},
   {p:'./drives.js',       want:['getDrivesSnapshot','getTraceText'], optional:true},
 
-  // Tools/Extras (optional – keine Genealogy/Genea mehr)
+  // Tools (optional; ohne Dummy/Genealogy)
   {p:'./editor.js',       want:['openEditor'], optional:true},
   {p:'./environment.js',  want:['openEnvPanel'], optional:true},
-  {p:'./dummy.js',        want:['openDummyPanel'], optional:true},
   {p:'./appops_panel.js', want:['openAppOps'], optional:true},
   {p:'./appops.js',       want:['generateOps'], optional:true},
   {p:'./advisor.js',      want:['setMode','getMode','scoreCell','sortCells'], optional:true},
@@ -62,7 +58,7 @@ async function uiCheck(){
     btnStart:!!el('btnStart'), btnPause:!!el('btnPause'), btnReset:!!el('btnReset'),
     chkPerf:!!el('chkPerf'),
     btnEditor:!!el('btnEditor'), btnEnv:!!el('btnEnv'),
-    btnDummy:!!el('btnDummy'), btnAppOps:!!el('btnAppOps'), btnDiag:!!el('btnDiag'),
+    btnAppOps:!!el('btnAppOps'), btnDiag:!!el('btnDiag'),
     sliderMutation:!!el('sliderMutation'), sliderFood:!!el('sliderFood'),
     canvas:!!el('scene')
   };
@@ -75,9 +71,9 @@ async function uiCheck(){
   try{ const m=await import('./food.js?v='+Date.now()); fn.setFood=typeof m.setSpawnRate==='function'; }catch(e){ fn._foodErr=String(e); }
   try{ const m=await import('./editor.js?v='+Date.now()); fn.openEditor=typeof m.openEditor==='function'; }catch(e){ fn._edErr=String(e); }
   try{ const m=await import('./environment.js?v='+Date.now()); fn.openEnv=typeof m.openEnvPanel==='function'; }catch(e){ fn._envErr=String(e); }
-  try{ const m=await import('./dummy.js?v='+Date.now()); fn.openDummy=typeof m.openDummyPanel==='function'; }catch(e){ fn._duErr=String(e); }
   try{ const m=await import('./appops_panel.js?v='+Date.now()); fn.openOps=typeof m.openAppOps==='function'; }catch(e){ fn._opErr=String(e); }
 
+  // Canvas-Probe
   let canvas2D=false; try{ const c=el('scene'); canvas2D=!!(c&&c.getContext&&c.getContext('2d')); }catch{}
   ui.canvas2D=canvas2D;
 
@@ -85,9 +81,7 @@ async function uiCheck(){
 }
 
 function runtime(){
-  // beide Flags akzeptieren (Engine kann __bootOK ODER __APP_BOOTED setzen)
-  const boot = !!(window.__bootOK || window.__APP_BOOTED);
-  const fc=window.__frameCount|0;
+  const boot=!!window.__bootOK, fc=window.__frameCount|0;
   const fps=window.__fpsEMA? Math.round(window.__fpsEMA) : 0;
   const cells=window.__cellsN|0, food=window.__foodN|0;
   const last=window.__lastStepAt? new Date(window.__lastStepAt).toLocaleTimeString():'–';
@@ -96,8 +90,7 @@ function runtime(){
 }
 
 export async function diagnose(){
-  // Preflight aktiv → Boot-Guard ruhig
-  window.__pfOpen = true;
+  // Preflight darf den Boot-Guard nicht stören
   window.__suppressBootGuard = true;
 
   const rt=runtime();
@@ -121,7 +114,6 @@ export async function diagnose(){
   mark(wiring.ui.sliderFood && wiring.fn.setFood,'Slider Nahrung/s → food.setSpawnRate()',!wiring.ui.sliderFood?'Slider fehlt':(!wiring.fn.setFood?'API fehlt':''));
   mark(wiring.ui.btnEditor && wiring.fn.openEditor,'CRISPR-Editor → editor.openEditor()',!wiring.ui.btnEditor?'Button fehlt':(!wiring.fn.openEditor?'API fehlt':''));
   mark(wiring.ui.btnEnv && wiring.fn.openEnv,'Umwelt-Panel → environment.openEnvPanel()',!wiring.ui.btnEnv?'Button fehlt':(!wiring.fn.openEnv?'API fehlt':''));
-  mark(wiring.ui.btnDummy && wiring.fn.openDummy,'Dummy → dummy.openDummyPanel()',!wiring.ui.btnDummy?'Button fehlt':(!wiring.fn.openDummy?'API fehlt':''));
   mark(wiring.ui.btnAppOps && wiring.fn.openOps,'App-Ops → appops_panel.openAppOps()',!wiring.ui.btnAppOps?'Button fehlt':(!wiring.fn.openOps?'API fehlt':''));
   W.push((wiring.ui.canvas?OK:NO)+'Canvas #scene vorhanden');
   W.push((wiring.ui.canvas2D?OK:NO)+'2D-Context erzeugbar');

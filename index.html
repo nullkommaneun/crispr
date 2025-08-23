@@ -1,99 +1,102 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="de">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover,user-scalable=no"/>
-  <meta name="theme-color" content="#0b1218"/>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <title>CRISPR Genetics Lab</title>
-  <link rel="stylesheet" href="./style.css"/>
-  <style>
-    :root{color-scheme:dark}
-    body{margin:0;background:#0b1218;color:#d6e1ea;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto}
-    .bar{position:sticky;top:0;z-index:60;display:grid;gap:8px;padding:8px 12px;
-         background:linear-gradient(to bottom,rgba(9,14,20,.95),rgba(9,14,20,.85));
-         border-bottom:1px solid rgba(70,96,120,.25);backdrop-filter:blur(6px)}
-    .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
-    .sep{width:1px;height:22px;background:rgba(90,120,150,.35);margin:0 6px}
-    .bar button{background:#243241;border:1px solid #3a5166;color:#cfe6ff;border-radius:10px;padding:6px 10px;cursor:pointer}
-    .bar button:hover{filter:brightness(1.12)}
-    .bar input[type=range]{width:180px;touch-action:none} /* besseres Touch-Drag */
-    #scene{display:block;width:min(1400px,94vw);height:min(72vh,78svh);margin:10px auto 18px;background:#0f1720;
-           border:1px solid rgba(70,96,120,.25);border-radius:14px;box-shadow:inset 0 6px 30px rgba(0,0,0,.35)}
-    *{touch-action:manipulation}
-  </style>
+  <link rel="stylesheet" href="./style.css">
 </head>
 <body>
+  <div id="topbar" class="topbar">
+    <div class="group">
+      <span class="label">Simulation</span>
+      <button id="btnStart">Start</button>
+      <button id="btnPause">Pause</button>
+      <button id="btnReset">Reset</button>
+    </div>
 
-<header class="bar">
-  <div class="row">
-    <strong>Simulation</strong>
-    <button id="btnStart">Start</button>
-    <button id="btnPause">Pause</button>
-    <button id="btnReset">Reset</button>
-    <span>Tempo</span>
-    <button data-ts="1">×1</button><button data-ts="5">×5</button>
-    <button data-ts="10">×10</button><button data-ts="50">×50</button>
-    <span class="sep"></span>
-    <label><input id="chkPerf" type="checkbox"/> Perf-Modus</label>
-    <span class="sep"></span>
-    <button id="btnEditor">CRISPR-Editor</button>
-    <button id="btnEnv">Umwelt</button>
-    <!-- Stammbaum entfernt -->
-    <button id="btnDummy">Dummy</button>
-    <button id="btnAppOps">App-Ops</button>
-    <button id="btnDiag">Diagnose</button>
+    <div class="group">
+      <span class="label">Tempo</span>
+      <button data-ts="1">×1</button>
+      <button data-ts="5">×5</button>
+      <button data-ts="10">×10</button>
+      <button data-ts="50">×50</button>
+    </div>
+
+    <div class="group">
+      <label><input id="chkPerf" type="checkbox"> Perf-Modus</label>
+    </div>
+
+    <div class="group">
+      <button id="btnEditor">CRISPR-Editor</button>
+      <button id="btnEnv">Umwelt</button>
+      <button id="btnAppOps">App-Ops</button>
+      <button id="btnDiag">Diagnose</button>
+    </div>
   </div>
-  <div class="row">
-    <span>Parameter</span>
-    <label>Mutation %
-      <input id="sliderMutation" type="range" min="0" max="30" step="1" value="8"/>
-      <span id="lblMutation">8&nbsp;%</span>
-    </label>
-    <label>Nahrung/s
-      <input id="sliderFood" type="range" min="0" max="12" step="0.5" value="6"/>
-      <span id="lblFood">6/s</span>
-    </label>
+
+  <div class="params">
+    <div class="param">
+      <label for="sliderMutation">Mutation %</label>
+      <input id="sliderMutation" type="range" min="0" max="30" step="1" value="8">
+      <output id="outMutation">8 %</output>
+    </div>
+    <div class="param">
+      <label for="sliderFood">Nahrung/s</label>
+      <input id="sliderFood" type="range" min="0" max="12" step="0.5" value="6">
+      <output id="outFood">6/s</output>
+    </div>
   </div>
-</header>
 
-<main>
-  <canvas id="scene" width="1280" height="720" aria-label="Simulationsfeld"></canvas>
-</main>
+  <main class="stage">
+    <canvas id="scene" width="1280" height="720"></canvas>
+  </main>
 
-<!-- Diagnose (manuell) -->
-<script type="module" src="./preflight.js"></script>
+  <!-- Panel-Host für Diagnose/Editor/App-Ops -->
+  <div id="diagPanel" class="hidden panel"></div>
 
-<!-- Boot & UI-Wiring -->
-<script type="module">
-  const V='?v='+Date.now();
-  const eng = await import('./engine.js'+V).catch(e=>console.error('engine import',e));
-  const { boot, setTimescale } = eng||{};
-  const run=()=>{ try{ boot?.(); }catch(e){ console.error('[boot]',e);} };
-  (document.readyState==='loading') ? document.addEventListener('DOMContentLoaded',run,{once:true}) : run();
+  <script type="module">
+    import { boot, start, pause, reset, setTimescale, setPerfMode } from "./engine.js";
+    import * as reproduction from "./reproduction.js";
+    import * as food from "./food.js";
 
-  // Tempo
-  document.querySelectorAll('button[data-ts]').forEach(b=>b.addEventListener('click',()=>setTimescale?.(+b.dataset.ts||1)));
-  // Start/Pause/Reset
-  btnStart.onclick = ()=> import('./engine.js'+V).then(m=>m.start?.());
-  btnPause.onclick = ()=> import('./engine.js'+V).then(m=>m.pause?.());
-  btnReset.onclick = ()=> import('./engine.js'+V).then(m=>m.reset?.());
-  // Perf
-  chkPerf.onchange = (e)=> import('./engine.js'+V).then(m=>m.setPerfMode?.(e.target.checked));
-  // Slider
-  const sMut=sliderMutation,sFood=sliderFood,lMut=lblMutation,lFood=lblFood;
-  lMut.textContent=(sMut.value|0)+' %';
-  lFood.textContent=(+sFood.value).toFixed(1).replace('.0','')+'/s';
-  sMut.oninput  = e=> import('./reproduction.js'+V).then(m=>m.setMutationRate?.(e.target.value|0));
-  sFood.oninput = e=> { const v=+e.target.value; lFood.textContent=v.toFixed(1).replace('.0','')+'/s';
-                        import('./food.js'+V).then(m=>m.setSpawnRate?.(v)); };
+    // Buttons
+    const $ = id => document.getElementById(id);
+    const qsAll = (sel,root=document) => Array.from(root.querySelectorAll(sel));
 
-  // Tools
-  btnEditor.onclick = ()=> import('./editor.js'+V).then(m=>m.openEditor?.());
-  btnEnv.onclick    = ()=> import('./environment.js'+V).then(m=>m.openEnvPanel?.());
-  // btnGene entfernt
-  btnDummy.onclick  = ()=> import('./dummy.js'+V).then(m=>m.openDummyPanel?.());
-  btnAppOps.onclick = ()=> import('./appops_panel.js'+V).then(m=>m.openAppOps?.());
-  btnDiag.onclick   = ()=> import('./preflight.js'+V).then(m=>m.diagnose?.());
-</script>
+    $('btnStart').onclick = () => start();
+    $('btnPause').onclick = () => pause();
+    $('btnReset').onclick = () => reset();
+
+    // Tempo-Buttons
+    qsAll('[data-ts]').forEach(b=>{
+      b.onclick = () => setTimescale(+b.dataset.ts || 1);
+    });
+
+    // Perf-Modus
+    $('chkPerf').onchange = (e)=> setPerfMode(!!e.target.checked);
+
+    // Slider (touch-sicher, mit Output)
+    const sm = $('sliderMutation'), om = $('outMutation');
+    const sf = $('sliderFood'),     of = $('outFood');
+    const syncM = ()=> { om.textContent = `${sm.value} %`; reproduction.setMutationRate(+sm.value|0); };
+    const syncF = ()=> { of.textContent = `${(+sf.value).toFixed(1)}/s`.replace('.0',''); food.setSpawnRate(+sf.value||0); };
+    ['input','change'].forEach(ev=> sm.addEventListener(ev, syncM, {passive:true}));
+    ['input','change'].forEach(ev=> sf.addEventListener(ev, syncF, {passive:true}));
+
+    // Tools
+    $('btnEditor').onclick = async ()=> { try{ (await import('./editor.js')).openEditor(); }catch{} };
+    $('btnEnv').onclick    = async ()=> { try{ (await import('./environment.js')).openEnvPanel(); }catch{} };
+    $('btnAppOps').onclick = async ()=> { try{ (await import('./appops_panel.js')).openAppOps(); }catch{} };
+    $('btnDiag').onclick   = async ()=> { try{ (await import('./preflight.js')).diagnose(); }catch{} };
+
+    // Service Worker (optional)
+    if ('serviceWorker' in navigator) {
+      try { navigator.serviceWorker.register('./sw.js'); } catch {}
+    }
+
+    // Erstwerte der Slider in die Engine pushen, dann booten
+    syncM(); syncF(); boot();
+  </script>
 </body>
 </html>
