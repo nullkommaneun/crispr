@@ -1,7 +1,8 @@
 // preflight.js — Deep-Check + UI-Wiring + Canvas-Probe + MDC-CHK (iOS-freundlich)
 // - pausiert die Engine während der Diagnose (Resume beim Schließen)
-// - Modulmatrix gestreamt (kein "Freeze")
-// - "MDC kopieren" mit Clipboard-Fallback
+// - Modulchecks gestreamt (kein Freeze)
+// - Clipboard-Fallback
+// - NEU: Weiterlaufen/Anhalten im Header
 
 import { PF_MODULES } from "./modmap.js";
 
@@ -12,6 +13,7 @@ const $ = id => document.getElementById(id);
 const b64 = s => btoa(unescape(encodeURIComponent(s)));
 
 let __pfPausedEngine = false;
+let __pfWantsRun = false; // Zustand des Toggles im Header
 
 /* ---------------------------- Engine Pause/Resume ---------------------------- */
 async function pauseEngine() {
@@ -22,11 +24,10 @@ async function pauseEngine() {
 }
 async function resumeEngine() {
   try {
-    if (__pfPausedEngine) {
-      const m = await import("./engine.js");
-      if (typeof m.start === "function") m.start();
-    }
-  } catch {} finally { __pfPausedEngine = false; }
+    const m = await import("./engine.js");
+    if (typeof m.start === "function") m.start();
+  } catch {}
+  __pfPausedEngine = false;
 }
 
 /* ------------------------------- Overlay-UI --------------------------------- */
@@ -49,12 +50,38 @@ function overlay() {
 
   const bar = document.createElement("div");
   bar.style.cssText = "display:flex;gap:8px;align-items:center;justify-content:space-between;margin-bottom:8px;";
+
+  const left = document.createElement("div");
+  left.style.cssText = "display:flex;gap:10px;align-items:center;";
   const h = document.createElement("h3");
   h.textContent = "Start-Diagnose (Deep-Check + UI-Wiring)";
   h.style.margin = "0";
+  const hint = document.createElement("span");
+  hint.id = "pf-hint";
+  hint.style.cssText = "font:12px/1.4 system-ui;color:#9fb6c9;";
+  hint.textContent = "Engine pausiert durch Preflight";
+
+  left.append(h, hint);
 
   const btns = document.createElement("div");
   btns.style.cssText = "display:flex;gap:6px;";
+
+  const btnToggle = document.createElement("button");
+  btnToggle.id = "btnToggleRun";
+  btnToggle.textContent = "Weiterlaufen";
+  btnToggle.onclick = async ()=>{
+    // Toggle: läuft? -> anhalten, sonst fortsetzen
+    __pfWantsRun = !__pfWantsRun;
+    if (__pfWantsRun) {
+      await resumeEngine();
+      btnToggle.textContent = "Anhalten";
+      hint.textContent = "Engine läuft (Preflight kann ruckeln)";
+    } else {
+      await pauseEngine();
+      btnToggle.textContent = "Weiterlaufen";
+      hint.textContent = "Engine pausiert durch Preflight";
+    }
+  };
 
   const btnCopy = document.createElement("button");
   btnCopy.id = "btnMdcCopy";
@@ -68,8 +95,8 @@ function overlay() {
   btnClose.textContent = "Schließen";
   btnClose.onclick = hide;
 
-  btns.append(btnCopy, btnRerun, btnClose);
-  bar.append(h, btns);
+  btns.append(btnToggle, btnCopy, btnRerun, btnClose);
+  bar.append(left, btns);
 
   const pre = document.createElement("pre");
   pre.id = "diag-box";
@@ -90,6 +117,13 @@ function overlay() {
 function show(lines) {
   const root = overlay();
   root.style.display = "flex";
+  // beim Öffnen immer als „pausiert“ anzeigen
+  const btnToggle = $("btnToggleRun");
+  const hint = $("pf-hint");
+  if (btnToggle && hint) {
+    btnToggle.textContent = __pfWantsRun ? "Anhalten" : "Weiterlaufen";
+    hint.textContent = __pfWantsRun ? "Engine läuft (Preflight kann ruckeln)" : "Engine pausiert durch Preflight";
+  }
   const box = $("diag-box");
   box.textContent = Array.isArray(lines) ? lines.join("\n") : String(lines||"");
 }
@@ -102,6 +136,8 @@ function setMdc(mdc) {
   if (box) box.dataset.mdc = mdc;
 }
 async function hide() {
+  // Beim Schließen immer in den „normalen“ Zustand zurück
+  __pfWantsRun = false;
   const root = $("diag-overlay");
   if (root) root.style.display = "none";
   await resumeEngine();
@@ -114,17 +150,12 @@ async function copySafe(text, btn) {
     if (btn) { const t = btn.textContent; btn.textContent = "Kopiert ✓"; setTimeout(()=>btn.textContent=t, 900); }
     return;
   } catch {}
-  // Fallback für iOS/Safari
-  try {
+  try { // iOS/Safari-Fallback
     const ta = document.createElement("textarea");
     ta.value = text || "";
-    ta.style.position = "fixed";
-    ta.style.opacity = "0";
-    ta.style.left = "-9999px";
-    document.body.appendChild(ta);
-    ta.focus(); ta.select();
-    document.execCommand("copy");
-    document.body.removeChild(ta);
+    ta.style.position = "fixed"; ta.style.opacity = "0"; ta.style.left = "-9999px";
+    document.body.appendChild(ta); ta.focus(); ta.select();
+    document.execCommand("copy"); document.body.removeChild(ta);
     if (btn) { const t = btn.textContent; btn.textContent = "Kopiert ✓"; setTimeout(()=>btn.textContent=t, 900); }
   } catch {}
 }
@@ -156,7 +187,6 @@ async function uiCheck(){
   try{ const m=await import("./editor.js");       fn.openEditor=typeof m.openEditor==='function'; }catch(e){}
   try{ const m=await import("./environment.js");  fn.openEnv=typeof m.openEnvPanel==='function'; }catch(e){}
   try{ const m=await import("./appops_panel.js"); fn.openOps=typeof m.openAppOps==='function'; }catch(e){}
-  // Canvas-Probe
   let canvas2D=false; try{ const c=$("scene"); canvas2D=!!(c&&c.getContext&&c.getContext("2d")); }catch{}
   ui.canvas2D=canvas2D; return {ui,fn};
 }
@@ -177,15 +207,14 @@ async function runModuleMatrixStreaming() {
   for (let i=0;i<PF_MODULES.length;i++){
     const line = await checkModule(PF_MODULES[i]);
     append(line);
-    // UI freigeben (wichtig für iOS Safari)
     await new Promise(r => setTimeout(r, 0));
   }
 }
 
 /* -------------------------------- Diagnose --------------------------------- */
 export async function diagnose(){
-  // Engine bremsen, bevor viel UI gebaut wird
-  await pauseEngine();
+  // standardmäßig pausieren (ruckelfrei), aber Toggle-Status beachten
+  if (!__pfWantsRun) await pauseEngine();
 
   const rt = rtSnapshot();
   const head = [
@@ -216,10 +245,8 @@ export async function diagnose(){
   append((ui.canvas2D?OK:NO)+ "2D-Context erzeugbar");
   append(""); append("Module/Exporte:");
 
-  // Modulmatrix — gestreamt
   await runModuleMatrixStreaming();
 
-  // Fehler-Log
   const errs = Array.isArray(window.__runtimeErrors) ? window.__runtimeErrors.slice(-4) : [];
   if (errs.length){
     append(""); append("Laufzeitfehler (letzte 4):"); append("");
@@ -228,7 +255,6 @@ export async function diagnose(){
     }
   }
 
-  // MDC
   const payload = { v:1, kind:"ui-diagnose", ts:Date.now(), runtime: rtSnapshot() };
   const mdc = `MDC-CHK-${Math.random().toString(16).slice(2,6)}-${b64(JSON.stringify(payload))}`;
   append(""); append("Maschinencode:"); append(mdc);
@@ -236,7 +262,6 @@ export async function diagnose(){
 }
 
 /* -------------------------------- Auto-Hook -------------------------------- */
-// sanft: kleine Wartezeit, damit engine.boot() das Flag setzen kann
 (function(){
   try{
     const q = new URLSearchParams(location.search);
