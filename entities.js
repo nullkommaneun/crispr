@@ -12,9 +12,9 @@
  *  6) CLEANUP           – Tote Zellen entfernen
  *
  * Designziele:
- *  - Logik bleibt modular (Entscheidungen in drives.js; Paarung in reproduction.js)
+ *  - Logik modular (Entscheidungen in drives.js; Paarung in reproduction.js)
  *  - Zellen tragen Gene {EFF,MET,SCH,TEM,GRÖ}, die in drives.js zu Traits abgeleitet werden
- *  - Perception liefert genug Kontext (Food, Nachbar, Mate-Kandidat) für menschliche Policies
+ *  - Perception liefert Kontext (Food, Nachbar, Mate-Kandidat) für menschliche Policies
  */
 
 import * as drives from "./drives.js";
@@ -53,6 +53,7 @@ function foods(){
 
 function clamp(v, lo, hi){ return v < lo ? lo : (v > hi ? hi : v); }
 function rnd(min,max){ return min + Math.random()*(max-min); }
+function randn(){ let u=0, v=0; while(u===0) u=Math.random(); while(v===0) v=Math.random(); return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v); }
 
 function keepInBounds(c){
   // einfache Kollision an Rändern (prallen & dämpfen)
@@ -183,6 +184,33 @@ function eatNearby(c){
   return false;
 }
 
+/* ------------------------- Start-Boost: Kinder-Erzeugung -------------------- */
+
+function blendMutateGenes(base, other, mix = 0.7, sigma = 0.06){
+  const b = base || {}, o = other || {};
+  return {
+    EFF: clamp(mix*(b.EFF ?? 0.5) + (1-mix)*(o.EFF ?? 0.5) + randn()*sigma, 0, 1),
+    MET: clamp(mix*(b.MET ?? 0.5) + (1-mix)*(o.MET ?? 0.5) + randn()*sigma, 0, 1),
+    SCH: clamp(mix*(b.SCH ?? 0.5) + (1-mix)*(o.SCH ?? 0.5) + randn()*sigma, 0, 1),
+    TEM: clamp(mix*(b.TEM ?? 0.5) + (1-mix)*(o.TEM ?? 0.5) + randn()*sigma, 0, 1),
+    GRÖ: clamp(mix*(b.GRÖ ?? b.GRO ?? 0.5) + (1-mix)*(o.GRÖ ?? o.GRO ?? 0.5) + randn()*sigma, 0, 1),
+  };
+}
+
+function spawnBroodAround(parent, partnerGenes, count, namePrefix){
+  // Kinder in kleinem Radius um den Elternteil
+  for (let i=0;i<count;i++){
+    const ang = Math.random()*Math.PI*2;
+    const rad = 6 + Math.random()*10;
+    const x = clamp(parent.pos.x + Math.cos(ang)*rad, 4, WORLD_W-4);
+    const y = clamp(parent.pos.y + Math.sin(ang)*rad, 4, WORLD_H-4);
+    const genes = blendMutateGenes(parent.genes, partnerGenes, 0.7, 0.06);
+    const sex = (i % 2 === 0) ? "M" : "F";
+    const name = `${namePrefix}${i+1}`;
+    addCell(name, sex, x, y, genes);
+  }
+}
+
 /* ------------------------------- Public API -------------------------------- */
 
 export function setWorldSize(w,h){
@@ -201,9 +229,15 @@ export function applyEnvironment(_e){ /* no-op */ }
 export function createAdamAndEve(){
   CELLS.length = 0; NEXT_ID = 1;
   const cx = WORLD_W*0.5, cy = WORLD_H*0.5;
-  // Gene für Adam/Eva: leicht unterschiedliche Defaults
-  addCell("Adam", "M", cx-12, cy, { EFF:0.55, MET:0.45, SCH:0.50, TEM:0.55, GRÖ:0.52 });
-  addCell("Eva",  "F", cx+12, cy, { EFF:0.60, MET:0.50, SCH:0.60, TEM:0.45, GRÖ:0.48 });
+
+  // Eltern
+  const adam = addCell("Adam", "M", cx-12, cy, { EFF:0.55, MET:0.45, SCH:0.50, TEM:0.55, GRÖ:0.52 });
+  const eva  = addCell("Eva",  "F", cx+12, cy, { EFF:0.60, MET:0.50, SCH:0.60, TEM:0.45, GRÖ:0.48 });
+
+  // START-BOOST: Jeweils 5 Kinder nahe Adam und 5 nahe Eva
+  // Gene: Mischung aus jeweiligem Elternteil + Partner, plus leichte Mutation
+  spawnBroodAround(adam, eva.genes, 5, "A");
+  spawnBroodAround(eva,  adam.genes, 5, "E");
 }
 
 /** Optional-Export: neues Kind erzeugen (für reproduction.js) */
