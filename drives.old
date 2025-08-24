@@ -1,96 +1,106 @@
-// drives.js — Verhaltenspolitik (Mate-first mit Gating & Hysterese)
-// Exports: initDrives, getAction, afterStep, getDrivesSnapshot, setTracing, getTraceText
+/**
+ * drives.js — Entscheidungs-Policy für Zellen (food-seek / wander)
+ * Exports: decide(cell, ctx), getDrivesSnapshot(), getTraceText()
+ *
+ * Design:
+ *  - Input: cell, ctx = { world:{w,h}, percept:{ food?:{x,y,dist}, energyRel, isJuvenile }, dt, tSec }
+ *  - Output: { ax, ay, mode? }  (Beschleunigung in px/s²; Entities clamped speed)
+ *  - Sanfte, performante Defaults (keine teuren Strukturen)
+ */
 
-let TRACE = false;
-
-// Policy-Parameter (konservativ gewählt)
 const CFG = {
-  // Energie-Schwellen (Anteil an Emax)
-  E_ENTER_MATE: 0.55,   // ab hier Paarung priorisieren
-  E_EXIT_MATE:  0.45,   // unter diese Schwelle -> raus aus Mate-Modus
-  // Zeit-Hysterese (verhindert Zickzack)
-  MATE_STICKY_SEC: 6.0, // bleibe bis zu 6s im Paarungsmodus
-  // Pairing & Distanzen (nur Info für Snapshot; das eigentliche Steuern macht entities.js)
-  R_PAIR: 32,           // "Pair distance" ist in entities geregelt; hier nur Anzeige
-  K_DIST: 0.05,         // Distanzabzug im Score (entities nutzt −0.05*d analog)
-  EPS: 0
+  // Steuer-Gains
+  SEEK_ACC:   90,     // px/s² Richtung Food
+  WANDER_ACC: 36,     // px/s² Rausch-/Wander-Anteil
+  CENTER_ACC: 18,     // px/s² schwacher Mitte-Pull
+  // Wander-Noise
+  WANDER_SIGMA: 0.85, // rad/sqrt(s) — Brownian ähnlicher Drift
 };
 
-// Laufzeitzähler (für Ticker/Diagnose)
-const MISC = { duels: 0, wins: 0 };
+const SNAP = {
+  modeCounts: { food:0, wander:0 },
+  decideCalls: 0,
+  lastMode: "wander",
+  lastFoodDist: null
+};
 
-// Pro-Zelle: kleiner Drive-Status (Mate-Hysterese)
-function ensureDS(c){
-  if (!c.__drive) c.__drive = { mode: "wander", until: 0, modeSince: 0 };
-  return c.__drive;
+function centerPull(cell, world){
+  const cx = world.w * 0.5, cy = world.h * 0.5;
+  return { ax: (cx - cell.pos.x) * 0.12, ay: (cy - cell.pos.y) * 0.12 };
 }
 
-export function initDrives(){ /* aktuell nichts nötig */ }
-export function setTracing(on){ TRACE = !!on; }
+function limitAcc(ax, ay, maxAcc){
+  const a2 = ax*ax + ay*ay;
+  if (a2 <= maxAcc*maxAcc) return { ax, ay };
+  const s = maxAcc / Math.sqrt(a2);
+  return { ax: ax*s, ay: ay*s };
+}
+
+/**
+ * Primäre Entscheidungsfunktion.
+ * Gibt Beschleunigung zurück; Entities integriert & clamped Speed.
+ */
+export function decide(cell, ctx){
+  const dt = Math.max(0, +ctx.dt || 0.016);
+  const w  = ctx.world || { w: 800, h: 500 };
+  const p  = ctx.percept || {};
+  let ax = 0, ay = 0;
+  let mode = "wander";
+
+  // 1) Zielorientiertes "seek", wenn Food im Wahrnehmungsradius
+  if (p.food){
+    const dx = p.food.x - cell.pos.x;
+    const dy = p.food.y - cell.pos.y;
+    const d  = Math.hypot(dx, dy) || 1;
+    ax += (dx / d) * CFG.SEEK_ACC;
+    ay += (dy / d) * CFG.SEEK_ACC;
+    mode = "food";
+    SNAP.lastFoodDist = p.food.dist|0;
+  }
+
+  // 2) Wander-Rausch (OU-ähnlich über Winkel)
+  if (!cell.drive) cell.drive = { wanderAngle: Math.random()*Math.PI*2, lastMode:"wander" };
+  const jitter = (Math.random()*2-1) * CFG.WANDER_SIGMA * Math.sqrt(dt);
+  cell.drive.wanderAngle += jitter;
+
+  const wx = Math.cos(cell.drive.wanderAngle) * CFG.WANDER_ACC;
+  const wy = Math.sin(cell.drive.wanderAngle) * CFG.WANDER_ACC;
+  ax += wx; ay += wy;
+
+  // 3) Leichter Mitte-Pull stabilisiert die Schwarmlage
+  const cp = centerPull(cell, w);
+  ax += cp.ax * (CFG.CENTER_ACC / 100);
+  ay += cp.ay * (CFG.CENTER_ACC / 100);
+
+  // 4) Limit finaler Acc
+  const out = limitAcc(ax, ay, Math.max(CFG.SEEK_ACC, CFG.WANDER_ACC) + CFG.CENTER_ACC);
+
+  // Snapshot
+  SNAP.decideCalls++;
+  SNAP.modeCounts[mode] = (SNAP.modeCounts[mode]||0) + 1;
+  SNAP.lastMode = cell.drive.lastMode = mode;
+
+  return { ...out, mode };
+}
+
+/* ------------------------------ Diagnostics -------------------------------- */
 
 export function getDrivesSnapshot(){
+  const total = Math.max(1, SNAP.decideCalls);
+  const pct = (n)=> Math.round((n/total)*100);
   return {
-    misc: { duels: MISC.duels, wins: MISC.wins },
-    cfg:  { K_DIST: CFG.K_DIST, R_PAIR: CFG.R_PAIR, EPS: CFG.EPS }
+    calls: total,
+    modes: {
+      food:   { n: SNAP.modeCounts.food|0,   pct: pct(SNAP.modeCounts.food|0) },
+      wander: { n: SNAP.modeCounts.wander|0, pct: pct(SNAP.modeCounts.wander|0) }
+    },
+    lastMode: SNAP.lastMode,
+    lastFoodDist: SNAP.lastFoodDist
   };
 }
 
-// Diagnose-Text (für Preflight / Smart-Ops)
 export function getTraceText(){
-  return `K_DIST=${CFG.K_DIST} · R_PAIR=${CFG.R_PAIR} · EPS=${CFG.EPS} · duels=${MISC.duels} · wins=${MISC.wins}`;
-}
-
-// Energieanteil robust normalisieren
-function energyFrac(c){
-  const E = Math.max(0, Math.min(120, c.energy || 0));
-  return E / 100;
-}
-
-// Hauptentscheidung
-export function getAction(c, t, ctx){
-  const ds = ensureDS(c);
-
-  const hasFood = !!ctx.food;
-  const hasMate = !!ctx.mate && (ctx.mateDist != null);
-
-  const eFrac = energyFrac(c);
-
-  // Mate-Hysterese
-  if (ds.mode === "mate"){
-    const tooLow  = eFrac < CFG.E_EXIT_MATE;
-    const tooLong = (t - (ds.modeSince || 0)) > CFG.MATE_STICKY_SEC;
-    if (!tooLow && !tooLong){
-      if (TRACE) console.log(`[DRIVES] stick: mate (e=${eFrac.toFixed(2)})`);
-      return "mate";
-    }
-    ds.mode = "wander";
-  }
-
-  // Neue Entscheidung
-  if (hasMate && (c.cooldown || 0) <= 0 && eFrac >= CFG.E_ENTER_MATE){
-    ds.mode = "mate";
-    ds.modeSince = t;
-    if (TRACE) console.log(`[DRIVES] choose: mate (e=${eFrac.toFixed(2)})`);
-    return "mate";
-  }
-
-  if (hasFood){
-    ds.mode = "food";
-    ds.modeSince = t;
-    if (TRACE) console.log(`[DRIVES] choose: food (e=${eFrac.toFixed(2)})`);
-    return "food";
-  }
-
-  ds.mode = "wander";
-  ds.modeSince = t;
-  if (TRACE) console.log(`[DRIVES] choose: wander (e=${eFrac.toFixed(2)})`);
-  return "wander";
-}
-
-// Feedback-Hook je Schritt (Platzhalter)
-export function afterStep(c, dt, ctx){
-  if (false) {
-    MISC.duels++;
-    MISC.wins++;
-  }
+  const s = getDrivesSnapshot();
+  return `DRIVES calls=${s.calls} | food=${s.modes.food.pct}% | wander=${s.modes.wander.pct}% | last=${s.lastMode}` +
+         (s.lastFoodDist!=null ? ` | lastFoodDist=~${s.lastFoodDist}px` : "");
 }

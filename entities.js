@@ -1,20 +1,20 @@
 /**
  * entities.js — Quelle der Wahrheit für Zellen/Bewegung/Energie + Food-Interaktion
- * Exports: setWorldSize, getCells, getFoodItems, createAdamAndEve, step, applyEnvironment
+ * Exports (kompatibel): setWorldSize, getCells, getFoodItems, createAdamAndEve, step, applyEnvironment
+ * Zusätzlicher, optionaler Export: spawnChild(x, y, genes?, sex?)  → neue Zelle mit Genen
  *
- * Inhalt & Architektur:
- *  - Tuning (Fallback-Konstanten; unabhängig von config.js)
- *  - Weltzustand & CellModel (Struktur einer Zelle)
- *  - Perception (lokale Wahrnehmung, z. B. nächstes Food im Radius)
- *  - Decision (delegiert an drives.decide; Fallback "wander")
- *  - Act (Physik: v += a*dt, clamp speed, Bounds)
- *  - Energie & Essen (metabolicLoss, eatNearby)
- *  - Public API (Weltgröße, Seeding, Step-Phasen)
+ * Architektur (Phasen je Tick):
+ *  1) AGE/COOLDOWN      – Alter & Timings updaten
+ *  2) PERCEIVE          – nächstes Food, (option.) nächster Nachbar / potenzieller Partner
+ *  3) DECIDE (drives)   – menschlich anmutende Needs/Utilities → Beschleunigung
+ *  4) ACT               – kinematische Integration + Weltgrenzen
+ *  5) ENERGY & EAT      – Stoffwechsel (inkl. Bewegungskosten) + Food-Aufnahme
+ *  6) CLEANUP           – Tote Zellen entfernen
  *
  * Designziele:
- *  - Klarer Phasenablauf: perceive → decide → act → energy/eat → cleanup
- *  - Austauschbare Policy via drives.decide(cell, ctx)
- *  - Sanfte Defaults („gutmütig“), kompatibel mit bestehender UI/Engine
+ *  - Logik bleibt modular (Entscheidungen in drives.js; Paarung in reproduction.js)
+ *  - Zellen tragen Gene {EFF,MET,SCH,TEM,GRÖ}, die in drives.js zu Traits abgeleitet werden
+ *  - Perception liefert genug Kontext (Food, Nachbar, Mate-Kandidat) für menschliche Policies
  */
 
 import * as drives from "./drives.js";
@@ -32,7 +32,10 @@ const MOVE_COST_S = 0.025;  // Bewegungsaufschlag [E/s] bei Vmax (linear skalier
 
 // Kinematik
 const MOVE_S_MAX  = 55;     // maximale Geschwindigkeit [px/s]
-const SENSE_FOOD  = 110;    // Wahrnehmungsradius für Food [px]
+
+// Wahrnehmung
+const SENSE_FOOD  = 110;    // Food-Radius [px]
+const SENSE_SOC   = 120;    // Sozial-/Mate-Radius [px]
 
 // Welt
 let WORLD_W = 800, WORLD_H = 500;
@@ -61,7 +64,16 @@ function keepInBounds(c){
 
 /* -------------------------------- CellModel -------------------------------- */
 
-function addCell(name, sex, x, y){
+function addCell(name, sex, x, y, genesOpt){
+  // Gene: defensiv, falls nicht angegeben
+  const genes = genesOpt && typeof genesOpt === "object" ? {
+    EFF: clamp(+genesOpt.EFF ?? 0.5, 0, 1),
+    MET: clamp(+genesOpt.MET ?? 0.5, 0, 1),
+    SCH: clamp(+genesOpt.SCH ?? 0.5, 0, 1),
+    TEM: clamp(+genesOpt.TEM ?? 0.5, 0, 1),
+    GRÖ: clamp(+genesOpt.GRÖ ?? (genesOpt.GRO ?? 0.5), 0, 1)
+  } : { EFF:0.5, MET:0.5, SCH:0.5, TEM:0.5, GRÖ:0.5 };
+
   const c = {
     id: NEXT_ID++, name, sex,               // 'M' oder 'F'
     pos: { x, y },
@@ -70,19 +82,24 @@ function addCell(name, sex, x, y){
     age: 0,
     cooldown: 0,
     vitality: 1,
-    // Drive-Localstate (für wander o.ä.)
-    drive: { wanderAngle: Math.random()*Math.PI*2, lastMode:"wander" }
+    genes,
+    // Drive-Localstate (für menschliche Policies)
+    drive: {
+      wanderAngle: Math.random()*Math.PI*2,
+      lastMode: "wander",
+      fatigue: 0,     // wächst mit Bewegung, sinkt bei Rest
+      wantMate: false // Flag, das drives setzen darf
+    }
   };
   CELLS.push(c);
   return c;
 }
 
-/* -------------------------------- Perception ------------------------------- */
+/* ------------------------------- Perception -------------------------------- */
 
-function perceive(c){
-  // Nächstes Food im Wahrnehmungsradius (euklidisch)
+function perceiveFood(c){
   const f = foods();
-  let bestIdx = -1, bestD2 = (SENSE_FOOD*SENSE_FOOD), best = null;
+  let bestIdx = -1, bestD2 = (SENSE_FOOD*SENSE_FOOD);
 
   for (let i=0;i<f.length;i++){
     const dx = f[i].x - c.pos.x, dy = f[i].y - c.pos.y;
@@ -93,32 +110,25 @@ function perceive(c){
   }
   if (bestIdx >= 0){
     const target = f[bestIdx];
-    const dist = Math.sqrt(bestD2);
-    best = { x: target.x, y: target.y, dist };
+    return { x: target.x, y: target.y, dist: Math.sqrt(bestD2) };
   }
-  return {
-    food: best,                               // {x,y,dist} | null
-    energyRel: c.energy / E_MAX,              // 0..1
-    isJuvenile: c.age < JUV_AGE_S
-  };
+  return null;
 }
 
-/* ---------------------------------- Decision ------------------------------- */
+function perceiveNeighbor(c){
+  // Einfach: nächster beliebiger Nachbar + nächster potenzieller Partner (Gegengeschlecht)
+  let nearest = null, bestD2 = (SENSE_SOC*SENSE_SOC);
+  let mate    = null, bestMD2 = (SENSE_SOC*SENSE_SOC);
 
-function decide(c, ctx, dt, tSec){
-  // Delegation an drives.decide – liefert {ax, ay, mode?}
-  // Fallback: wander, falls nicht vorhanden
-  try {
-    const out = drives.decide?.(c, { ...ctx, dt, tSec }) || null;
-    if (out && Number.isFinite(out.ax) && Number.isFinite(out.ay)) {
-      if (out.mode) c.drive.lastMode = out.mode;
-      return { ax: out.ax, ay: out.ay };
-    }
-  } catch {}
-  // Fallback: leichtes „Zappeln“ + Mitte-Pull
-  const cx = WORLD_W*0.5, cy = WORLD_H*0.5;
-  const toC = { x: (cx - c.pos.x) * 0.12, y: (cy - c.pos.y) * 0.12 };
-  return { ax: rnd(-30,30) + toC.x, ay: rnd(-30,30) + toC.y };
+  for (let i=0;i<CELLS.length;i++){
+    const o = CELLS[i];
+    if (o === c) continue;
+    const dx = o.pos.x - c.pos.x, dy = o.pos.y - c.pos.y;
+    const d2 = dx*dx + dy*dy;
+    if (d2 < bestD2){ bestD2 = d2; nearest = { id:o.id, sex:o.sex, x:o.pos.x, y:o.pos.y, dist:Math.sqrt(d2) }; }
+    if (o.sex !== c.sex && d2 < bestMD2){ bestMD2 = d2; mate = { id:o.id, sex:o.sex, x:o.pos.x, y:o.pos.y, dist:Math.sqrt(d2) }; }
+  }
+  return { nearest, mate };
 }
 
 /* ------------------------------------- Act --------------------------------- */
@@ -191,8 +201,19 @@ export function applyEnvironment(_e){ /* no-op */ }
 export function createAdamAndEve(){
   CELLS.length = 0; NEXT_ID = 1;
   const cx = WORLD_W*0.5, cy = WORLD_H*0.5;
-  addCell("Adam", "M", cx-12, cy);
-  addCell("Eva",  "F", cx+12, cy);
+  // Gene für Adam/Eva: leicht unterschiedliche Defaults
+  addCell("Adam", "M", cx-12, cy, { EFF:0.55, MET:0.45, SCH:0.50, TEM:0.55, GRÖ:0.52 });
+  addCell("Eva",  "F", cx+12, cy, { EFF:0.60, MET:0.50, SCH:0.60, TEM:0.45, GRÖ:0.48 });
+}
+
+/** Optional-Export: neues Kind erzeugen (für reproduction.js) */
+export function spawnChild(x, y, genes, sexOpt){
+  const sex = sexOpt || (Math.random() < 0.5 ? "M" : "F");
+  const name = sex === "M" ? "Neo" : "Nia";
+  const m = 4; // kleiner Rand
+  const px = clamp(x, m, WORLD_W - m);
+  const py = clamp(y, m, WORLD_H - m);
+  return addCell(name, sex, px, py, genes);
 }
 
 /* ---------------------------------- Step ----------------------------------- */
@@ -205,14 +226,24 @@ export function step(dt, _env = {}, tSec = 0){
     const c = CELLS[i];
     c.age += dt;
     if (c.cooldown > 0) c.cooldown -= dt;
+    // leichte Müdigkeit abbauen, wenn Geschwindigkeit gering ist (drive.fatigue wird in drives aufgebaut)
+    if (c.drive) {
+      const v = Math.hypot(c.vel.x, c.vel.y);
+      if (v < 8) c.drive.fatigue = Math.max(0, c.drive.fatigue - 0.25*dt);
+    }
   }
 
   // 2) PERCEIVE → DECIDE → ACT
   for (let i=0;i<CELLS.length;i++){
     const c = CELLS[i];
-    const percept = perceive(c);
+    const percept = {
+      food: perceiveFood(c),
+      ...perceiveNeighbor(c),
+      energyRel: c.energy / E_MAX,
+      isJuvenile: c.age < JUV_AGE_S
+    };
     const ctx = { world:{ w: WORLD_W, h: WORLD_H }, percept };
-    const a = decide(c, ctx, dt, tSec);
+    const a = drives.decide?.(c, { ...ctx, dt, tSec }) || { ax:0, ay:0 };
     act(c, a, dt);
   }
 
