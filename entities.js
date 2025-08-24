@@ -1,41 +1,41 @@
 /**
  * entities.js — Quelle der Wahrheit für Zellen/Bewegung/Energie + Food-Interaktion
  * Exports (kompatibel): setWorldSize, getCells, getFoodItems, createAdamAndEve, step, applyEnvironment
- * Zusätzlicher, optionaler Export: spawnChild(x, y, genes?, sex?)  → neue Zelle mit Genen
+ * Zusätzlicher, optionaler Export: spawnChild(x, y, genes?, sex?)
  *
  * Architektur (Phasen je Tick):
- *  1) AGE/COOLDOWN      – Alter & Timings updaten
- *  2) PERCEIVE          – nächstes Food, (option.) nächster Nachbar / potenzieller Partner
- *  3) DECIDE (drives)   – menschlich anmutende Needs/Utilities → Beschleunigung
- *  4) ACT               – kinematische Integration + Weltgrenzen
- *  5) ENERGY & EAT      – Stoffwechsel (inkl. Bewegungskosten) + Food-Aufnahme
- *  6) CLEANUP           – Tote Zellen entfernen
+ *  1) AGE/COOLDOWN
+ *  2) PERCEIVE (Food/Nachbar via Spatial Grid)
+ *  3) DECIDE (drives) → Beschleunigung
+ *  4) ACT (Kinematik + Bounds)
+ *  5) ENERGY & EAT (Food-Konsum via Grid, kompakte Entfernung)
+ *  6) CLEANUP (Tote Zellen)
  *
- * Designziele:
- *  - Logik modular (Entscheidungen in drives.js; Paarung in reproduction.js)
- *  - Zellen tragen Gene {EFF,MET,SCH,TEM,GRÖ}, die in drives.js zu Traits abgeleitet werden
- *  - Perception liefert Kontext (Food, Nachbar, Mate-Kandidat) für menschliche Policies
+ * Neu: Uniform Spatial Grid (intern)
+ *  - cellSize = 128 px; Buckets für Food & Cells
+ *  - Rebuild pro Frame: O(nFood + nCells)
+ *  - Food-Buckets halten Objektreferenzen; beim Essen: item.__dead = true; am Ende kompaktieren
  */
 
 import * as drives from "./drives.js";
 
 /* --------------------------------- Tuning ---------------------------------- */
 // Energetik
-const E_START     = 80;     // Startenergie
-const E_MAX       = 140;    // Obergrenze für Energie
-const E_FOOD      = 22;     // Energiegewinn pro Food
-const EAT_RADIUS  = 9;      // Radius für "Essen berührt Zelle"
-const META_BASE   = 0.10;   // Grundumsatz [E/s]
-const META_JUV_FR = 0.55;   // Juveniler Schutzfaktor auf Grundumsatz
-const JUV_AGE_S   = 12;     // juvenile Dauer [s]
-const MOVE_COST_S = 0.025;  // Bewegungsaufschlag [E/s] bei Vmax (linear skaliert)
+const E_START     = 80;
+const E_MAX       = 140;
+const E_FOOD      = 22;
+const EAT_RADIUS  = 9;
+const META_BASE   = 0.10;
+const META_JUV_FR = 0.55;
+const JUV_AGE_S   = 12;
+const MOVE_COST_S = 0.025;
 
 // Kinematik
-const MOVE_S_MAX  = 55;     // maximale Geschwindigkeit [px/s]
+const MOVE_S_MAX  = 55;     // (Konstante Kappung; Traits können separat in drives genutzt werden)
 
 // Wahrnehmung
-const SENSE_FOOD  = 110;    // Food-Radius [px]
-const SENSE_SOC   = 120;    // Sozial-/Mate-Radius [px]
+const SENSE_FOOD  = 110;
+const SENSE_SOC   = 120;
 
 // Welt
 let WORLD_W = 800, WORLD_H = 500;
@@ -45,9 +45,7 @@ let WORLD_W = 800, WORLD_H = 500;
 const CELLS = [];
 let NEXT_ID = 1;
 
-function foods(){
-  return Array.isArray(window.__FOODS) ? window.__FOODS : (window.__FOODS = []);
-}
+function foods(){ return Array.isArray(window.__FOODS) ? window.__FOODS : (window.__FOODS = []); }
 
 /* --------------------------------- Helpers --------------------------------- */
 
@@ -56,17 +54,98 @@ function rnd(min,max){ return min + Math.random()*(max-min); }
 function randn(){ let u=0, v=0; while(u===0) u=Math.random(); while(v===0) v=Math.random(); return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v); }
 
 function keepInBounds(c){
-  // einfache Kollision an Rändern (prallen & dämpfen)
   if (c.pos.x < 3){ c.pos.x=3; if (c.vel.x<0) c.vel.x*=-0.5; }
   if (c.pos.x > WORLD_W-3){ c.pos.x=WORLD_W-3; if (c.vel.x>0) c.vel.x*=-0.5; }
   if (c.pos.y < 3){ c.pos.y=3; if (c.vel.y<0) c.vel.y*=-0.5; }
   if (c.pos.y > WORLD_H-3){ c.pos.y=WORLD_H-3; if (c.vel.y>0) c.vel.y*=-0.5; }
 }
 
+/* ------------------------------ Spatial Grid -------------------------------- */
+
+const GRID = {
+  cellSize: 128,
+  w: 0, h: 0, nx: 0, ny: 0,
+  food: null,  // Array< Array<FoodRef> >
+  cells: null, // Array< Array<CellRef> >
+
+  build(w, h){
+    this.w = Math.max(1, w|0); this.h = Math.max(1, h|0);
+    this.nx = Math.max(1, Math.ceil(this.w / this.cellSize));
+    this.ny = Math.max(1, Math.ceil(this.h / this.cellSize));
+    const buckets = this.nx * this.ny;
+    this.food  = new Array(buckets); for (let i=0;i<buckets;i++) this.food[i] = [];
+    this.cells = new Array(buckets); for (let i=0;i<buckets;i++) this.cells[i] = [];
+  },
+  ensure(){
+    if (!this.food || !this.cells || this.w !== WORLD_W || this.h !== WORLD_H){
+      this.build(WORLD_W, WORLD_H);
+    } else {
+      // leeren, ohne Arrays neu zu allocen
+      for (let i=0;i<this.food.length;i++)  this.food[i].length = 0;
+      for (let i=0;i<this.cells.length;i++) this.cells[i].length = 0;
+    }
+  },
+  _ix(x){ return clamp((x/this.cellSize)|0, 0, this.nx-1); },
+  _iy(y){ return clamp((y/this.cellSize)|0, 0, this.ny-1); },
+  _b(ix,iy){ return iy*this.nx + ix; },
+
+  rebuildFoods(list){
+    for (let i=0;i<list.length;i++){
+      const f = list[i]; if (!f || f.__dead) continue;
+      const ix = this._ix(f.x), iy = this._iy(f.y);
+      this.food[this._b(ix,iy)].push(f);
+    }
+  },
+  rebuildCells(list){
+    for (let i=0;i<list.length;i++){
+      const c = list[i];
+      const ix = this._ix(c.pos.x), iy = this._iy(c.pos.y);
+      this.cells[this._b(ix,iy)].push(c);
+    }
+  },
+  _bucketRange(x,y,r){
+    const cs = this.cellSize;
+    const ix0 = this._ix(x - r), iy0 = this._iy(y - r);
+    const ix1 = this._ix(x + r), iy1 = this._iy(y + r);
+    return { ix0, iy0, ix1, iy1 };
+  },
+  queryFoodsCircle(x,y,r){
+    const { ix0, iy0, ix1, iy1 } = this._bucketRange(x,y,r);
+    const out = [];
+    for (let iy=iy0; iy<=iy1; iy++){
+      for (let ix=ix0; ix<=ix1; ix++){
+        const bucket = this.food[this._b(ix,iy)];
+        for (let k=0;k<bucket.length;k++){
+          const f = bucket[k];
+          if (f && !f.__dead){
+            const dx = f.x - x, dy = f.y - y;
+            if (dx*dx + dy*dy <= r*r) out.push(f);
+          }
+        }
+      }
+    }
+    return out;
+  },
+  queryCellsCircle(x,y,r){
+    const { ix0, iy0, ix1, iy1 } = this._bucketRange(x,y,r);
+    const out = [];
+    for (let iy=iy0; iy<=iy1; iy++){
+      for (let ix=ix0; ix<=ix1; ix++){
+        const bucket = this.cells[this._b(ix,iy)];
+        for (let k=0;k<bucket.length;k++){
+          const c = bucket[k];
+          const dx = c.pos.x - x, dy = c.pos.y - y;
+          if (dx*dx + dy*dy <= r*r) out.push(c);
+        }
+      }
+    }
+    return out;
+  }
+};
+
 /* -------------------------------- CellModel -------------------------------- */
 
 function addCell(name, sex, x, y, genesOpt){
-  // Gene: defensiv, falls nicht angegeben
   const genes = genesOpt && typeof genesOpt === "object" ? {
     EFF: clamp(+genesOpt.EFF ?? 0.5, 0, 1),
     MET: clamp(+genesOpt.MET ?? 0.5, 0, 1),
@@ -76,7 +155,7 @@ function addCell(name, sex, x, y, genesOpt){
   } : { EFF:0.5, MET:0.5, SCH:0.5, TEM:0.5, GRÖ:0.5 };
 
   const c = {
-    id: NEXT_ID++, name, sex,               // 'M' oder 'F'
+    id: NEXT_ID++, name, sex,
     pos: { x, y },
     vel: { x: rnd(-10,10), y: rnd(-10,10) },
     energy: E_START,
@@ -84,12 +163,11 @@ function addCell(name, sex, x, y, genesOpt){
     cooldown: 0,
     vitality: 1,
     genes,
-    // Drive-Localstate (für menschliche Policies)
     drive: {
       wanderAngle: Math.random()*Math.PI*2,
       lastMode: "wander",
-      fatigue: 0,     // wächst mit Bewegung, sinkt bei Rest
-      wantMate: false // Flag, das drives setzen darf
+      fatigue: 0,
+      wantMate: false
     }
   };
   CELLS.push(c);
@@ -99,35 +177,27 @@ function addCell(name, sex, x, y, genesOpt){
 /* ------------------------------- Perception -------------------------------- */
 
 function perceiveFood(c){
-  const f = foods();
-  let bestIdx = -1, bestD2 = (SENSE_FOOD*SENSE_FOOD);
-
-  for (let i=0;i<f.length;i++){
-    const dx = f[i].x - c.pos.x, dy = f[i].y - c.pos.y;
+  let best = null, bestD2 = (SENSE_FOOD*SENSE_FOOD);
+  const cand = GRID.queryFoodsCircle(c.pos.x, c.pos.y, SENSE_FOOD);
+  for (let i=0;i<cand.length;i++){
+    const f = cand[i];
+    const dx = f.x - c.pos.x, dy = f.y - c.pos.y;
     const d2 = dx*dx + dy*dy;
-    if (d2 <= bestD2){
-      bestD2 = d2; bestIdx = i;
-    }
+    if (d2 < bestD2){ bestD2 = d2; best = f; }
   }
-  if (bestIdx >= 0){
-    const target = f[bestIdx];
-    return { x: target.x, y: target.y, dist: Math.sqrt(bestD2) };
-  }
-  return null;
+  return best ? { x: best.x, y: best.y, dist: Math.sqrt(bestD2) } : null;
 }
 
 function perceiveNeighbor(c){
-  // Einfach: nächster beliebiger Nachbar + nächster potenzieller Partner (Gegengeschlecht)
-  let nearest = null, bestD2 = (SENSE_SOC*SENSE_SOC);
-  let mate    = null, bestMD2 = (SENSE_SOC*SENSE_SOC);
-
-  for (let i=0;i<CELLS.length;i++){
-    const o = CELLS[i];
-    if (o === c) continue;
+  let nearest=null, bestD2=(SENSE_SOC*SENSE_SOC);
+  let mate=null,    bestMD2=(SENSE_SOC*SENSE_SOC);
+  const cand = GRID.queryCellsCircle(c.pos.x, c.pos.y, SENSE_SOC);
+  for (let i=0;i<cand.length;i++){
+    const o = cand[i]; if (o===c) continue;
     const dx = o.pos.x - c.pos.x, dy = o.pos.y - c.pos.y;
     const d2 = dx*dx + dy*dy;
-    if (d2 < bestD2){ bestD2 = d2; nearest = { id:o.id, sex:o.sex, x:o.pos.x, y:o.pos.y, dist:Math.sqrt(d2) }; }
-    if (o.sex !== c.sex && d2 < bestMD2){ bestMD2 = d2; mate = { id:o.id, sex:o.sex, x:o.pos.x, y:o.pos.y, dist:Math.sqrt(d2) }; }
+    if (d2 < bestD2){ bestD2=d2; nearest={ id:o.id, sex:o.sex, x:o.pos.x, y:o.pos.y, dist:Math.sqrt(d2) }; }
+    if (o.sex !== c.sex && d2 < bestMD2){ bestMD2=d2; mate={ id:o.id, sex:o.sex, x:o.pos.x, y:o.pos.y, dist:Math.sqrt(d2) }; }
   }
   return { nearest, mate };
 }
@@ -135,11 +205,9 @@ function perceiveNeighbor(c){
 /* ------------------------------------- Act --------------------------------- */
 
 function act(c, a, dt){
-  // v += a*dt
   c.vel.x += a.ax * dt;
   c.vel.y += a.ay * dt;
 
-  // clamp speed
   const v2 = c.vel.x*c.vel.x + c.vel.y*c.vel.y;
   const vmax2 = MOVE_S_MAX*MOVE_S_MAX;
   if (v2 > vmax2){
@@ -147,7 +215,6 @@ function act(c, a, dt){
     c.vel.x *= s; c.vel.y *= s;
   }
 
-  // p += v*dt
   c.pos.x += c.vel.x * dt;
   c.pos.y += c.vel.y * dt;
 
@@ -161,27 +228,33 @@ function metabolicLoss(c){
   const base = juvenile ? META_BASE * META_JUV_FR : META_BASE;
   const v = Math.hypot(c.vel.x, c.vel.y);
   const move = (MOVE_COST_S * (v / MOVE_S_MAX));
-  return base + move; // [E/s]
+  return base + move;
 }
 
-/** Frisst ein einzelnes Food-Item in Reichweite; gibt true bei Erfolg */
-function eatNearby(c){
-  const f = foods();
-  if (!f.length) return false;
-  const R2 = EAT_RADIUS*EAT_RADIUS;
-
-  for (let i = 0; i < f.length; i++){
-    const dx = f[i].x - c.pos.x, dy = f[i].y - c.pos.y;
-    if ((dx*dx + dy*dy) <= R2){
-      c.energy = Math.min(E_MAX, c.energy + E_FOOD);
-      // swap-pop
-      const last = f.length - 1;
-      if (i !== last) f[i] = f[last];
-      f.pop();
-      return true;
-    }
+function eatNearbyUsingGrid(c){
+  const cand = GRID.queryFoodsCircle(c.pos.x, c.pos.y, EAT_RADIUS);
+  for (let i=0;i<cand.length;i++){
+    const f = cand[i];
+    if (f.__dead) continue;
+    // Distanz ist durch query bereits ≤ EAT_RADIUS
+    f.__dead = true;
+    c.energy = Math.min(E_MAX, c.energy + E_FOOD);
+    return true;
   }
   return false;
+}
+
+function compactFoods(){
+  const f = foods(); if (!f.length) return;
+  let w = 0;
+  for (let i=0;i<f.length;i++){
+    const item = f[i];
+    if (!item.__dead){
+      if (w !== i) f[w] = item;
+      w++;
+    }
+  }
+  f.length = w;
 }
 
 /* ------------------------- Start-Boost: Kinder-Erzeugung -------------------- */
@@ -198,7 +271,6 @@ function blendMutateGenes(base, other, mix = 0.7, sigma = 0.06){
 }
 
 function spawnBroodAround(parent, partnerGenes, count, namePrefix){
-  // Kinder in kleinem Radius um den Elternteil
   for (let i=0;i<count;i++){
     const ang = Math.random()*Math.PI*2;
     const rad = 6 + Math.random()*10;
@@ -216,26 +288,23 @@ function spawnBroodAround(parent, partnerGenes, count, namePrefix){
 export function setWorldSize(w,h){
   WORLD_W = Math.max(100, w|0);
   WORLD_H = Math.max(100, h|0);
+  GRID.build(WORLD_W, WORLD_H); // Grid sofort an neue Welt anpassen
 }
 
 export function getCells(){ return CELLS; }
 
-// Renderer nutzt window.__FOODS; hier geben wir sie offiziell zurück
 export function getFoodItems(){ return foods(); }
 
-// Environment aktuell nicht genutzt; behalten für API-Stabilität
 export function applyEnvironment(_e){ /* no-op */ }
 
 export function createAdamAndEve(){
   CELLS.length = 0; NEXT_ID = 1;
   const cx = WORLD_W*0.5, cy = WORLD_H*0.5;
 
-  // Eltern
   const adam = addCell("Adam", "M", cx-12, cy, { EFF:0.55, MET:0.45, SCH:0.50, TEM:0.55, GRÖ:0.52 });
   const eva  = addCell("Eva",  "F", cx+12, cy, { EFF:0.60, MET:0.50, SCH:0.60, TEM:0.45, GRÖ:0.48 });
 
-  // START-BOOST: Jeweils 5 Kinder nahe Adam und 5 nahe Eva
-  // Gene: Mischung aus jeweiligem Elternteil + Partner, plus leichte Mutation
+  // Start-Boost: je 5 Kinder um Adam/Eva
   spawnBroodAround(adam, eva.genes, 5, "A");
   spawnBroodAround(eva,  adam.genes, 5, "E");
 }
@@ -244,7 +313,7 @@ export function createAdamAndEve(){
 export function spawnChild(x, y, genes, sexOpt){
   const sex = sexOpt || (Math.random() < 0.5 ? "M" : "F");
   const name = sex === "M" ? "Neo" : "Nia";
-  const m = 4; // kleiner Rand
+  const m = 4;
   const px = clamp(x, m, WORLD_W - m);
   const py = clamp(y, m, WORLD_H - m);
   return addCell(name, sex, px, py, genes);
@@ -255,15 +324,20 @@ export function spawnChild(x, y, genes, sexOpt){
 export function step(dt, _env = {}, tSec = 0){
   dt = Math.max(0, Math.min(0.2, +dt || 0));
 
+  // 0) Grid für diesen Frame aufbauen
+  GRID.ensure();
+  GRID.rebuildFoods(foods());
+  GRID.rebuildCells(CELLS);
+
   // 1) AGE / COOLDOWN
   for (let i=0;i<CELLS.length;i++){
     const c = CELLS[i];
     c.age += dt;
     if (c.cooldown > 0) c.cooldown -= dt;
-    // leichte Müdigkeit abbauen, wenn Geschwindigkeit gering ist (drive.fatigue wird in drives aufgebaut)
-    if (c.drive) {
+    if (c.drive){
       const v = Math.hypot(c.vel.x, c.vel.y);
       if (v < 8) c.drive.fatigue = Math.max(0, c.drive.fatigue - 0.25*dt);
+      c.drive.wantMate = false; // wird in drives ggf. gesetzt
     }
   }
 
@@ -277,24 +351,25 @@ export function step(dt, _env = {}, tSec = 0){
       isJuvenile: c.age < JUV_AGE_S
     };
     const ctx = { world:{ w: WORLD_W, h: WORLD_H }, percept };
-    const a = drives.decide?.(c, { ...ctx, dt, tSec }) || { ax:0, ay:0 };
+    const a = (drives.decide?.(c, { ...ctx, dt, tSec })) || { ax:0, ay:0 };
     act(c, a, dt);
   }
 
-  // 3) ENERGY & EAT
+  // 3) ENERGY & EAT (Food via Grid; entfernte Foods am Ende kompaktieren)
   for (let i=0;i<CELLS.length;i++){
     const c = CELLS[i];
     c.energy -= metabolicLoss(c) * dt;
 
-    if (eatNearby(c) && Math.random() < 0.20){
-      // zweites Stück, wenn direkt drauf steht
-      eatNearby(c);
+    if (eatNearbyUsingGrid(c) && Math.random() < 0.20){
+      eatNearbyUsingGrid(c);
     }
 
     c.energy = clamp(c.energy, 0, E_MAX);
   }
+  // Nach allen Konsumaktionen: __FOODS kompaktieren (O(N))
+  compactFoods();
 
-  // 4) CLEANUP (Tote entfernen)
+  // 4) CLEANUP (Tote Zellen)
   for (let i=CELLS.length-1;i>=0;i--){
     if (CELLS[i].energy <= 0){
       CELLS.splice(i,1);
