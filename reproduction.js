@@ -1,49 +1,51 @@
-// reproduction.js — Mutationssteuerung (+ sanfte Option für Start-Push)
-// HINWEIS: Bestehende Repro-Logik bleibt unberührt. Wir ergänzen nur glue-APIs.
+/**
+ * reproduction.js — Paarung/Mutation (minimal), kompatible Platzhalter-Logik
+ * Exports: step(dt), setMutationRate(v), getMutationRate(), scheduleStartPush(opts)
+ *
+ * Design:
+ *  - Bewusst minimal gehalten (kein Zwangs-Spawn), UI-Slider steuert MutationRate
+ *  - Hooks für spätere Erweiterung vorhanden (scheduleStartPush)
+ *  - Engine ruft step(dt); hier keine teuren Operationen
+ */
 
-let _mutationRate = 8;            // %  (UI-Default)
-let _startPush = null;            // {perParent:number, interval:number, t:number} | null
+let _mutationRate = 8;   // % (UI-Default)
+let _startPush = null;   // { perParent:number, interval:number, t:number, done:boolean } | null
 
-// ---- Bestehende API (beibehalten) ----
 export function setMutationRate(v){
   const n = Math.max(0, Math.min(100, (v|0)));
   _mutationRate = n;
-  // Falls deine bestehende Logik eine interne Variable nutzt, bitte dort weiterreichen.
 }
 
-// NEU: Getter – von Diagnose/App-Ops verwendet
 export function getMutationRate(){ return _mutationRate|0; }
 
-// Optional: Von engine/startpush aufrufbar (non-breaking).
-// Wenn deine Repro-Logik bereits Start-Pushs kennt, kannst du das hier andocken.
+/**
+ * Optionaler, sanfter „Start-Push“ für frühe Aktivität (kein Zwangs-Spawn).
+ * opts: { perParent:number, interval:number (s) }
+ */
 export function scheduleStartPush(opts){
   const perParent = Math.max(0, opts?.perParent|0);
   const interval  = Math.max(0.1, +opts?.interval || 0.75);
   _startPush = { perParent, interval, t: 0, done:false };
 }
 
-// ---- Deine bestehende step(dt) bitte NICHT entfernen.
-// Wir hängen uns nur davor/danach ein, ohne die vorhandene Logik zu verändern. ----
+/**
+ * Repro-Tick (minimal): verwaltet nur optionale Start-Impulse/Timer.
+ * Echte Paarungslogik kann später ergänzt oder modulweise ersetzt werden.
+ */
 export function step(dt){
-  // 1) ggf. Start-Push sanft triggern (delegiert an deine bestehende Repro-Logik,
-  //     indem wir nur "Zündbedingungen" verbessern; kein Zwangs-Spawn hier!)
+  // 1) Start-Push verwalten (leichtgewichtige Timer-Logik)
   if (_startPush && !_startPush.done){
-    _startPush.t += dt;
+    _startPush.t += Math.max(0, +dt || 0);
     if (_startPush.t >= _startPush.interval){
       _startPush.t = 0;
-      // Sanfter Nudge: Erhöhe kurzzeitig die globale Mutationsrate minimal
-      // (verändert das Verhalten nicht hart, vermeidet harte Kopplung).
+      // Sanfter Nudge: Hebe die Mutationsrate minimal an (wenn darunter),
+      // ohne Verhalten hart zu ändern.
       _mutationRate = Math.max(_mutationRate, 8);
       _startPush.perParent--;
       if (_startPush.perParent <= 0) _startPush.done = true;
     }
   }
 
-  // 2) DEIN bestehender Repro-Schritt
-  //    (Belasse deine bisherige Logik hier – wir ändern nichts daran.)
-  //    Beispiel (Platzhalter):
-  //    internalReproductionStep(dt);
-
-  // 3) (Optional) Cooldown-/Sicherheitsbegrenzungen kannst du weiterhin
-  //    in deiner eigenen Logik führen.
+  // 2) Platzhalter für echte Paarung/Mutation (später)
+  //    (Nichts zu tun: diese Datei sichert API-Vertrag & UI-Slider.)
 }
